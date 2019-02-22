@@ -1,0 +1,13 @@
+{application, nkactor, [
+    {description, "Actor Framework"},
+    {vsn, "develop"},
+    {modules, []},
+    {registered, []},
+    {mod, {nkactor_app, []}},
+    {applications, [
+        nkserver,
+        hackney
+    ]},
+    {env, [
+    ]}
+]}.
