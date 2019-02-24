@@ -20,8 +20,9 @@
 
 -module(nkactor_store_pgsql_aggregation).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
--export([aggregation/3]).
--import(nkactor_store_pgsql, [query/2, query/3, quote/1, quote_list/1]).
+-export([aggregation/2]).
+-import(nkactor_store_pgsql, [query/2, query/3, quote/1, quote_list/1, filter_path/2]).
+
 
 -define(LLOG(Type, Txt, Args), lager:Type("NkACTOR PGSQL "++Txt, Args)).
 
@@ -36,25 +37,59 @@
 
 
 %% @doc
-aggregation(_SrvId, _SearchType, _Opts) ->
-    {error, aggregation_invalid}.
+aggregation(actors_aggregation_groups, Params) ->
+    Namespace = maps:get(namespace, Params, <<>>),
+    Deep = maps:get(deep, params, false),
+    Query = [
+        <<"SELECT \"group\", COUNT(\"group\") FROM actors">>,
+        <<" WHERE ">>, filter_path(Namespace, Deep),
+        <<" GROUP BY \"group\";">>
+    ],
+    {query, Query, fun pgsql_aggregation/2};
 
-%%    case ?CALL_SRV(SrvId, actor_db_get_query, [SrvId, pgsql, SearchType, Opts]) of
-%%        {ok, {pgsql, Query, QueryMeta}} ->
-%%            case query(SrvId, Query, QueryMeta) of
-%%                {ok, [Res], Meta} ->
-%%                    case (catch maps:from_list(Res)) of
-%%                        {'EXIT', _} ->
-%%                            {error, aggregation_invalid};
-%%                        Map ->
-%%                            {ok, Map, Meta}
-%%                    end;
-%%                {ok, _, _} ->
+aggregation(actors_aggregation_resources, Params) ->
+    Group = maps:get(group, Params),
+    Namespace = maps:get(namespace, Params, <<>>),
+    Deep = maps:get(deep, params, false),
+    Query = [
+        <<"SELECT resource, COUNT(resource) FROM actors">>,
+        <<" WHERE \"group\" = ">>, quote(Group), <<" AND ">>, filter_path(Namespace, Deep),
+        <<" GROUP BY resource;">>
+    ],
+    {query, Query, fun pgsql_aggregation/2};
+
+
+aggregation(AggType, _Params) ->
+    {error, {aggregation_not_implemented, AggType}}.
+
+
+
+%% ===================================================================
+%% Result funs
+%% ==================================================================
+
+
+
+%%%% @private
+%%agg_query(SrvId, Query) ->
+%%    case query(SrvId, Query) of
+%%        {ok, [Res], Meta} ->
+%%            case (catch maps:from_list(Res)) of
+%%                {'EXIT', _} ->
 %%                    {error, aggregation_invalid};
-%%                {error, Error} ->
-%%                    {error, Error}
+%%                Map ->
+%%                    {ok, Map, Meta}
 %%            end;
 %%        {error, Error} ->
 %%            {error, Error}
 %%    end.
-%%
+
+
+%% @private
+pgsql_aggregation([{{select, _Size}, Rows, _OpMeta}], Meta) ->
+    case (catch maps:from_list(Rows)) of
+        {'EXIT', _} ->
+            {error, aggregation_invalid};
+        Map ->
+            {ok, Map, Meta}
+    end.

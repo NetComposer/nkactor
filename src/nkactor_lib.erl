@@ -34,7 +34,7 @@
 -export([add_creation_fields/1, update/2, check_links/1, do_check_links/2]).
 -export([actor_id_to_path/1, process_id/2]).
 -export([parse/2, parse/3, parse_actor_data/2, parse_request_params/2]).
--export([make_rev_path/1]).
+-export([make_rev_path/1, make_rev_parts/1]).
 -export([make_plural/1, make_singular/1, normalized_name/1]).
 -export([fts_normalize_word/1, fts_normalize_multi/1]).
 -export([update_check_fields/2]).
@@ -272,16 +272,11 @@ add_creation_fields(Actor) ->
     Name1 = maps:get(name, Actor, <<>>),
     UID = make_uid(Res),
     %% Add Name if not present
-    Name2 = case is_binary(Name1) of
-        true ->
-            case normalized_name(Name1) of
-                <<>> ->
-                    make_name(UID);
-                NormName ->
-                    NormName
-            end;
-        false ->
-            make_name(UID)
+    Name2 = case normalized_name(to_bin(Name1)) of
+        <<>> ->
+            make_name(UID);
+        NormName ->
+            NormName
     end,
     Time = nklib_date:now_3339(msecs),
     Actor2 = Actor#{
@@ -307,7 +302,7 @@ update(Actor, Time3339) ->
     Meta2 = Meta#{
         update_time => Time3339,
         generation => Gen+1,
-        hash => Hash
+        hash => to_bin(Hash)
     },
     Actor#{metadata := Meta2}.
 
@@ -354,18 +349,23 @@ do_check_links([{Id, Type}|Rest], Acc) ->
 
 %% @private
 make_rev_path(Namespace) ->
+    Parts = make_rev_parts(Namespace),
+    nklib_util:bjoin(Parts, $.).
+
+
+%% @private
+make_rev_parts(Namespace) ->
     case to_bin(Namespace) of
         <<>> ->
-            <<>>;
+            [];
         Namespace2 ->
-            Parts = lists:reverse(binary:split(Namespace2, <<$.>>, [global])),
-            nklib_util:bjoin(Parts, $.)
+            lists:reverse(binary:split(Namespace2, <<$.>>, [global]))
     end.
 
 
 %% @private
-make_uid(Kind) ->
-    UUID = nklib_util:luid(),<<(to_bin(Kind))/binary, $-, UUID/binary>>.
+make_uid(Res) ->
+    UUID = nklib_util:luid(),<<(to_bin(Res))/binary, $-, UUID/binary>>.
 
 
 %% @private

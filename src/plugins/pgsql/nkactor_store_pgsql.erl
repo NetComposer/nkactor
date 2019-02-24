@@ -21,7 +21,7 @@
 -module(nkactor_store_pgsql).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -export([query/2, query/3]).
--export([quote/1, quote_list/1]).
+-export([quote/1, quote_list/1, filter_path/2]).
 -export_type([result_fun/0]).
 
 
@@ -62,8 +62,31 @@ query(SrvId, Query, QueryMeta) ->
     nkpgsql:query(PgSrvId, Query, QueryMeta).
 
 
+
+
+%% ===================================================================
+%% Utilities
+%% ===================================================================
+
+
 quote(Term) ->
     nkpgsql_util:quote(Term).
 
 quote_list(Term) ->
     nkpgsql_util:quote_list(Term).
+
+
+%% @private
+filter_path(Namespace, Deep) ->
+    Path = nkactor_lib:make_rev_path(Namespace),
+    case Deep of
+        true ->
+            case Path of
+                <<>> ->
+                    [<<"TRUE">>];
+                _ ->
+                    [<<"(path LIKE ">>, quote(<<Path/binary, "%">>), <<")">>]
+            end;
+        false ->
+            [<<"(path = ">>, quote(Path), <<")">>]
+    end.

@@ -252,28 +252,23 @@ config(Module) ->
 -spec parse(module(), actor(), any()) ->
     {ok, actor()} | {error, nkserver:msg()}.
 
+parse(undefined, _Actor, _Request) ->
+    error(module_undefined);
+
 parse(Module, Actor, Request) ->
-    Syntax = #{
-        '__mandatory' => [group, resource, name, namespace, uid]
-    },
-    case nkactor_syntax:parse_actor(Actor, Syntax) of
-        {ok, Actor2} ->
-            SynSpec = case erlang:function_exported(Module, parse, 2) of
-                true ->
-                    apply(Module, parse, [Actor2, Request]);
-                false ->
-                    {syntax, #{}}
-            end,
-            case SynSpec of
-                {ok, Actor3} ->
-                    {ok, Actor3};
-                {syntax, Syntax2} when is_map(Syntax2) ->
-                    nkactor_lib:parse_actor_data(Actor2, Syntax2);
-                {syntax, Syntax2, Actor3} when is_map(Syntax2) ->
-                    nkactor_lib:parse_actor_data(Actor3, Syntax2);
-                {error, Error} ->
-                    {error, Error}
-            end;
+    SynSpec = case erlang:function_exported(Module, parse, 2) of
+        true ->
+            apply(Module, parse, [Actor, Request]);
+        false ->
+            {syntax, #{}}
+    end,
+    case SynSpec of
+        {ok, Actor3} ->
+            {ok, Actor3};
+        {syntax, Syntax2} when is_map(Syntax2) ->
+            nkactor_lib:parse_actor_data(Actor, Syntax2);
+        {syntax, Syntax2, Actor3} when is_map(Syntax2) ->
+            nkactor_lib:parse_actor_data(Actor3, Syntax2);
         {error, Error} ->
             {error, Error}
     end.
@@ -283,6 +278,9 @@ parse(Module, Actor, Request) ->
 %% @doc Used to call the 'request' callback on an actor's module
 -spec request(module(), #actor_id{}, any()) ->
     response() | continue.
+
+request(undefined, _ActorId, _Request) ->
+    error(module_undefined);
 
 request(Module, ActorId, Request) ->
     Verb = maps:get(verb, Request),

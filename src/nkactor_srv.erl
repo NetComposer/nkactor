@@ -180,12 +180,12 @@ start(Actor, Config) ->
 do_start(Op, Actor, StartConfig) ->
     ActorId = nkactor_lib:get_actor_id(Actor),
     case nkactor_util:get_actor_config(ActorId) of
-        {ok, _SrvId, #{activable:=false}} ->
+        {ok, #{activable:=false}} ->
             {error, actor_is_not_activable};
-        {ok, SrvId, BaseConfig} ->
+        {ok, BaseConfig} ->
             Ref = make_ref(),
             Config = maps:merge(BaseConfig, StartConfig),
-            Opts = {SrvId, Op, ActorId, Actor, Config, self(), Ref},
+            Opts = {Op, ActorId, Actor, Config, self(), Ref},
             case gen_server:start(?MODULE, Opts, []) of
                 {ok, Pid} ->
                     {ok, ActorId#actor_id{pid = Pid}};
@@ -583,13 +583,12 @@ do_delete(#actor_st{srv=SrvId, actor_id=ActorId, actor=Actor}=State) ->
 -spec init(term()) ->
     {ok, state()} | {stop, term()}.
 
-init({SrvId, Op, ActorId, Actor, Config, Caller, Ref}) ->
-    State = do_pre_init(SrvId, ActorId, Actor, Config),
+init({Op, ActorId, Actor, Config, Caller, Ref}) ->
+    State = do_pre_init(ActorId, Actor, Config),
     case do_check_expired(State) of
         {false, State2} ->
             case do_register(1, State2) of
                 {ok, State3} ->
-                    ?ACTOR_DEBUG("registered", [], State3),
                     case handle(actor_srv_init, [Op], State3) of
                         {ok, State4} ->
                             do_init(Op, State4);
@@ -727,6 +726,10 @@ handle_info(nkactor_next_status_timer, State) ->
 handle_info(nkactor_heartbeat, State) ->
     erlang:send_after(?HEARTBEAT_TIME, self(), nkactor_heartbeat),
     do_heartbeat(State);
+
+handle_info({'DOWN', _Ref, process, Pid, normal}, #actor_st{namespace_pid=Pid}=State) ->
+    ?ACTOR_LOG(notice, "namespace is stopping, we also stop", [], State),
+    do_stop(namespace_is_down, State);
 
 handle_info({'DOWN', _Ref, process, Pid, _Reason}, #actor_st{namespace_pid=Pid}=State) ->
     ?ACTOR_LOG(notice, "namespace is down", [], State),
@@ -964,13 +967,12 @@ do_async_op(Op, State) ->
 %% ===================================================================
 
 %% @private
-do_pre_init(SrvId, ActorId, Actor, Config) ->
+do_pre_init(ActorId, Actor, Config) ->
     #actor_id{uid=UID}=ActorId,
     #{metadata:=Meta} = Actor,
     ActorId2 = ActorId#actor_id{pid=self()},
     true = is_binary(UID) andalso UID /= <<>>,
     State1 = #actor_st{
-        srv = SrvId,
         module = maps:get(module, Config),
         config = Config,
         actor_id = ActorId2,
@@ -983,14 +985,12 @@ do_pre_init(SrvId, ActorId, Actor, Config) ->
         activated_time = nklib_date:epoch(usecs),
         unload_policy = permanent           % Updated later
     },
-    set_debug(State1),
     State2 =  case Meta of
         #{next_status_time:=NextStatusTime} ->
             do_set_next_status_time(NextStatusTime, State1);
         _ ->
             State1
     end,
-    ?ACTOR_DEBUG("actor server starting", [], State2),
     set_unload_policy(State2).
 
 
@@ -1042,12 +1042,14 @@ set_unload_policy(#actor_st{actor=Actor, config=Config}=State) ->
 
 
 %% @private
-do_register(Tries, #actor_st{srv=SrvId, actor_id=ActorId} = State) ->
+do_register(Tries, #actor_st{actor_id=ActorId} = State) ->
     case nkactor_namespace:register_actor(ActorId) of
         {ok, SrvId, Pid} ->
-            ?ACTOR_DEBUG("registered with namespace (pid:~p)", [Pid]),
+            State2 = State#actor_st{srv=SrvId, namespace_pid=Pid},
             monitor(process, Pid),
-            {ok, State#actor_st{namespace_pid = Pid}};
+            set_debug(State2),
+            ?ACTOR_DEBUG("registered with namespace (pid:~p)", [Pid]),
+            {ok, State2};
         {error, Error} ->
             case Tries > 1 of
                 true ->
@@ -1056,7 +1058,7 @@ do_register(Tries, #actor_st{srv=SrvId, actor_id=ActorId} = State) ->
                     timer:sleep(1000),
                     do_register(Tries - 1, State);
                 false ->
-                    ?ACTOR_LOG(notice, "registered with master failed: ~p", [Error], State),
+                    ?ACTOR_LOG(notice, "registration with namespace failed: ~p", [Error], State),
                     {error, Error}
             end
     end.

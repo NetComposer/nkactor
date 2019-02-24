@@ -36,8 +36,8 @@
 -export([actor_do_active/1, actor_do_expired/1]).
 -export([actor_db_find/2, actor_db_read/2, actor_db_create/2, actor_db_update/2,
          actor_db_delete/3, actor_db_search/3, actor_db_aggregate/3]).
--export([srv_master_init/2, srv_master_handle_call/4, srv_master_handle_info/3,
-         srv_master_timed_check/3]).
+-export([srv_master_init/2, srv_master_handle_call/4, srv_master_handle_cast/3,
+         srv_master_handle_info/3, srv_master_timed_check/3]).
 
 
 -include_lib("nkserver/include/nkserver.hrl").
@@ -62,6 +62,8 @@ msg(actor_is_not_activable)	        -> "Actor is not activable";
 msg(auth_invalid) 	                -> "Auth token is not valid";
 msg(cannot_consume)                 -> "Actor cannot be consumed";
 msg(delete_too_deep)                -> "DELETE is too deep";
+msg({namespace_not_found, N})       -> {"Namespace '~s' not found", [N]};
+msg({namespace_invalid, N})         -> {"Namespace '~s' is invalid", [N]};
 msg(_)   		                    -> continue.
 
 
@@ -413,6 +415,11 @@ srv_master_init(SrvId, State) ->
 %% @private
 srv_master_handle_call(Msg, From, SrvId, State) ->
     nkactor_master:srv_master_handle_call(Msg, From, SrvId, State).
+
+
+%% @private
+srv_master_handle_cast(Msg, SrvId, State) ->
+    nkactor_master:srv_master_handle_cast(Msg, SrvId, State).
 
 
 %% @private

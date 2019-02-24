@@ -82,7 +82,7 @@ register_modules(Group, Modules) ->
     module() | undefined.
 
 get_module(Group, Key) ->
-    nklib_util:do_config_get({nkactor_module, Group, Key}).
+    nklib_util:do_config_get({nkactor_module, to_bin(Group), to_bin(Key)}).
 
 %% @doc
 get_services() ->
@@ -99,7 +99,7 @@ get_actor_config(ActorId) ->
         undefined ->
             {error, resource_invalid};
         Module ->
-            case nkactor_namespace:find_namespace(Namespace) of
+            case nkactor_namespace:get_namespace(Namespace) of
                 {ok, SrvId, _} ->
                     case catch nklib_util:do_config_get({nkactor_config, SrvId, Module}) of
                         undefined ->
@@ -107,9 +107,9 @@ get_actor_config(ActorId) ->
                             Config2 = ?CALL_SRV(SrvId, actor_config, [Config1]),
                             Config3 = Config2#{module=>Module},
                             nklib_util:do_config_put({nkactor_config, SrvId, Module}, Config2),
-                            {ok, SrvId, Config3};
+                            {ok, Config3};
                         Config when is_map(Config) ->
-                            {ok, SrvId, Config}
+                            {ok, Config}
                     end;
                 {error, Error} ->
                     {error, Error}

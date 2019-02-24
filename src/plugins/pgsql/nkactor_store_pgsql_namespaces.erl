@@ -57,7 +57,7 @@ get_namespace(SrvId, Namespace) ->
             },
             {ok, Reply, QueryMeta};
         {ok, [[]], _QueryMeta} ->
-            {error, namespace_not_found};
+            {error, {namespace_not_found, Namespace}};
         {error, Error} ->
             {error, Error}
     end.

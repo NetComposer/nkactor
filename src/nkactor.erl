@@ -25,10 +25,10 @@
 
 -export([find/1, activate/1, update/3, create/2, delete/1, delete/2]).
 -export([get_actor/1, get_actor/2, get_path/1, is_enabled/1, enable/2, stop/1, stop/2]).
--export([search_groups/3, search_resources/4]).
--export([search_linked_to/5, search_fts/5, search/3, search_ids/3,
-         delete_all/3, delete_old/6]).
--export([request/1, sync_op/2, sync_op/3, async_op/2]).
+-export([search_groups/2, search_resources/3]).
+-export([search_linked_to/3, search_fts/3, search/3, search_ids/3,
+         search_delete/3, delete_old/5]).
+-export([sync_op/2, sync_op/3, async_op/2]).
 -export_type([actor/0, id/0, uid/0, namespace/0, resource/0, path/0, name/0,
               vsn/0, group/0,hash/0,
               data/0, alarm_class/0, alarm_body/0]).
@@ -365,103 +365,104 @@ stop(Id, Reason) ->
     end.
 
 
+-type search_opts() :: #{namespace=>namespace(), deep=>boolean()}.
+
 %% @doc Counts classes and objects of each class
--spec search_groups(id(), namespace(), #{deep=>boolean()}) ->
+-spec search_groups(nkserver:id(), search_opts()) ->
     {ok, [{binary(), integer()}], Meta::map()} | {error, term()}.
 
-search_groups(SrvId, Domain, Opts) ->
-    nkactor_backend:aggregation(SrvId, {service_aggregation_groups, Domain, Opts}).
+search_groups(SrvId, Params) ->
+    nkactor_backend:aggregation(SrvId, actors_aggregation_groups, Params).
 
 
 %% @doc
--spec search_resources(id(), group(), namespace(), #{deep=>boolean()}) ->
+-spec search_resources(nkserver:id(), group(), search_opts()) ->
     {ok, [{binary(), integer()}], Meta::map()} | {error, term()}.
 
-search_resources(SrvId, Domain, Group, Opts) ->
-    nkactor_backend:aggregation(SrvId, {service_aggregation_resources, Domain, Group, Opts}).
+search_resources(SrvId, Group, Opts) ->
+    Params = Opts#{group=>Group},
+    nkactor_backend:aggregation(SrvId, actors_aggregation_resources, Params).
+
+
+-type search_linked_opts() ::
+    #{
+        link_type => binary(),
+        from => pos_integer(),
+        size => pos_integer()
+    } | search_opts().
 
 
 %% @doc Gets objects pointing to another
--spec search_linked_to(id(), namespace(), id(), binary()|any,
-                       #{deep=>boolean(), from=>pos_integer(),size=>pos_integer()}) ->
+-spec search_linked_to(nkservice:id(), id(),search_linked_opts()) ->
     {ok, [{UID::binary(), LinkType::binary()}]} | {error, term()}.
 
-search_linked_to(SrvId, Domain, Id, LinkType, Opts) ->
-    case nkactor_backend:find(Id) of
-        {ok, SrvId, #actor_id{uid=UID}, _} ->
-            nkactor_backend:search(SrvId, {service_search_linked, Domain, UID, LinkType, Opts});
+search_linked_to(SrvId, Id, Opts) ->
+    case find(Id) of
+        {ok, #actor_id{uid=UID}} ->
+            Params = Opts#{uid => UID},
+            nkactor_backend:search(SrvId, actors_search_linked, Params);
         {error, Error} ->
             {error, Error}
     end.
 
 
+-type search_fts_opts() ::
+    #{
+        field => binary(),
+        from => pos_integer(),
+        size => pos_integer()
+    } | search_opts().
+
+
 %% @doc Gets objects under a path, sorted by path
--spec search_fts(nkservce:id(), namespace(), binary()|any, binary(),
-    #{deep=>boolean(), from=>pos_integer(),size=>pos_integer()}) ->
+-spec search_fts(nkservce:id(), binary(), search_fts_opts()) ->
     {ok, [UID::binary()], Meta::map()} | {error, term()}.
 
-search_fts(SrvId, Domain, Field, Word, Opts) ->
-    nkactor_backend:search(SrvId, {service_search_fts, Domain, Field, Word, Opts}).
+search_fts(SrvId, Word, Opts) ->
+    Params = Opts#{word => Word},
+    nkactor_backend:search(SrvId, actors_search_fts, Params).
 
 
 %% @doc Generic search returning actors
--spec search(id(), nkactor_search:search_spec(),
-             nkactor_search:search_opts()) ->
+-spec search(nkserver:id(), nkactor_search:search_spec(), nkactor_search:search_opts()) ->
     {ok, [actor()], Meta::map()} | {error, term()}.
 
 search(SrvId, SearchSpec, SearchOpts) ->
     case nkactor_search:parse(SearchSpec, SearchOpts) of
         {ok, SearchSpec2} ->
-            nkactor_backend:search(SrvId, {service_search_actors, SearchSpec2});
+            nkactor_backend:search(SrvId, actors_search, SearchSpec2);
         {error, Error} ->
             {error, Error}
     end.
 
 
-%% @doc Generic search returning actors
-%% Meta will includesize, last_updated and total (if not totals=false)
--spec search_ids(id(), nkactor_search:search_spec(),
-    nkactor_search:search_opts()) ->
+%% @doc Generic search returning actor ids
+-spec search_ids(nkserver:id(), nkactor_search:search_spec(), nkactor_search:search_opts()) ->
     {ok, [actor_id()], Meta::map()} | {error, term()}.
 
 search_ids(SrvId, SearchSpec, SearchOpts) ->
     case nkactor_search:parse(SearchSpec, SearchOpts) of
         {ok, SearchSpec2} ->
-            nkactor_backend:search(SrvId, {service_search_actors_id, SearchSpec2});
+            nkactor_backend:search(SrvId, {actors_search_ids, SearchSpec2});
         {error, Error} ->
             {error, Error}
     end.
 
 
-%% @doc Deletes actors older than Epoch (secs)
--spec delete_old(id(), namespace(), group(), resource(), binary(), #{deep=>boolean()}) ->
-    {ok, integer(), Meta::map()}.
-
-delete_old(SrvId, Domain, Group, Type, Date, Opts) ->
-    nkactor_backend:search(SrvId, {service_delete_old_actors, Domain, Group, Type, Date, Opts}).
-
-
 %% @doc Generic deletion of objects
-%% Use delete=>true for real deletion
-%% Use search_opts() to be able to use special fields, otherwise anything is accepted
--spec delete_all(id(), nkactor_search:search_spec()|#{delete=>boolean()},
-                 nkactor_search:search_opts()) ->
+%% Use do_delete=>true for real deletion
+-spec search_delete(nkserver:id(), nkactor_search:search_spec(), nkactor_search:search_opts()) ->
     {ok|deleted, integer(), Meta::map()}.
 
-delete_all(SrvId, SearchSpec, SearchOpts) ->
-    {Delete, SearchSpec2} = case maps:take(delete, SearchSpec) of
-        error ->
-            {false, SearchSpec};
-        {Test0, SearchSpec0} ->
-            {Test0, SearchSpec0}
-    end,
-    case nkactor_search:parse(SearchSpec2, SearchOpts) of
+search_delete(SrvId, SearchSpec, SearchOpts) ->
+    case nkactor_search:parse(SearchSpec, SearchOpts) of
         {ok, SearchSpec3} ->
-            case nkactor_backend:search(SrvId, {service_delete_actors, Delete, SearchSpec3}) of
-                {ok, Total, Meta} when Delete ->
-                    {deleted, Total, Meta};
-                {ok, Total, Meta} ->
-                    {ok, Total, Meta};
+            DoDelete = maps:get(do_delete, SearchSpec3, false),
+            case nkactor_backend:search(SrvId, actors_delete, SearchSpec3) of
+                {ok, Total, _Meta} when DoDelete ->
+                    {deleted, Total};
+                {ok, Total, _Meta} ->
+                    {ok, Total};
                 {error, Error} ->
                     {error, Error}
             end;
@@ -470,12 +471,13 @@ delete_all(SrvId, SearchSpec, SearchOpts) ->
     end.
 
 
-%% @doc Launches an Request
--spec request(nkactor:request()) ->
-    nkactor:response().
+%% @doc Deletes actors older than Epoch (secs)
+-spec delete_old(nkserver:id(), group(), resource(), integer(), search_opts()) ->
+    {ok, integer(), Meta::map()}.
 
-request(Req) ->
-    nkactor_request:request(Req).
+delete_old(SrvId, Group, Res, Date, Opts) ->
+    Params = Opts#{group=>Group, resource=>Res, epoch=>Date},
+    nkactor_backend:search(SrvId, actors_delete_old, Params).
 
 
 %% @doc

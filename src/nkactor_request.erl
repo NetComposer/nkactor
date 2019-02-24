@@ -49,7 +49,7 @@ request(Req) ->
     % Gets group and vsn from request or body
     case nkactor_syntax:parse_request(Req) of
         {ok, #{namespace:=Namespace}=Req2} ->
-            case nkactor_namespace:find_namespace(Namespace) of
+            case nkactor_namespace:get_namespace(Namespace) of
                 {ok, SrvId, _NamespacePid} ->
                     set_debug(SrvId),
                     ?REQ_DEBUG("incoming request for ~s", [Namespace]),
@@ -75,10 +75,10 @@ request(Req) ->
                             {error, unauthorized, add_trace(api_reply, {error, unauthorized}, Req4)}
                     end;
                 {error, Error} ->
-                    {error, Error}
+                    {error, Error, Req}
             end;
         {error, Error} ->
-            {error, Error}
+            {error, Error, Req}
     end.
 
 
@@ -117,7 +117,7 @@ do_request(Req) ->
             namespace = Namespace
         },
         Config = case catch nkactor_util:get_actor_config(ActorId) of
-            {ok, _SrvId, Config0} ->
+            {ok, Config0} ->
                 Config0;
             {error, ConfigError} ->
                 throw({error, ConfigError})
@@ -357,19 +357,19 @@ check_actor(Actor, ActorId) ->
     try
         case Actor of
             #{group:=ObjGroup} when ObjGroup /= Group ->
-                throw({field_invalid, group});
+                throw({field_invalid, <<"group">>});
             _ ->
                 ok
         end,
         case Actor of
             #{resource:=ObjRes} when ObjRes /= Res ->
-                throw({field_invalid, resource});
+                throw({field_invalid, <<"resource">>});
             _ ->
                 ok
         end,
         case Actor of
             #{namespace:=ObjNamespace} when ObjNamespace /= Namespace ->
-                throw({field_invalid, namespace});
+                throw({field_invalid, <<"namespace">>});
             _ ->
                 ok
         end,
@@ -378,7 +378,7 @@ check_actor(Actor, ActorId) ->
                 % If name is in body, it has been already read, so there is a name
                 if
                     is_binary(Name) andalso Name /= ObjName ->
-                        throw({field_invalid, name});
+                        throw({field_invalid, <<"name">>});
                     true ->
                         ok
                 end;

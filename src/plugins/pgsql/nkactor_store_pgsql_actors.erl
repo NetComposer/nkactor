@@ -41,105 +41,184 @@
 %% ===================================================================
 
 %% @doc
-find(SrvId, ActorId) ->
-    #actor_id{group=Group, resource=Res, name=Name, namespace=Namespace, uid=UID} = ActorId,
-    if
-        is_binary(Group) andalso is_binary(Res) andalso
-        is_binary(Name) andalso is_binary(Namespace) ->
-            Query = [
-                <<"SELECT uid FROM actors">>,
-                <<" WHERE namespace=">>, quote(Namespace),
-                <<" AND \"group\"=">>, quote(Group),
-                <<" AND resource=">>, quote(Res),
-                <<" AND name=">>, quote(Name), <<";">>
-            ],
-            case query(SrvId, Query) of
-                {ok, [[{UID2}]], QueryMeta} ->
-                    {ok, ActorId#actor_id{uid=UID2, pid=undefined}, QueryMeta};
-                {ok, [[]], _} ->
-                    {error, actor_not_found};
-                {error, Error} ->
-                    {error, Error}
-            end;
-        is_binary(UID) ->
-            Query = [
-                <<"SELECT namespace,\"group\",resource,name FROM actors">>,
-                <<" WHERE uid=">>, quote(UID), <<";">>
-            ],
-            case query(SrvId, Query) of
-                {ok, [[{Namespace2, Group2, Res2, Name2}]], QueryMeta} ->
-                    ActorId2 = #actor_id{
-                        uid = UID,
-                        group = Group2,
-                        resource = Res2,
-                        name = Name2,
-                        namespace = Namespace2
-                    },
-                    {ok, ActorId2, QueryMeta};
-                {ok, [[]], _} ->
-                    {error, actor_not_found};
-                {error, Error} ->
-                    {error, Error}
-            end
+find(SrvId, #actor_id{group=Group, resource=Res, name=Name, namespace=Namespace}=ActorId)
+        when is_binary(Group), is_binary(Res), is_binary(Name), is_binary(Namespace) ->
+    Query = [
+        <<"SELECT uid FROM actors">>,
+        <<" WHERE namespace=">>, quote(Namespace),
+        <<" AND \"group\"=">>, quote(Group),
+        <<" AND resource=">>, quote(Res),
+        <<" AND name=">>, quote(Name), <<";">>
+    ],
+    case query(SrvId, Query) of
+        {ok, [[{UID2}]], QueryMeta} ->
+            {ok, ActorId#actor_id{uid=UID2, pid=undefined}, QueryMeta};
+        {ok, [[]], _} ->
+            {error, actor_not_found};
+        {error, Error} ->
+            {error, Error}
+    end;
+
+find(SrvId, #actor_id{uid=UID}) when is_binary(UID) ->
+    Query = [
+        <<"SELECT namespace,\"group\",resource,name FROM actors">>,
+        <<" WHERE uid=">>, quote(UID), <<";">>
+    ],
+    case query(SrvId, Query) of
+        {ok, [[{Namespace2, Group2, Res2, Name2}]], QueryMeta} ->
+            ActorId2 = #actor_id{
+                uid = UID,
+                group = Group2,
+                resource = Res2,
+                name = Name2,
+                namespace = Namespace2
+            },
+            {ok, ActorId2, QueryMeta};
+        {ok, [[]], _} ->
+            {error, actor_not_found};
+        {error, Error} ->
+            {error, Error}
+    end;
+
+find(SrvId, #actor_id{resource=Res, name=Name, namespace=Namespace}=ActorId)
+        when is_binary(Res), is_binary(Name), is_binary(Namespace) ->
+    Query = [
+        <<"SELECT uid,\"group\" FROM actors">>,
+        <<" WHERE namespace=">>, quote(Namespace),
+        <<" AND resource=">>, quote(Res),
+        <<" AND name=">>, quote(Name), <<";">>
+    ],
+    case query(SrvId, Query) of
+        {ok, [[{UID, Group}]], QueryMeta} ->
+            {ok, ActorId#actor_id{uid=UID, group=Group}, QueryMeta};
+        {ok, _, _} ->
+            {error, actor_not_found};
+        {error, Error} ->
+            {error, Error}
+    end;
+
+find(SrvId, #actor_id{name=Name, namespace=Namespace}=ActorId)
+        when is_binary(Name), is_binary(Namespace) ->
+    Query = [
+        <<"SELECT uid,\"group\",resource FROM actors">>,
+        <<" WHERE namespace=">>, quote(Namespace),
+        <<" AND name=">>, quote(Name), <<";">>
+    ],
+    case query(SrvId, Query) of
+        {ok, [[{UID, Group, Res}]], QueryMeta} ->
+            {ok, ActorId#actor_id{uid=UID, group=Group, resource=Res}, QueryMeta};
+        {ok, _, _} ->
+            {error, actor_not_found};
+        {error, Error} ->
+            {error, Error}
     end.
 
 
 %% @doc
-read(SrvId, ActorId) ->
-    #actor_id{namespace=Namespace, group=Group, resource=Res, name=Name, uid=UID} = ActorId,
-    if
-        is_binary(Group) andalso is_binary(Res) andalso
-        is_binary(Name) andalso is_binary(Namespace) ->
-            Query = [
-                <<"SELECT uid,metadata,data FROM actors ">>,
-                <<" WHERE namespace=">>, quote(Namespace),
-                <<" AND \"group\"=">>, quote(Group),
-                <<" AND resource=">>, quote(Res),
-                <<" AND name=">>, quote(Name), <<";">>
-            ],
-            case query(SrvId, Query) of
-                {ok, [[Fields]], QueryMeta} ->
-                    {UID, {jsonb, Meta}, {jsonb, Data}} = Fields,
-                    Actor = #{
-                        group => Group,
-                        resource => Res,
-                        name => Name,
-                        namespace => Namespace,
-                        uid => UID,
-                        data => nklib_json:decode(Data),
-                        metadata => nklib_json:decode(Meta)
-                    },
-                    {ok, Actor, QueryMeta};
-                {ok, [[]], _QueryMeta} ->
-                    {error, actor_not_found};
-                {error, Error} ->
-                    {error, Error}
-            end;
-        is_binary(UID) ->
-            Query = [
-                <<"SELECT namespace,\"group\",resource,name,metadata,data FROM actors ">>,
-                <<" WHERE uid=">>, quote(UID), <<";">>
-            ],
-            case query(SrvId, Query) of
-                {ok, [[Fields]], QueryMeta} ->
-                    {Namespace, Group, Res, Name, {jsonb, Meta}, {jsonb, Data}} = Fields,
-                    Actor = #{
-                        group => Group,
-                        resource => Res,
-                        name => Name,
-                        namespace => Namespace,
-                        uid => UID,
-                        data => nklib_json:decode(Data),
-                        metadata => nklib_json:decode(Meta)
-                    },
-                    {ok, Actor, QueryMeta};
-                {ok, [[]], _QueryMeta} ->
-                    {error, actor_not_found};
-                {error, Error} ->
-                    {error, Error}
-            end
-    end.
+read(SrvId, #actor_id{namespace=Namespace, group=Group, resource=Res, name=Name})
+        when is_binary(Group), is_binary(Res), is_binary(Name), is_binary(Namespace) ->
+    Query = [
+            <<"SELECT uid,metadata,data FROM actors ">>,
+            <<" WHERE namespace=">>, quote(Namespace),
+            <<" AND \"group\"=">>, quote(Group),
+            <<" AND resource=">>, quote(Res),
+            <<" AND name=">>, quote(Name), <<";">>
+        ],
+        case query(SrvId, Query) of
+            {ok, [[Fields]], QueryMeta} ->
+                {UID, {jsonb, Meta}, {jsonb, Data}} = Fields,
+                Actor = #{
+                    group => Group,
+                    resource => Res,
+                    name => Name,
+                    namespace => Namespace,
+                    uid => UID,
+                    data => nklib_json:decode(Data),
+                    metadata => nklib_json:decode(Meta)
+                },
+                {ok, Actor, QueryMeta};
+            {ok, [[]], _QueryMeta} ->
+                {error, actor_not_found};
+            {error, Error} ->
+                {error, Error}
+        end;
 
+read(SrvId, #actor_id{uid=UID}) when is_binary(UID) ->
+    Query = [
+        <<"SELECT namespace,\"group\",resource,name,metadata,data FROM actors ">>,
+        <<" WHERE uid=">>, quote(UID), <<";">>
+    ],
+    case query(SrvId, Query) of
+        {ok, [[Fields]], QueryMeta} ->
+            {Namespace, Group, Res, Name, {jsonb, Meta}, {jsonb, Data}} = Fields,
+            Actor = #{
+                group => Group,
+                resource => Res,
+                name => Name,
+                namespace => Namespace,
+                uid => UID,
+                data => nklib_json:decode(Data),
+                metadata => nklib_json:decode(Meta)
+            },
+            {ok, Actor, QueryMeta};
+        {ok, [[]], _QueryMeta} ->
+            {error, actor_not_found};
+        {error, Error} ->
+            {error, Error}
+    end;
+
+read(SrvId, #actor_id{namespace=Namespace, resource=Res, name=Name})
+        when is_binary(Res), is_binary(Name), is_binary(Namespace) ->
+    Query = [
+        <<"SELECT uid,\"group\",metadata,data FROM actors ">>,
+        <<" WHERE namespace=">>, quote(Namespace),
+        <<" AND resource=">>, quote(Res),
+        <<" AND name=">>, quote(Name), <<";">>
+    ],
+    case query(SrvId, Query) of
+        {ok, [[Fields]], QueryMeta} ->
+            {UID, Group, {jsonb, Meta}, {jsonb, Data}} = Fields,
+            Actor = #{
+                group => Group,
+                resource => Res,
+                name => Name,
+                namespace => Namespace,
+                uid => UID,
+                data => nklib_json:decode(Data),
+                metadata => nklib_json:decode(Meta)
+            },
+            {ok, Actor, QueryMeta};
+        {ok, _, _QueryMeta} ->
+            {error, actor_not_found};
+        {error, Error} ->
+            {error, Error}
+    end;
+
+read(SrvId, #actor_id{namespace=Namespace, name=Name})
+        when is_binary(Name), is_binary(Namespace) ->
+    Query = [
+        <<"SELECT uid,\"group\",resource,metadata,data FROM actors ">>,
+        <<" WHERE namespace=">>, quote(Namespace),
+        <<" AND name=">>, quote(Name), <<";">>
+    ],
+    case query(SrvId, Query) of
+        {ok, [[Fields]], QueryMeta} ->
+            {UID, Group, Res, {jsonb, Meta}, {jsonb, Data}} = Fields,
+            Actor = #{
+                group => Group,
+                resource => Res,
+                name => Name,
+                namespace => Namespace,
+                uid => UID,
+                data => nklib_json:decode(Data),
+                metadata => nklib_json:decode(Meta)
+            },
+            {ok, Actor, QueryMeta};
+        {ok, _, _QueryMeta} ->
+            {error, actor_not_found};
+        {error, Error} ->
+            {error, Error}
+    end.
 
 
 -record(save_fields, {

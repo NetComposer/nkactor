@@ -85,7 +85,12 @@ actor_db_delete(SrvId, UIDs, Opts) ->
     term().
 
 actor_db_search(SrvId, Type, Opts) ->
-    nkactor_store_pgsql_search:search(SrvId, Type, Opts).
+    case nkactor_store_pgsql_search:search(Type, Opts) of
+        {query, Query, Fun} ->
+            nkactor_store_pgsql:query(SrvId, Query, #{result_fun=>Fun});
+        {error, Error} ->
+            {error, Error}
+    end.
 
 
 %% @doc
@@ -93,4 +98,9 @@ actor_db_search(SrvId, Type, Opts) ->
     term().
 
 actor_db_aggregate(SrvId, Type, Opts) ->
-    nkactor_store_pgsql_aggregation:aggregation(SrvId, Type, Opts).
+    case nkactor_store_pgsql_aggregation:aggregation(Type, Opts) of
+        {query, Query, Fun} ->
+            nkactor_store_pgsql:query(SrvId, Query, #{result_fun=>Fun});
+        {error, Error} ->
+            {error, Error}
+    end.

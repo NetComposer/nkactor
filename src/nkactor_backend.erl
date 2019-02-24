@@ -74,7 +74,7 @@
 
 find(Id) ->
     ActorId = nkactor_lib:id_to_actor_id(Id),
-    case nkactor_namespace:find_registered(ActorId) of
+    case nkactor_namespace:find_actor(ActorId) of
         {true, SrvId, #actor_id{pid=Pid}=ActorId2} when is_pid(Pid) ->
             % It is registered or cached
             {ok, SrvId, ActorId2, #{}};
@@ -91,14 +91,11 @@ do_find([], _ActorId) ->
     {error, actor_not_found};
 
 do_find([SrvId|Rest], ActorId) ->
-    #actor_id{name = Namespace} = ActorId,
     case ?CALL_SRV(SrvId, actor_db_find, [SrvId, ActorId]) of
-        {ok, #actor_id{} = ActorId2, Meta} when is_binary(Namespace)->
-            {ok, SrvId, ActorId2, Meta};
         {ok, #actor_id{} = ActorId2, Meta} ->
-            % It was an UID, we must check now that we have the namespace
-            % to see if it is loaded and the pid is added
-            case nkactor_namespace:find_registered(ActorId2) of
+            % If its was an UID, or a partial path, we must check now that
+            % it could be registered, now that we have full data
+            case nkactor_namespace:find_actor(ActorId2) of
                 {true, _SrvId, #actor_id{pid = Pid} = ActorId3} when is_pid(Pid) ->
                     {ok, SrvId, ActorId3, Meta};
                 _ ->
@@ -384,7 +381,7 @@ aggregation(SrvId, AggType) ->
 
 
 %% @doc
--spec aggregation(nkactor:id(), agg_type(), term()) ->
+-spec aggregation(nkactor:id(), agg_type(), map()) ->
     {ok, [{binary(), integer()}], Meta::map()} | {error, term()}.
 
 aggregation(SrvId, AggType, Opts) ->
@@ -451,14 +448,22 @@ do_read(SrvId, ActorId, Opts) ->
                     ?LLOG(warning, "actor resource unknown ~s:~s", [Group, Res]),
                     {error, actor_invalid};
                 Module ->
-                    Req1 = maps:get(request, Opts, #{}),
-                    Req2 = Req1#{
-                        verb => get,
-                        srv => SrvId
+                    Syntax = #{
+                        '__mandatory' => [group, resource, name, namespace, uid]
                     },
-                    case nkactor_actor:parse(Module, Actor, Req2) of
+                    case nkactor_syntax:parse_actor(Actor, Syntax) of
                         {ok, Actor2} ->
-                            {ok, Actor2, Meta};
+                            Req1 = maps:get(request, Opts, #{}),
+                            Req2 = Req1#{
+                                verb => get,
+                                srv => SrvId
+                            },
+                            case nkactor_actor:parse(Module, Actor2, Req2) of
+                                {ok, Actor3} ->
+                                    {ok, Actor3, Meta};
+                                {error, Error} ->
+                                    {error, Error}
+                            end;
                         {error, Error} ->
                             {error, Error}
                     end
@@ -469,12 +474,14 @@ do_read(SrvId, ActorId, Opts) ->
 
 
 %% @private
-pre_create(#{group:=Group, resource:=Res, namespace:=Namespace}=Actor, Opts) ->
-    case nkactor_namespace:find_namespace(Namespace) of
-        {ok, SrvId, _Pid} ->
-            Actor2 = nkactor_lib:add_creation_fields(Actor),
-            case nkactor_lib:check_links(Actor2) of
-                {ok, Actor3} ->
+pre_create(Actor, Opts) ->
+    Syntax = #{'__mandatory' => [group, resource, namespace]},
+    case nkactor_syntax:parse_actor(Actor, Syntax) of
+        {ok, Actor2} ->
+            Actor3 = nkactor_lib:add_creation_fields(Actor2),
+            #{group:=Group, resource:=Res, namespace:=Namespace} = Actor3,
+            case nkactor_namespace:get_namespace(Namespace) of
+                {ok, SrvId, _Pid} ->
                     Req1 = maps:get(request, Opts, #{}),
                     Req2 = Req1#{
                         verb => create,
@@ -483,7 +490,12 @@ pre_create(#{group:=Group, resource:=Res, namespace:=Namespace}=Actor, Opts) ->
                     Module = nkactor_util:get_module(Group, Res),
                     case nkactor_actor:parse(Module, Actor3, Req2) of
                         {ok, Actor4} ->
-                            {ok, SrvId, Actor4};
+                            case nkactor_lib:check_links(Actor4) of
+                                {ok, Actor5} ->
+                                    {ok, SrvId, Actor5};
+                                {error, Error} ->
+                                    {error, Error}
+                            end;
                         {error, Error} ->
                             {error, Error}
                     end;
@@ -497,10 +509,11 @@ pre_create(#{group:=Group, resource:=Res, namespace:=Namespace}=Actor, Opts) ->
 
 %% @private
 pre_update(#actor_id{group=Group, resource=Res, namespace=Namespace}, Actor, Opts) ->
-    case nkactor_namespace:find_namespace(Namespace) of
-        {ok, SrvId, _Pid} ->
-            case nkactor_lib:check_links(Actor) of
-                {ok, Actor2} ->
+    Syntax = #{'__mandatory' => [group, resource, namespace]},
+    case nkactor_syntax:parse_actor(Actor, Syntax) of
+        {ok, Actor2} ->
+            case nkactor_namespace:get_namespace(Namespace) of
+                {ok, SrvId, _Pid} ->
                     Req1 = maps:get(request, Opts, #{}),
                     Req2 = Req1#{
                         verb => update,
@@ -509,7 +522,12 @@ pre_update(#actor_id{group=Group, resource=Res, namespace=Namespace}, Actor, Opt
                     Module = nkactor_util:get_module(Group, Res),
                     case nkactor_actor:parse(Module, Actor2, Req2) of
                         {ok, Actor3} ->
-                            {ok, SrvId, Actor3};
+                            case nkactor_lib:check_links(Actor3) of
+                                {ok, Actor4} ->
+                                    {ok, SrvId, Actor4};
+                                {error, Error} ->
+                                    {error, Error}
+                            end;
                         {error, Error} ->
                             {error, Error}
                     end;

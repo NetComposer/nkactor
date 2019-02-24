@@ -21,7 +21,7 @@
 %% @doc Actor Search
 -module(nkactor_search).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
--export([parse/1, parse/2]).
+-export([parse/2]).
 -export_type([search_spec/0, filter/0, sort_spec/0]).
 
 -include("nkactor.hrl").
@@ -38,10 +38,11 @@
         domain => nkactor:domain(),
         deep => boolean(),
         from => pos_integer(),
-       size => pos_integer(),
+        size => pos_integer(),
         totals => boolean(),
         filter => filter(),
-        sort => [sort_spec()]
+        sort => [sort_spec()],
+        do_delete => boolean()
     }.
 
 
@@ -97,24 +98,19 @@
 %% Syntax
 %% ===================================================================
 
-%% @doc
--spec parse(map()) ->
-    {ok, map(), list()} | {error, term()}.
-
-parse(Term) ->
-    parse(Term, #{}).
-
 
 %% @doc
 %% If filter_fields is empty, anything is accepted
 %% Same for sort_fields
 %% If field is not in field_type, string is assumed
 %% If a field is defined in FieldTypes, 'type' will be added
--spec parse(map(), search_opts()) ->
-    {ok, map(), list()} | {error, term()}.
+-spec parse(search_spec(), search_opts()) ->
+    {ok, search_spec()} | {error, term()}.
 
-parse(Term, Opts) ->
-    case nklib_syntax:parse(Term, search_spec_syntax(), #{search_opts=>Opts}) of
+parse(SearchSpec, SearchOpts) ->
+    Syntax = search_spec_syntax(),
+    SyntaxOpts = #{search_opts=>SearchOpts},
+    case nklib_syntax:parse(SearchSpec, Syntax, SyntaxOpts) of
         {ok, Parsed, []} ->
             {ok, Parsed};
         {ok, _, [Field|_]} ->
@@ -128,7 +124,7 @@ parse(Term, Opts) ->
 search_spec_syntax() ->
     #{
         from => pos_integer,
-       size => pos_integer,
+        size => pos_integer,
         namespace => binary,
         deep => boolean,
         totals => boolean,
@@ -138,6 +134,7 @@ search_spec_syntax() ->
             'not' => {list, search_spec_syntax_filter()}
         },
         sort => {list, search_spec_syntax_sort()},
+        do_delete => boolean,
         '__defaults' => #{namespace => <<>>}
     }.
 
@@ -240,11 +237,3 @@ syntax_parse_trans(Field, List, Trans) ->
             {Field, List}
     end.
 
-
-
-
-
-
-%%%% @private
-%%to_bin(Term) when is_binary(Term) -> Term;
-%%to_bin(Term) -> nklib_util:to_binary(Term).
