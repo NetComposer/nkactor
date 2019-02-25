@@ -77,16 +77,14 @@ quote_list(Term) ->
 
 
 %% @private
+filter_path(<<>>, true) ->
+    [<<"TRUE">>];
+
 filter_path(Namespace, Deep) ->
     Path = nkactor_lib:make_rev_path(Namespace),
     case Deep of
         true ->
-            case Path of
-                <<>> ->
-                    [<<"TRUE">>];
-                _ ->
-                    [<<"(path LIKE ">>, quote(<<Path/binary, "%">>), <<")">>]
-            end;
+            [<<"(path LIKE ">>, quote(<<Path/binary, "%">>), <<")">>];
         false ->
             [<<"(path = ">>, quote(Path), <<")">>]
     end.

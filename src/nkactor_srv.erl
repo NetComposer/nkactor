@@ -1013,7 +1013,15 @@ do_post_init(State) ->
 
 %% @private
 set_debug(#actor_st{srv=SrvId, actor_id=ActorId}=State) ->
-    Debug = nkactor_lib:get_debug(SrvId, ActorId),
+    #actor_id{group=Group, resource=Resource} = ActorId,
+    Debug = case catch nkserver:get_plugin_config(SrvId, nkactor, debug_actors) of
+        List when is_list(List) ->
+            lists:member(<<"all">>, List) orelse
+                lists:member(Group, List) orelse
+                lists:member(<<Group/binary, $/, Resource/binary>>, List);
+        _ ->
+            false
+    end,
     put(nkactor_debug, Debug),
     ?ACTOR_DEBUG("debug activated", [], State).
 
@@ -1336,6 +1344,8 @@ link_down(Mon, #actor_st{links=Links}=State) ->
         not_found ->
             not_found
     end.
+
+
 
 
 %%%% @private

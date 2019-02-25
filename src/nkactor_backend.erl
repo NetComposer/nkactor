@@ -24,7 +24,7 @@
 
 -export([find/1, activate/2, read/2]).
 -export([create/2, update/3, delete/2, delete_multi/2]).
--export([search/2, search/3, aggregation/2, aggregation/3]).
+-export([search/3, aggregation/3]).
 %% -export([check_service/4]).
 %%-export_type([search_obj/0, search_objs_opts/0]).
 
@@ -46,9 +46,6 @@
 
 -type search_obj() :: #{binary() => term()}.
 
-%-type iterate_fun() :: fun((search_obj()) -> {ok, term()}).
-
-%-type aggregation_type() :: term().
 
 
 
@@ -338,46 +335,12 @@ delete_multi(SrvId, UIDs) ->
     end.
 
 
-
 %% @doc
--spec search(nkactor:id(), search_type()) ->
-    {ok, [search_obj()], Meta::map()} | {error, term()}.
-
-search(SrvId, SearchType) ->
-    search(SrvId, SearchType, #{}).
-
-
-%% @doc
--spec search(nkactor:id(), search_type(), term()) ->
+-spec search(nkactor:id(), search_type(), map()) ->
     {ok, [search_obj()], Meta::map()} | {error, term()}.
 
 search(SrvId, SearchType, Opts) ->
     ?CALL_SRV(SrvId, actor_db_search, [SrvId, SearchType, Opts]).
-
-
-%%%% @doc Internal iteration
-%%-spec iterate(type()|core, search_type(), iterate_fun(), term()) ->
-%%    {ok, term()} | {error, term()}.
-%%
-%%iterate(Type, SearchType, Fun, Acc) ->
-%%    iterate(Type, SearchType, Fun, Acc, #{}).
-%%
-%%
-%%%% @doc
-%%-spec iterate(type()|core, search_type(), iterate_fun(), term(), term()) ->
-%%    {ok, term()} | {error, term()}.
-%%
-%%iterate(Type, SearchType, Fun, Acc, Opts) ->
-%%    SrvId = maps:get(srv, Opts, ?ROOT_DOMAIN),
-%%    ?CALL_SRV(SrvId, actor_db_iterate_objs, [SrvId, Type, SearchType, Fun, Acc, Opts]).
-%%
-%%
-%% @doc Internal aggregation
--spec aggregation(nkactor:id(), agg_type()) ->
-    {ok, [{binary(), integer()}], Meta::map()} | {error, term()}.
-
-aggregation(SrvId, AggType) ->
-    aggregation(SrvId, AggType, #{}).
 
 
 %% @doc

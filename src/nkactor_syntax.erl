@@ -124,13 +124,40 @@ parse_request(Req) ->
             end;
         {ok, #{group:=_, resource:=_, namespace:=_}=Req2, _} ->
             {ok, Req2};
-        {ok, _Req2, _} ->
-            Syntax2 = Syntax#{
-                '__mandatory' => [group, resource, namespace]
-            },
-            {error, Error} = nklib_syntax:parse(Req, Syntax2),
+        {ok, #{body:=Body}=Req2, _} when is_map(Body) ->
+            case nklib_syntax:parse(Body, body_syntax()) of
+                {ok, ParsedBody, _} ->
+                    case maps:merge(Req2, ParsedBody) of
+                        #{group:=_, resource:=_, namespace:=_}=Req3 ->
+                            {ok, Req3};
+                        _ ->
+                            parse_request_missing(Req2)
+                    end;
+                _ ->
+                    parse_request_missing(Req2)
+            end;
+        {ok, Req2, _} ->
+            parse_request_missing(Req2);
+        {error, Error} ->
             {error, Error}
     end.
+
+
+%% @private
+parse_request_missing(Req) ->
+    case maps:is_key(group, Req) of
+        false ->
+            {error, {field_missing, <<"group">>}};
+        true ->
+            case maps:is_key(resource, Req) of
+                false ->
+                    {error, {field_missing, <<"resource">>}};
+                true ->
+                    {error, {field_missing, <<"namespace">>}}
+            end
+    end.
+
+
 
 %% @private
 request_syntax() ->
@@ -153,6 +180,17 @@ request_syntax() ->
             verb => get
         }
     }.
+
+
+%% @private
+body_syntax() ->
+    #{
+        group => binary,
+        namespace => binary,
+        resource => binary,
+        name => binary
+    }.
+
 
 
 %% @private
@@ -204,7 +242,7 @@ params_syntax(create) ->
 params_syntax(list) ->
     #{
         from => pos_integer,
-       size => pos_integer,
+        size => pos_integer,
         sort => binary,
         labels => #{'__key_binary' => binary},
         fields => #{'__key_binary' => binary},
@@ -223,7 +261,7 @@ params_syntax(delete) ->
 params_syntax(deletecollection) ->
     #{
         from => pos_integer,
-       size => pos_integer,
+        size => pos_integer,
         sort => binary,
         labels => #{'__key_binary' => binary},
         fields => #{'__key_binary' => binary},

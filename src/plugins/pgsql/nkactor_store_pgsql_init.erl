@@ -117,7 +117,6 @@ create_database_query() ->
             last_update STRING NOT NULL,
             expires INTEGER,
             fts_words STRING,
-            UNIQUE INDEX path_idx (path),
             INDEX name_idx (namespace, \"group\", resource, name),
             INDEX last_update_idx (last_update),
             INDEX expires_idx (expires),

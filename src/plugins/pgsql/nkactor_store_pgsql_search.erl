@@ -21,9 +21,7 @@
 -module(nkactor_store_pgsql_search).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -export([search/2]).
--export([pgsql_actors/2, pgsql_actors_id/2,
-         pgsql_totals_actors/2, pgsql_totals_actors_id/2,
-         pgsql_delete/2]).
+-export([pgsql_actors/2, pgsql_delete/2]).
 -import(nkactor_store_pgsql, [query/2, query/3, quote/1, quote_list/1, filter_path/2]).
 
 -define(LLOG(Type, Txt, Args), lager:Type("NkACTOR PGSQL "++Txt, Args)).
@@ -40,7 +38,7 @@ search(actors_search_linked, Params) ->
     UID = maps:get(uid, Params),
     LinkType = maps:get(link_type, Params, any),
     Namespace = maps:get(namespace, Params, <<>>),
-    Deep = maps:get(deep, params, false),
+    Deep = maps:get(deep, Params, false),
     From = maps:get(from, Params, 0),
     Limit = maps:get(size, Params, 100),
     Query = [
@@ -69,9 +67,9 @@ search(actors_search_linked, Params) ->
 
 search(actors_search_fts, Params) ->
     Word = maps:get(word, Params),
-    Field = maps:get(link_type, Params, any),
+    Field = maps:get(field, Params, any),
     Namespace = maps:get(namespace, Params, <<>>),
-    Deep = maps:get(deep, params, false),
+    Deep = maps:get(deep, Params, false),
     From = maps:get(from, Params, 0),
     Limit = maps:get(size, Params, 100),
     Word2 = nklib_parse:normalize(Word, #{unrecognized=>keep}),
@@ -122,50 +120,13 @@ search(actors_search, Params) ->
             false ->
                 []
         end,
-        <<"SELECT uid,namespace,\"group\",resource,name,data,metadata FROM actors">>,
+        make_select(Params),
         SQLFilters,
         SQLSort,
         <<" OFFSET ">>, to_bin(From), <<" LIMIT ">>, to_bin(Size),
         <<";">>
     ],
-    ResultFun = case Totals of
-        true ->
-            fun ?MODULE:pgsql_totals_actors/2;
-        false ->
-            fun ?MODULE:pgsql_actors/2
-    end,
-    {query, Query, ResultFun};
-
-search(actors_search_ids, Params) ->
-    From = maps:get(from, Params, 0),
-    Size = maps:get(size, Params, 10),
-    Totals = maps:get(totals, Params, false),
-    SQLFilters = make_sql_filters(Params),
-    SQLSort = make_sql_sort(Params),
-    Query = [
-        case Totals of
-            true ->
-                [
-                    <<"SELECT COUNT(*) FROM actors">>,
-                    SQLFilters,
-                    <<";">>
-                ];
-            false ->
-                []
-        end,
-        <<"SELECT uid,namespace,\"group\",resource,name,last_update FROM actors">>,
-        SQLFilters,
-        SQLSort,
-        <<" OFFSET ">>, to_bin(From), <<" LIMIT ">>, to_bin(Size),
-        <<";">>
-    ],
-    ResultFun = case Totals of
-        true ->
-            fun ?MODULE:pgsql_totals_actors_id/2;
-        false ->
-            fun ?MODULE:pgsql_actors_id/2
-    end,
-    {query, Query, ResultFun};
+    {query, Query, fun ?MODULE:pgsql_actors/2};
 
 search(actors_delete, Params) ->
     DoDelete = maps:get(do_delete, Params, false),
@@ -187,7 +148,7 @@ search(actors_delete_old, Params) ->
     Res = maps:get(resource, Params),
     Epoch = maps:get(epoch, params),
     Namespace = maps:get(namespace, Params, <<>>),
-    Deep = maps:get(deep, params, false),
+    Deep = maps:get(deep, Params, false),
     Query = [
         <<"DELETE FROM actors">>,
         <<" WHERE \"group\"=">>, quote(Group), <<" AND resource=">>, quote(Res),
@@ -205,6 +166,26 @@ search(SearchType, _Params) ->
 %% ===================================================================
 %% Filters
 %% ===================================================================
+
+
+%% @private
+make_select(Params) ->
+    [
+        <<"SELECT uid,namespace,\"group\",resource,name">>,
+        case maps:get(get_metadata, Params, false) of
+            true ->
+                <<",metadata">>;
+            false ->
+                []
+            end,
+        case maps:get(get_data, Params, false) of
+            true ->
+                <<",data">>;
+            false ->
+                []
+        end,
+        <<" FROM actors">>
+    ].
 
 
 %% @private
@@ -516,79 +497,47 @@ finish_json_value(Type, Last, Acc) ->
 
 
 %% @private
-pgsql_actors([{{select, Size}, Rows, _OpMeta}], Meta) ->
-    Actors = [
-        #{
-            group => Group,
-            resource => Res,
-            name => Name,
-            namespace => Namespace,
-            uid => UID,
-            data => nklib_json:decode(Data),
-            metadata => nklib_json:decode(MetaData)
-        }
-        || {UID, Namespace, Group, Res, Name, {jsonb, Data}, {jsonb, MetaData}} <- Rows
-    ],
-    {ok, Actors, Meta#{size=>Size}}.
-
-
-%% @private
-pgsql_totals_actors([{{select, 1}, [{Total}], _}, {{select, Size}, Rows, _OpMeta}], Meta) ->
-    Actors = [
-        #{
-            group => Group,
-            resource => Res,
-            name => Name,
-            namespace => Namespace,
-            uid => UID,
-            data => nklib_json:decode(Data),
-            metadata => nklib_json:decode(MetaData)
-        }
-        || {UID, Namespace, Group, Res, Name, {jsonb, Data}, {jsonb, MetaData}} <- Rows
-    ],
-    {ok, Actors, Meta#{size=>Size, total=>Total}}.
-
-
-%% @private
-pgsql_actors_id([{{select, Size}, Rows, _OpMeta}], Meta) ->
-    Actors = [
-        #actor_id{
-            uid = UID,
-            group = Group,
-            resource = Res,
-            name = Name,
-            namespace = Namespace
-        }
-        || {UID, Namespace, Group, Res, Name, _Updated} <- Rows
-    ],
-    Last = case lists:reverse(Rows) of
-        [{_UID, _Namespace, _Group, _Res, _Name, Updated}|_] ->
-            Updated;
-        [] ->
-            undefined
+pgsql_actors(Result, Meta) ->
+    % lager:error("NKLOG META ~p", [_Meta]),
+    #{nkactor_params:=Params, pgsql:=#{time:=Time}} = Meta,
+    {Rows, Meta2} = case Result of
+        [{{select, Size}, Rows0, _OpMeta}] ->
+            {Rows0, #{size=>Size, time=>Time}};
+        [{{select, 1}, [{Total}], _}, {{select, Size}, Rows0, _OpMeta}] ->
+            {Rows0, #{size=>Size, total=>Total, time=>Time}}
     end,
-    {ok, Actors, Meta#{size=>Size, last_updated=>Last}}.
-
-
-%% @private
-pgsql_totals_actors_id([{{select, 1}, [{Total}], _}, {{select, Size}, Rows, _OpMeta}], Meta) ->
-    Actors = [
-        #actor_id{
-            uid = UID,
-            group = Group,
-            resource = Res,
-            name = Name,
-            namespace = Namespace
-        }
-        || {UID, Namespace, Group, Res, Name, _Updated} <- Rows
-    ],
-    Last = case lists:reverse(Rows) of
-        [{_UID, _Namespace, _Group, _Res, _Name, Updated}|_] ->
-            Updated;
-        [] ->
-            undefined
-    end,
-    {ok, Actors, Meta#{size=>Size, total=>Total, last_updated=>Last}}.
+    GetData = maps:get(get_data, Params, false),
+    GetMeta = maps:get(get_metadata, Params, false),
+    Actors = lists:map(
+        fun(Row) ->
+            Actor1 = #{
+                uid => element(1, Row),
+                namespace => element(2, Row),
+                group => element(3, Row),
+                resource => element(4, Row),
+                name => element(5, Row)
+            },
+            Actor2 = case GetMeta of
+                true ->
+                    {jsonb, MetaData} = element(6, Row),
+                    Actor1#{metadata => nklib_json:decode(MetaData)};
+                false ->
+                    Actor1
+            end,
+            Actor3 = case GetData of
+                true when GetMeta ->
+                    {jsonb, Data} = element(7, Row),
+                    Actor2#{data => nklib_json:decode(Data)};
+                true ->
+                    {jsonb, Data} = element(6, Row),
+                    Actor2#{data => nklib_json:decode(Data)};
+                false ->
+                    Actor2
+            end,
+            Actor3
+        end,
+        Rows),
+    {ok, Actors, Meta2}.
 
 
 pgsql_delete([{{delete, Total}, [], _}], Meta) ->
@@ -603,8 +552,6 @@ pgsql_delete([{{select, _}, [{Total}], _}], Meta) ->
 %% ===================================================================
 %% Internal
 %% ===================================================================
-
-
 %% @private
 to_bin(Term) when is_binary(Term) -> Term;
 to_bin(Term) -> nklib_util:to_binary(Term).

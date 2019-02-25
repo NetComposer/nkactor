@@ -21,7 +21,7 @@
 %% @doc Actor Search
 -module(nkactor_search).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
--export([parse/2]).
+-export([parse/1]).
 -export_type([search_spec/0, filter/0, sort_spec/0]).
 
 -include("nkactor.hrl").
@@ -35,14 +35,22 @@
 
 -type search_spec() ::
     #{
-        domain => nkactor:domain(),
+        namespace => nkactor:namespace(),
         deep => boolean(),
         from => pos_integer(),
         size => pos_integer(),
         totals => boolean(),
         filter => filter(),
         sort => [sort_spec()],
-        do_delete => boolean()
+        get_data => boolean(),
+        get_metadata => boolean(),
+        do_delete => boolean(),
+        meta => #{
+            filter_fields => ordsets:ordset(binary()),
+            sort_fields => ordsets:ordset(binary()),
+            field_type => #{field_name() => field_type()},
+            field_trans => #{field_name() => field_name()|fun((field_name()) -> field_name())}
+        }
     }.
 
 
@@ -84,14 +92,6 @@
         order => asc | desc
     }.
 
--type search_opts() ::
-    #{
-        filter_fields => ordsets:ordset(binary()),
-        sort_fields => ordsets:ordset(binary()),
-        field_type => #{field_name() => field_type()},
-        field_trans => #{field_name() => field_name()|fun((field_name()) -> field_name())}
-    }.
-
 
 
 %% ===================================================================
@@ -104,12 +104,12 @@
 %% Same for sort_fields
 %% If field is not in field_type, string is assumed
 %% If a field is defined in FieldTypes, 'type' will be added
--spec parse(search_spec(), search_opts()) ->
+-spec parse(search_spec()) ->
     {ok, search_spec()} | {error, term()}.
 
-parse(SearchSpec, SearchOpts) ->
+parse(SearchSpec) ->
     Syntax = search_spec_syntax(),
-    SyntaxOpts = #{search_opts=>SearchOpts},
+    SyntaxOpts = #{search_opts=>maps:get(meta, SearchSpec, #{})},
     case nklib_syntax:parse(SearchSpec, Syntax, SyntaxOpts) of
         {ok, Parsed, []} ->
             {ok, Parsed};
@@ -135,6 +135,9 @@ search_spec_syntax() ->
         },
         sort => {list, search_spec_syntax_sort()},
         do_delete => boolean,
+        get_data => boolean,
+        get_metadata => boolean,
+        meta => ignore,
         '__defaults' => #{namespace => <<>>}
     }.
 

@@ -98,8 +98,8 @@ reply(Term, Req) ->
 
 
 %% @private
--spec do_request(nkdomain_api:request()) ->
-    nkdomain_api:response().
+-spec do_request(nkactor_api:request()) ->
+    nkactor_api:response().
 
 do_request(Req) ->
     try

@@ -81,13 +81,13 @@ actor_db_delete(SrvId, UIDs, Opts) ->
 
 
 %% @doc
--spec actor_db_search(id(), nkactor_backend:search_type(), nkactor_backend:opts()) ->
+-spec actor_db_search(id(), nkactor_backend:search_type(), map()) ->
     term().
 
-actor_db_search(SrvId, Type, Opts) ->
-    case nkactor_store_pgsql_search:search(Type, Opts) of
+actor_db_search(SrvId, Type, Params) ->
+    case nkactor_store_pgsql_search:search(Type, Params) of
         {query, Query, Fun} ->
-            nkactor_store_pgsql:query(SrvId, Query, #{result_fun=>Fun});
+            nkactor_store_pgsql:query(SrvId, Query, #{result_fun=>Fun, nkactor_params=>Params});
         {error, Error} ->
             {error, Error}
     end.

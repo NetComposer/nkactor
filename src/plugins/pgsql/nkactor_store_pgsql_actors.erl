@@ -333,10 +333,7 @@ populate_fields([Actor|Rest], SaveFields) ->
         metadata := Meta
     } = Actor,
     true = is_binary(UID) andalso UID /= <<>>,
-    Path = list_to_binary([
-        nkactor_lib:make_rev_path(Namespace), $.,
-        Name, $:, Res, $:, Group
-    ]),
+    Path = nkactor_lib:make_rev_path(Namespace),
     QUID = quote(UID),
     QPath = quote(Path),
     Hash = maps:get(hash, Meta, <<>>),

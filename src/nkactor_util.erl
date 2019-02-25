@@ -29,7 +29,7 @@
 
 -export([register_modules/2, get_module/2]).
 -export([get_services/0]).
--export([get_actor_config/1]).
+-export([get_actor_config/1, get_actor_config/2, get_actor_config/3]).
 
 -type group() :: nkactor:group().
 -type resource() :: nkactor:resource().
@@ -84,6 +84,7 @@ register_modules(Group, Modules) ->
 get_module(Group, Key) ->
     nklib_util:do_config_get({nkactor_module, to_bin(Group), to_bin(Key)}).
 
+
 %% @doc
 get_services() ->
     [
@@ -101,20 +102,32 @@ get_actor_config(ActorId) ->
         Module ->
             case nkactor_namespace:get_namespace(Namespace) of
                 {ok, SrvId, _} ->
-                    case catch nklib_util:do_config_get({nkactor_config, SrvId, Module}) of
-                        undefined ->
-                            Config1 = nkactor_actor:config(Module),
-                            Config2 = ?CALL_SRV(SrvId, actor_config, [Config1]),
-                            Config3 = Config2#{module=>Module},
-                            nklib_util:do_config_put({nkactor_config, SrvId, Module}, Config2),
-                            {ok, Config3};
-                        Config when is_map(Config) ->
-                            {ok, Config}
-                    end;
+                    get_actor_config(SrvId, Module);
                 {error, Error} ->
                     {error, Error}
             end
     end.
+
+
+%% @doc Used to get modified configuration for the service responsible
+get_actor_config(SrvId, Group, Resource) ->
+    Module = get_module(Group, Resource),
+    get_actor_config(SrvId, Module).
+
+
+%% @doc Used to get modified configuration for the service responsible
+get_actor_config(SrvId, Module) when is_atom(SrvId), is_atom(Module) ->
+    case catch nklib_util:do_config_get({nkactor_config, SrvId, Module}) of
+        undefined ->
+            Config1 = nkactor_actor:config(Module),
+            Config2 = ?CALL_SRV(SrvId, actor_config, [Config1]),
+            Config3 = Config2#{module=>Module},
+            nklib_util:do_config_put({nkactor_config, SrvId, Module}, Config2),
+            {ok, Config3};
+        Config when is_map(Config) ->
+            {ok, Config}
+    end.
+
 
 
 %% @private

@@ -19,15 +19,15 @@
 %% -------------------------------------------------------------------
 
 
-%% @doc Basic Actor behaviour
+%% @doc Actor generic functions
 -module(nkactor).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([find/1, activate/1, update/3, create/2, delete/1, delete/2]).
 -export([get_actor/1, get_actor/2, get_path/1, is_enabled/1, enable/2, stop/1, stop/2]).
 -export([search_groups/2, search_resources/3]).
--export([search_linked_to/3, search_fts/3, search/3, search_ids/3,
-         search_delete/3, delete_old/5]).
+-export([search_linked_to/3, search_fts/3, search_actors/2, search_delete/2, delete_old/5]).
+-export([base_namespace/1]).
 -export([sync_op/2, sync_op/3, async_op/2]).
 -export_type([actor/0, id/0, uid/0, namespace/0, resource/0, path/0, name/0,
               vsn/0, group/0,hash/0,
@@ -220,7 +220,7 @@
 %% @doc Finds and actor from UUID or Path, in memory or disk
 %% It also checks if it is currently activated, returning the pid
 -spec find(id()) ->
-    {ok, nkserver:id(), actor_id(), Meta::map()} | {error, actor_not_found|term()}.
+    {ok, actor_id()} | {error, actor_not_found|term()}.
 
 find(Id) ->
     case nkactor_backend:find(Id) of
@@ -372,7 +372,12 @@ stop(Id, Reason) ->
     {ok, [{binary(), integer()}], Meta::map()} | {error, term()}.
 
 search_groups(SrvId, Params) ->
-    nkactor_backend:aggregation(SrvId, actors_aggregation_groups, Params).
+    case nkactor_backend:aggregation(SrvId, actors_aggregation_groups, Params) of
+        {ok, Result, _Meta} ->
+            {ok, Result};
+        {error, Error} ->
+            {error, Error}
+    end.
 
 
 %% @doc
@@ -381,7 +386,12 @@ search_groups(SrvId, Params) ->
 
 search_resources(SrvId, Group, Opts) ->
     Params = Opts#{group=>Group},
-    nkactor_backend:aggregation(SrvId, actors_aggregation_resources, Params).
+    case nkactor_backend:aggregation(SrvId, actors_aggregation_resources, Params) of
+        {ok, Result, _Meta} ->
+            {ok, Result};
+        {error, Error} ->
+            {error, Error}
+    end.
 
 
 -type search_linked_opts() ::
@@ -400,7 +410,12 @@ search_linked_to(SrvId, Id, Opts) ->
     case find(Id) of
         {ok, #actor_id{uid=UID}} ->
             Params = Opts#{uid => UID},
-            nkactor_backend:search(SrvId, actors_search_linked, Params);
+            case nkactor_backend:search(SrvId, actors_search_linked, Params) of
+                {ok, Result, _Meta} ->
+                    {ok, Result};
+                {error, Error} ->
+                    {error, Error}
+            end;
         {error, Error} ->
             {error, Error}
     end.
@@ -416,34 +431,31 @@ search_linked_to(SrvId, Id, Opts) ->
 
 %% @doc Gets objects under a path, sorted by path
 -spec search_fts(nkservce:id(), binary(), search_fts_opts()) ->
-    {ok, [UID::binary()], Meta::map()} | {error, term()}.
+    {ok, [UID::binary()]} | {error, term()}.
 
 search_fts(SrvId, Word, Opts) ->
     Params = Opts#{word => Word},
-    nkactor_backend:search(SrvId, actors_search_fts, Params).
-
-
-%% @doc Generic search returning actors
--spec search(nkserver:id(), nkactor_search:search_spec(), nkactor_search:search_opts()) ->
-    {ok, [actor()], Meta::map()} | {error, term()}.
-
-search(SrvId, SearchSpec, SearchOpts) ->
-    case nkactor_search:parse(SearchSpec, SearchOpts) of
-        {ok, SearchSpec2} ->
-            nkactor_backend:search(SrvId, actors_search, SearchSpec2);
+    case nkactor_backend:search(SrvId, actors_search_fts, Params) of
+        {ok, Result, _Meta} ->
+            {ok, Result};
         {error, Error} ->
             {error, Error}
     end.
 
 
-%% @doc Generic search returning actor ids
--spec search_ids(nkserver:id(), nkactor_search:search_spec(), nkactor_search:search_opts()) ->
-    {ok, [actor_id()], Meta::map()} | {error, term()}.
+%% @doc Generic search returning actors
+-spec search_actors(nkserver:id(), nkactor_search:search_spec()) ->
+    {ok, [actor()], Meta::map()} | {error, term()}.
 
-search_ids(SrvId, SearchSpec, SearchOpts) ->
-    case nkactor_search:parse(SearchSpec, SearchOpts) of
+search_actors(SrvId, SearchSpec) ->
+    case nkactor_search:parse(SearchSpec) of
         {ok, SearchSpec2} ->
-            nkactor_backend:search(SrvId, {actors_search_ids, SearchSpec2});
+            case nkactor_backend:search(SrvId, actors_search, SearchSpec2) of
+                {ok, Actors, Meta} ->
+                    {ok, Actors, maps:with([size, total], Meta)};
+                {error, Error} ->
+                    {error, Error}
+            end;
         {error, Error} ->
             {error, Error}
     end.
@@ -451,11 +463,11 @@ search_ids(SrvId, SearchSpec, SearchOpts) ->
 
 %% @doc Generic deletion of objects
 %% Use do_delete=>true for real deletion
--spec search_delete(nkserver:id(), nkactor_search:search_spec(), nkactor_search:search_opts()) ->
+-spec search_delete(nkserver:id(), nkactor_search:search_spec()) ->
     {ok|deleted, integer(), Meta::map()}.
 
-search_delete(SrvId, SearchSpec, SearchOpts) ->
-    case nkactor_search:parse(SearchSpec, SearchOpts) of
+search_delete(SrvId, SearchSpec) ->
+    case nkactor_search:parse(SearchSpec) of
         {ok, SearchSpec3} ->
             DoDelete = maps:get(do_delete, SearchSpec3, false),
             case nkactor_backend:search(SrvId, actors_delete, SearchSpec3) of
@@ -478,6 +490,11 @@ search_delete(SrvId, SearchSpec, SearchOpts) ->
 delete_old(SrvId, Group, Res, Date, Opts) ->
     Params = Opts#{group=>Group, resource=>Res, epoch=>Date},
     nkactor_backend:search(SrvId, actors_delete_old, Params).
+
+
+%% @doc
+base_namespace(SrvId) ->
+    nkserver:get_plugin_config(SrvId, nkactor, base_namespace).
 
 
 %% @doc

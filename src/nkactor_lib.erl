@@ -28,11 +28,10 @@
 -include_lib("nkserver/include/nkserver.hrl").
 
 -export([get_actor_id/1, id_to_actor_id/1]).
--export([get_debug/2]).
 -export([send_external_event/3]).
 -export([get_linked_type/2, get_linked_uids/2, add_link/3, add_link/4, add_link/5]).
 -export([add_creation_fields/1, update/2, check_links/1, do_check_links/2]).
--export([actor_id_to_path/1, process_id/2]).
+-export([actor_id_to_path/1]).
 -export([parse/2, parse/3, parse_actor_data/2, parse_request_params/2]).
 -export([make_rev_path/1, make_rev_parts/1]).
 -export([make_plural/1, make_singular/1, normalized_name/1]).
@@ -73,7 +72,6 @@ get_actor_id(Actor) ->
         uid = maps:get(uid, Actor, undefined),
         pid = undefined
     }.
-
 
 
 %% @doc Canonizes id to #actor_id{}
@@ -139,6 +137,25 @@ add_link(Id, Group, Resource, #{}=Actor, LinkType)
     end.
 
 
+%% @doc
+get_linked_type(UID, #{metadata:=#{links:=Links}}) ->
+    maps:get(UID, Links, <<>>);
+
+get_linked_type(_UID, _) ->
+    <<>>.
+
+
+%% @doc Finds all linked objects with this type
+get_linked_uids(Type, #{metadata:=Meta}) ->
+    maps:fold(
+        fun(UID, FunType, Acc) ->
+            case Type==FunType of
+                true -> [UID|Acc];
+                false -> Acc
+            end
+        end,
+        [],
+        maps:get(links, Meta, #{})).
 
 
 %% @doc
@@ -207,59 +224,52 @@ parse_request_params(Req, Syntax) ->
     end.
 
 
-
-%% @doc
-get_linked_type(UID, #{metadata:=#{links:=Links}}) ->
-    maps:get(UID, Links, <<>>);
-
-get_linked_type(_UID, _) ->
-    <<>>.
-
-
-%% @doc Finds all linked objects with this type
-get_linked_uids(Type, #{metadata:=Meta}) ->
-    maps:fold(
-        fun(UID, FunType, Acc) ->
-            case Type==FunType of
-                true -> [UID|Acc];
-                false -> Acc
-            end
-        end,
-        [],
-        maps:get(links, Meta, #{})).
-
-
-%% @doc
-process_id(SrvId, Id) ->
-    ?CALL_SRV(SrvId, actor_process_id, [Id]).
-
-
-
-
-
-
-%% @doc Get debug
--spec get_debug(nkactor:id(), #actor_id{}) ->
-    boolean().
-
-get_debug(SrvId, #actor_id{group=Group, resource=Resource}) ->
-    case catch nkserver:get_plugin_config(SrvId, nkactor, debug_actors) of
-        List when is_list(List) ->
-            lists:member(<<"all">>, List) orelse
-            lists:member(Group, List) orelse
-            lists:member(<<Group/binary, $/, Resource/binary>>, List);
-        _ ->
-            false
-    end.
-
-
-
 %% @doc Sends an out-of-actor event
 -spec send_external_event(nkactor:id(), created|deleted|updated, actor()) ->
     ok.
 
 send_external_event(SrvId, Reason, Actor) ->
     ?CALL_SRV(SrvId, actor_external_event, [SrvId, Reason, Actor]).
+
+
+%% @doc
+check_links(#{metadata:=Meta1}=Actor) ->
+    case do_check_links(Meta1) of
+        {ok, Meta2} ->
+            {ok, Actor#{metadata:=Meta2}};
+        {error, Error} ->
+            {error, Error}
+    end.
+
+
+%% @private
+do_check_links(#{links:=Links}=Meta) ->
+    case do_check_links(maps:to_list(Links), []) of
+        {ok, Links2} ->
+            {ok, Meta#{links:=Links2}};
+        {error, Error} ->
+            {error, Error}
+    end;
+
+do_check_links(Meta) ->
+    {ok, Meta}.
+
+
+%% @private
+do_check_links([], Acc) ->
+    {ok, maps:from_list(Acc)};
+
+do_check_links([{Id, Type}|Rest], Acc) ->
+    case nkactor:find(Id) of
+        {ok, #actor_id{uid=UID}} ->
+            true = is_binary(UID),
+            do_check_links(Rest, [{UID, Type}|Acc]);
+        {error, actor_not_found} ->
+            lager:error("NKLOG LINKED NOT FOUND ~p", [Id]),
+            {error, linked_actor_unknown};
+        {error, Error} ->
+            {error, Error}
+    end.
 
 
 %% @doc Prepares an actor for creation
@@ -306,45 +316,6 @@ update(Actor, Time3339) ->
     },
     Actor#{metadata := Meta2}.
 
-
-
-%% @doc
-check_links(#{metadata:=Meta1}=Actor) ->
-    case do_check_links(Meta1) of
-        {ok, Meta2} ->
-            {ok, Actor#{metadata:=Meta2}};
-        {error, Error} ->
-            {error, Error}
-    end.
-
-
-%% @private
-do_check_links(#{links:=Links}=Meta) ->
-    case do_check_links(maps:to_list(Links), []) of
-        {ok, Links2} ->
-            {ok, Meta#{links:=Links2}};
-        {error, Error} ->
-            {error, Error}
-    end;
-
-do_check_links(Meta) ->
-    {ok, Meta}.
-
-
-%% @private
-do_check_links([], Acc) ->
-    {ok, maps:from_list(Acc)};
-
-do_check_links([{Id, Type}|Rest], Acc) ->
-    case nkactor:find(Id) of
-        {ok, #actor_id{uid=UID}} ->
-            true = is_binary(UID),
-            do_check_links(Rest, [{UID, Type}|Acc]);
-        {error, actor_not_found} ->
-            {error, linked_actor_unknown};
-        {error, Error} ->
-            {error, Error}
-    end.
 
 
 %% @private

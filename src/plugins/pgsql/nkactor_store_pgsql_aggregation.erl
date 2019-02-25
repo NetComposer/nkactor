@@ -39,7 +39,7 @@
 %% @doc
 aggregation(actors_aggregation_groups, Params) ->
     Namespace = maps:get(namespace, Params, <<>>),
-    Deep = maps:get(deep, params, false),
+    Deep = maps:get(deep, Params, false),
     Query = [
         <<"SELECT \"group\", COUNT(\"group\") FROM actors">>,
         <<" WHERE ">>, filter_path(Namespace, Deep),
@@ -50,7 +50,7 @@ aggregation(actors_aggregation_groups, Params) ->
 aggregation(actors_aggregation_resources, Params) ->
     Group = maps:get(group, Params),
     Namespace = maps:get(namespace, Params, <<>>),
-    Deep = maps:get(deep, params, false),
+    Deep = maps:get(deep, Params, false),
     Query = [
         <<"SELECT resource, COUNT(resource) FROM actors">>,
         <<" WHERE \"group\" = ">>, quote(Group), <<" AND ">>, filter_path(Namespace, Deep),

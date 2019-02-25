@@ -138,9 +138,8 @@ stop_all_namespaces(Namespace, Reason) ->
     {continue, [{nkserver:id(), state()}]}.
 
 srv_master_init(SrvId, State) ->
-    BaseNamespace = nkserver:get_plugin_config(SrvId, nkactor, base_namespace),
     AcState = #state{
-        base_namespace = BaseNamespace,
+        base_namespace = nkactor:base_namespace(SrvId),
         namespaces = []
     },
     gen_server:cast(self(), nkactor_check_base_namespace),
