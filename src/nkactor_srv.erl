@@ -617,11 +617,12 @@ do_init(create, State) ->
             ?ACTOR_DEBUG("created (~p)", [self()], State),
             State2 = do_event(created, State),
             do_post_init(State2);
-        {error, persitence_not_defined} ->
-            ?ACTOR_LOG(notice, "actor will not be persisted!", State),
+        {error, persistence_not_defined} ->
+            ?ACTOR_LOG(info, "actor will not be persisted!", [], State),
             State2 = do_event(created, State),
             do_post_init(State2);
         {error, Error} ->
+            lager:error("NKLOG START ERROR ~p", [Error]),
             {stop, Error}
     end;
 

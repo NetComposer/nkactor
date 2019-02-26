@@ -59,7 +59,7 @@ request(Req) ->
                         trace => []
                     },
                     Req4 = add_trace(req_start, none, Req3),
-                    case ?CALL_SRV(SrvId, authorize, [Req4]) of
+                    case ?CALL_SRV(SrvId, actor_authorize, [Req4]) of
                         {true, Req5} ->
                             ?REQ_DEBUG("request is authorized", []),
                             Reply = do_request(Req5),

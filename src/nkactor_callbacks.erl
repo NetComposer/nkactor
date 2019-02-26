@@ -22,9 +22,8 @@
 -module(nkactor_callbacks).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -export([msg/1]).
--export([authorize/1]).
--export([actor_config/1, actor_create/2, actor_activate/2,
-         actor_external_event/3, actor_process_id/1]).
+-export([actor_authorize/1, actor_config/1, actor_create/2, actor_activate/2,
+         actor_external_event/3]).
 -export([actor_srv_init/2, actor_srv_terminate/2,
          actor_srv_stop/2, actor_srv_get/2, actor_srv_update/2, actor_srv_delete/1,
          actor_srv_event/2,
@@ -80,10 +79,10 @@ msg(_)   		                    -> continue.
 
 %% @doc Called when activating an actor to get it's config and module
 %% Config is the added config used when calling the function
--spec authorize(nkactor:request()) ->
+-spec actor_authorize(nkactor:request()) ->
     {true, nkactor:request()} | false | continue().
 
-authorize(_Req) ->
+actor_authorize(_Req) ->
     false.
 
 
@@ -125,11 +124,6 @@ actor_activate(Actor, Config) ->
 
 actor_external_event(_SrvId, _Event, _Actor) ->
     ok.
-
-
-%% @doc
-actor_process_id(Id) ->
-    Id.
 
 
 %% @doc Called when a new session starts

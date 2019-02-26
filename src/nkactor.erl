@@ -195,7 +195,8 @@
     #{
         activate => boolean(),
         ttl => pos_integer(),
-        request => request()
+        request => request(),
+        forced_uid => binary()              % Use it only for non-persistent actors!
     }.
 
 

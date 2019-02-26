@@ -27,9 +27,9 @@
 -include("nkactor_debug.hrl").
 -include_lib("nkserver/include/nkserver.hrl").
 
--export([get_actor_id/1, id_to_actor_id/1]).
+-export([get_actor_id/1, id_to_actor_id/1, id_to_actor_id/2]).
 -export([send_external_event/3]).
--export([get_linked_type/2, get_linked_uids/2, add_link/3, add_link/4, add_link/5]).
+-export([get_linked_type/2, get_linked_uids/2, add_link/3, add_link/4, add_link/5, link_type/2]).
 -export([add_creation_fields/1, update/2, check_links/1, do_check_links/2]).
 -export([actor_id_to_path/1]).
 -export([parse/2, parse/3, parse_actor_data/2, parse_request_params/2]).
@@ -82,30 +82,58 @@ id_to_actor_id(#actor_id{}=ActorId) ->
     ActorId;
 
 id_to_actor_id(Path) ->
-    case binary:split(to_bin(Path), <<$.>>) of
-        [FullName, Namespace] ->
-            case binary:split(FullName, <<$:>>, [global]) of
-                [Group, Resource, Name] ->
-                    #actor_id{
-                        group = Group,
-                        resource = Resource,
-                        name = Name,
-                        namespace = Namespace
-                    };
-                [Resource, Name] ->
-                    #actor_id{
-                        resource = Resource,
-                        name = Name,
-                        namespace = Namespace
-                    };
-                [Name] ->
-                    #actor_id{
-                        name = Name,
-                        namespace = Namespace
-                    }
+    id_to_actor_id(undefined, Path).
+
+
+%% @doc Canonizes id to #actor_id{}
+-spec id_to_actor_id(nkserver:id(), nkactor:id()) ->
+    #actor_id{}.
+
+id_to_actor_id(SrvId, #actor_id{namespace=undefined}=ActorId) when SrvId /= undefined ->
+    Base = nkactor:base_namespace(SrvId),
+    ActorId#actor_id{namespace = Base};
+
+id_to_actor_id(_SrvId, #actor_id{}=ActorId) ->
+    ActorId;
+
+id_to_actor_id(SrvId, Path) ->
+    case to_bin(Path) of
+        <<$/, Api/binary>> ->
+            case binary:split(Api, <<"/">>, [global]) of
+                [<<"apis">>, Group, _Vsn, <<"namespaces">>, Namespace, Resource, Name] ->
+                    <<Group/binary, $:, Resource/binary, $:, Name/binary, $., Namespace/binary>>;
+                [<<"apis">>, Group, _Vsn, Resource, Name] when SrvId /= undefined ->
+                    Base = nkactor:base_namespace(SrvId),
+                    <<Group/binary, $:, Resource/binary, $:, Name/binary, $., Base/binary>>;
+                _ ->
+                    Path
             end;
-        [UID] ->
-            #actor_id{uid = UID}
+        Path2 ->
+            case binary:split(to_bin(Path2), <<$.>>) of
+                [FullName, Namespace] ->
+                    case binary:split(FullName, <<$:>>, [global]) of
+                        [Group, Resource, Name] ->
+                            #actor_id{
+                                group = Group,
+                                resource = Resource,
+                                name = Name,
+                                namespace = Namespace
+                            };
+                        [Resource, Name] ->
+                            #actor_id{
+                                resource = Resource,
+                                name = Name,
+                                namespace = Namespace
+                            };
+                        [Name] ->
+                            #actor_id{
+                                name = Name,
+                                namespace = Namespace
+                            }
+                    end;
+                [UID] ->
+                    #actor_id{uid = UID}
+            end
     end.
 
 
@@ -176,7 +204,7 @@ parse(Data, Syntax) ->
     {ok, map()} | nklib_syntax:error().
 
 parse(Data, Syntax, Opts) ->
-    % lager:error("NKLOG SYN Data:~p\n Syntax:~p", [Data, Syntax]),
+    %lager:error("NKLOG SYN Data:~p\n Syntax:~p", [Data, Syntax]),
     case nklib_syntax:parse(Data, Syntax, Opts) of
         {ok, Data2, []} ->
             {ok, Data2};
@@ -279,8 +307,8 @@ do_check_links([{Id, Type}|Rest], Acc) ->
 add_creation_fields(Actor) ->
     Res = maps:get(resource, Actor),
     Meta = maps:get(metadata, Actor, #{}),
-    Name1 = maps:get(name, Actor, <<>>),
     UID = make_uid(Res),
+    Name1 = maps:get(name, Actor, <<>>),
     %% Add Name if not present
     Name2 = case normalized_name(to_bin(Name1)) of
         <<>> ->
@@ -295,6 +323,7 @@ add_creation_fields(Actor) ->
         metadata => Meta#{creation_time => Time}
     },
     update(Actor2, Time).
+
 
 
 %% @private

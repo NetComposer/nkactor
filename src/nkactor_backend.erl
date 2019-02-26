@@ -131,7 +131,7 @@ activate(Id, Opts) ->
                         {error, Error} ->
                             {error, Error}
                     end;
-                {error, persitence_not_defined} ->
+                {error, persistence_not_defined} ->
                     {error, actor_not_found};
                 {error, Error} ->
                     {error, Error}
@@ -159,7 +159,7 @@ read(Id, #{activate:=false}=Opts) ->
                     case do_read(SrvId, ActorId, Opts) of
                         {ok, Actor, DbMeta} ->
                             {ok, SrvId, Actor, DbMeta};
-                        {error, persitence_not_defined} ->
+                        {error, persistence_not_defined} ->
                             {error, actor_not_found};
                         {error, Error} ->
                             {error, Error}
@@ -196,7 +196,8 @@ read(Id, Opts) ->
     {ok, nkserver:id(), nkactor:actor(),  Meta::map()} | {error, actor_not_found|term()}.
 
 create(Actor, #{activate:=false}=Opts) ->
-    case pre_create(Actor, Opts) of
+    Syntax = #{'__mandatory' => [group, resource, namespace]},
+    case nkactor_util:pre_create(Actor, Syntax, Opts) of
         {ok, SrvId, Actor2} ->
             % Non recommended for non-relational databases, if name is not
             % randomly generated
@@ -213,7 +214,8 @@ create(Actor, #{activate:=false}=Opts) ->
     end;
 
 create(Actor, Opts) ->
-    case pre_create(Actor, Opts) of
+    Syntax = #{'__mandatory' => [group, resource, namespace]},
+    case nkactor_util:pre_create(Actor, Syntax, Opts) of
         {ok, SrvId, Actor2} ->
             % If we use the activate option, the object is first
             % registered with leader, so you cannot have two with same
@@ -253,7 +255,8 @@ update(_Id, _Actor, #{activate:=false}) ->
 
 update(Id, Actor, Opts) ->
     ActorId = nkactor_lib:id_to_actor_id(Id),
-    case pre_update(ActorId, Actor, Opts) of
+    Syntax = #{'__mandatory' => [group, resource, namespace]},
+    case nkactor_util:pre_update(ActorId, Syntax, Actor, Opts) of
         {ok, _SrvId, Actor2} ->
             case activate(ActorId, Opts) of
                 {ok, SrvId, ActorId2, _} ->
@@ -434,74 +437,6 @@ do_read(SrvId, ActorId, Opts) ->
         {error, Error} ->
             {error, Error}
     end.
-
-
-%% @private
-pre_create(Actor, Opts) ->
-    Syntax = #{'__mandatory' => [group, resource, namespace]},
-    case nkactor_syntax:parse_actor(Actor, Syntax) of
-        {ok, Actor2} ->
-            Actor3 = nkactor_lib:add_creation_fields(Actor2),
-            #{group:=Group, resource:=Res, namespace:=Namespace} = Actor3,
-            case nkactor_namespace:get_namespace(Namespace) of
-                {ok, SrvId, _Pid} ->
-                    Req1 = maps:get(request, Opts, #{}),
-                    Req2 = Req1#{
-                        verb => create,
-                        srv => SrvId
-                    },
-                    Module = nkactor_util:get_module(Group, Res),
-                    case nkactor_actor:parse(Module, Actor3, Req2) of
-                        {ok, Actor4} ->
-                            case nkactor_lib:check_links(Actor4) of
-                                {ok, Actor5} ->
-                                    {ok, SrvId, Actor5};
-                                {error, Error} ->
-                                    {error, Error}
-                            end;
-                        {error, Error} ->
-                            {error, Error}
-                    end;
-                {error, Error} ->
-                    {error, Error}
-            end;
-        {error, Error} ->
-            {error, Error}
-    end.
-
-
-%% @private
-pre_update(#actor_id{group=Group, resource=Res, namespace=Namespace}, Actor, Opts) ->
-    Syntax = #{'__mandatory' => [group, resource, namespace]},
-    case nkactor_syntax:parse_actor(Actor, Syntax) of
-        {ok, Actor2} ->
-            case nkactor_namespace:get_namespace(Namespace) of
-                {ok, SrvId, _Pid} ->
-                    Req1 = maps:get(request, Opts, #{}),
-                    Req2 = Req1#{
-                        verb => update,
-                        srv => SrvId
-                    },
-                    Module = nkactor_util:get_module(Group, Res),
-                    case nkactor_actor:parse(Module, Actor2, Req2) of
-                        {ok, Actor3} ->
-                            case nkactor_lib:check_links(Actor3) of
-                                {ok, Actor4} ->
-                                    {ok, SrvId, Actor4};
-                                {error, Error} ->
-                                    {error, Error}
-                            end;
-                        {error, Error} ->
-                            {error, Error}
-                    end;
-                {error, Error} ->
-                    {error, Error}
-            end;
-        {error, Error} ->
-            {error, Error}
-    end.
-
-
 
 
 %% @private

@@ -30,6 +30,7 @@
 -export([register_modules/2, get_module/2]).
 -export([get_services/0]).
 -export([get_actor_config/1, get_actor_config/2, get_actor_config/3]).
+-export([pre_create/3, pre_update/4]).
 
 -type group() :: nkactor:group().
 -type resource() :: nkactor:resource().
@@ -128,6 +129,78 @@ get_actor_config(SrvId, Module) when is_atom(SrvId), is_atom(Module) ->
             {ok, Config}
     end.
 
+
+
+%% @private
+pre_create(Actor, Syntax, Opts) ->
+    case nkactor_syntax:parse_actor(Actor, Syntax) of
+        {ok, Actor2} ->
+            Actor3 = nkactor_lib:add_creation_fields(Actor2),
+            Actor4 = case Opts of
+                #{forced_uid:=UID} ->
+                    Actor3#{uid := UID};
+                _ ->
+                    Actor3
+            end,
+            #{group:=Group, resource:=Res, namespace:=Namespace} = Actor4,
+            case nkactor_namespace:get_namespace(Namespace) of
+                {ok, SrvId, _Pid} ->
+                    Req1 = maps:get(request, Opts, #{}),
+                    Req2 = Req1#{
+                        verb => create,
+                        srv => SrvId
+                    },
+                    Module = nkactor_util:get_module(Group, Res),
+                    case nkactor_actor:parse(Module, Actor4, Req2) of
+                        {ok, Actor5} ->
+                            case nkactor_lib:check_links(Actor5) of
+                                {ok, Actor6} ->
+                                    {ok, SrvId, Actor6};
+                                {error, Error} ->
+                                    {error, Error}
+                            end;
+                        {error, Error} ->
+                            {error, Error}
+                    end;
+                {error, Error} ->
+                    {error, Error}
+            end;
+        {error, Error} ->
+            {error, Error}
+    end.
+
+
+
+%% @private
+pre_update(ActorId, Syntax, Actor, Opts) ->
+    #actor_id{group=Group, resource=Res, namespace=Namespace} = ActorId,
+    case nkactor_syntax:parse_actor(Actor, Syntax) of
+        {ok, Actor2} ->
+            case nkactor_namespace:get_namespace(Namespace) of
+                {ok, SrvId, _Pid} ->
+                    Req1 = maps:get(request, Opts, #{}),
+                    Req2 = Req1#{
+                        verb => update,
+                        srv => SrvId
+                    },
+                    Module = nkactor_util:get_module(Group, Res),
+                    case nkactor_actor:parse(Module, Actor2, Req2) of
+                        {ok, Actor3} ->
+                            case nkactor_lib:check_links(Actor3) of
+                                {ok, Actor4} ->
+                                    {ok, SrvId, Actor4};
+                                {error, Error} ->
+                                    {error, Error}
+                            end;
+                        {error, Error} ->
+                            {error, Error}
+                    end;
+                {error, Error} ->
+                    {error, Error}
+            end;
+        {error, Error} ->
+            {error, Error}
+    end.
 
 
 %% @private
