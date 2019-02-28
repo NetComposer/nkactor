@@ -444,7 +444,7 @@ delete(SrvId, UIDs, Opts) ->
                 % real deletion
 %%                lists:foreach(
 %%                    fun(#actor_id{uid=DUID}) ->
-%%                        nkservice_actor_srv:raw_stop({SrvId, DUID}, actor_deleted)
+%%                        nkactor_srv:raw_stop({SrvId, DUID}, actor_deleted)
 %%                    end,
 %%                    DeletedActorIds),
                 {ok, DeletedActorIds, DeletedMeta};

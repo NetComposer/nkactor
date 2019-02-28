@@ -23,6 +23,7 @@
 
 -export([request/1]).
 -export([get_watches/0]).
+-export([create/3]).
 
 -include("nkactor_request.hrl").
 -include_lib("nkserver/include/nkserver.hrl").

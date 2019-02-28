@@ -178,7 +178,7 @@ start(Actor, Config) ->
 
 %% @private
 do_start(Op, Actor, StartConfig) ->
-    ActorId = nkactor_lib:get_actor_id(Actor),
+    ActorId = nkactor_lib:actor_to_actor_id(Actor),
     case nkactor_util:get_actor_config(ActorId) of
         {ok, #{activable:=false}} ->
             {error, actor_is_not_activable};
@@ -432,7 +432,7 @@ do_remove_link(Link, #actor_st{links=Links}=State) ->
 
 %% @private
 do_update(UpdActor, Opts, #actor_st{srv=SrvId, actor_id=ActorId, actor=Actor}=State) ->
-    UpdActorId = nkactor_lib:get_actor_id(UpdActor),
+    UpdActorId = nkactor_lib:actor_to_actor_id(UpdActor),
     #actor_id{uid=UID, namespace=Namespace, group=Class, resource=Res, name=Name} = ActorId,
     try
         case UpdActorId#actor_id.namespace of

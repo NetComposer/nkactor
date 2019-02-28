@@ -27,10 +27,11 @@
 -include("nkactor_debug.hrl").
 -include_lib("nkserver/include/nkserver.hrl").
 
--export([get_actor_id/1, id_to_actor_id/1, id_to_actor_id/2]).
+-export([actor_to_actor_id/1, id_to_actor_id/1, id_to_actor_id/2]).
 -export([send_external_event/3]).
 -export([get_linked_type/2, get_linked_uids/2, add_link/3, add_link/4, add_link/5, link_type/2]).
 -export([add_creation_fields/1, update/2, check_links/1, do_check_links/2]).
+-export([add_labels/4]).
 -export([actor_id_to_path/1]).
 -export([parse/2, parse/3, parse_actor_data/2, parse_request_params/2]).
 -export([make_rev_path/1, make_rev_parts/1]).
@@ -53,10 +54,10 @@ actor_id_to_path(#actor_id{namespace=Namespace, group=Group, resource=Res, name=
 
 
 %% @doc
--spec get_actor_id(actor()) ->
+-spec actor_to_actor_id(actor()) ->
     #actor_id{}.
 
-get_actor_id(Actor) ->
+actor_to_actor_id(Actor) ->
     #{
         group := Group,
         resource := Resource,
@@ -189,6 +190,22 @@ get_linked_uids(Type, #{metadata:=Meta}) ->
 %% @doc
 link_type(Group, Resource) ->
     <<"io.netc.", Group/binary, $., Resource/binary>>.
+
+
+%% @doc
+add_labels(Prefix, List, Value, #{metadata:=Meta}=Actor) ->
+    Labels1 = maps:get(labels, Meta, #{}),
+    Labels2 = lists:foldl(
+        fun(Term, Acc) ->
+            Key = list_to_binary([Prefix, Term]),
+            Acc#{Key => to_bin(Value)}
+        end,
+        Labels1,
+        List),
+    Meta2 = Meta#{labels => Labels2},
+    Actor#{metadata:=Meta2}.
+
+
 
 
 %% @private Generic parse with standard errors
