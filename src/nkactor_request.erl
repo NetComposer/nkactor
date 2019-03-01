@@ -319,7 +319,7 @@ do_delete(SrvId, ActorIds, Num) ->
 
 %% @private
 set_debug(SrvId) when is_atom(SrvId) ->
-    Debug = nkserver:get_plugin_config(SrvId, nkactor, debug) == true,
+    Debug = nkserver:get_cached_config(SrvId, nkactor, debug) == true,
     put(nkactor_debug, Debug),
     ?REQ_DEBUG("debug started", []).
 

@@ -425,7 +425,7 @@ delete(SrvId, UID, Opts) when is_binary(UID) ->
     delete(SrvId, [UID], Opts);
 
 delete(SrvId, UIDs, Opts) ->
-    Debug = nkserver:get_plugin_config(SrvId, nkactor_store_pgsql, debug),
+    Debug = nkserver:get_cached_config(SrvId, nkactor_store_pgsql, debug),
     QueryMeta = #{pgsql_debug=>Debug},
     QueryFun = fun(Pid) ->
         nkpgsql:do_query(Pid, <<"BEGIN;">>, QueryMeta),

@@ -48,7 +48,7 @@
     {error, {pgsql_error, nkpgsql:pgsql_error()}|term()}.
 
 query(SrvId, Query) ->
-    PgSrvId = nkserver:get_plugin_config(SrvId, nkactor_store_pgsql, pgsql_service),
+    PgSrvId = nkserver:get_cached_config(SrvId, nkactor_store_pgsql, pgsql_service),
     nkpgsql:query(PgSrvId, Query, #{}).
 
 
@@ -58,7 +58,7 @@ query(SrvId, Query) ->
     {error, {pgsql_error, nkpgsql:pgsql_error()}|term()}.
 
 query(SrvId, Query, QueryMeta) ->
-    PgSrvId = nkserver:get_plugin_config(SrvId, nkactor_store_pgsql, pgsql_service),
+    PgSrvId = nkserver:get_cached_config(SrvId, nkactor_store_pgsql, pgsql_service),
     nkpgsql:query(PgSrvId, Query, QueryMeta).
 
 

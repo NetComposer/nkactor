@@ -1015,7 +1015,7 @@ do_post_init(State) ->
 %% @private
 set_debug(#actor_st{srv=SrvId, actor_id=ActorId}=State) ->
     #actor_id{group=Group, resource=Resource} = ActorId,
-    Debug = case catch nkserver:get_plugin_config(SrvId, nkactor, debug_actors) of
+    Debug = case catch nkserver:get_cached_config(SrvId, nkactor, debug_actors) of
         List when is_list(List) ->
             lists:member(<<"all">>, List) orelse
                 lists:member(Group, List) orelse

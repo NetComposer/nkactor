@@ -495,7 +495,7 @@ delete_old(SrvId, Group, Res, Date, Opts) ->
 
 %% @doc
 base_namespace(SrvId) ->
-    nkserver:get_plugin_config(SrvId, nkactor, base_namespace).
+    nkserver:get_cached_config(SrvId, nkactor, base_namespace).
 
 
 %% @doc
