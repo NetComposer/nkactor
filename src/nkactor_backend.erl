@@ -205,7 +205,13 @@ create(Actor, #{activate:=false}=Opts) ->
                 {ok, Meta} ->
                     % Use the alternative method for sending the event
                     nkactor_lib:send_external_event(SrvId, created, Actor2),
-                    {ok, SrvId, Actor2, Meta};
+                    case Opts of
+                        #{get_actor:=true} ->
+                            ActorId = nkactor_lib:actor_to_actor_id(Actor2),
+                            {ok, SrvId, ActorId, Meta};
+                        _ ->
+                            {ok, SrvId, Actor2, Meta}
+                    end;
                 {error, Error} ->
                     {error, Error}
             end;
@@ -229,11 +235,16 @@ create(Actor, Opts) ->
             end,
             case ?CALL_SRV(SrvId, actor_create, [Actor2, Config]) of
                 {ok, #actor_id{pid=Pid}=ActorId} when is_pid(Pid) ->
-                    case nkactor_srv:sync_op(ActorId, get_actor) of
-                        {ok, Actor3} ->
-                            {ok, SrvId, Actor3, #{}};
-                        {error, Error} ->
-                            {error, Error}
+                    case Opts of
+                        #{get_actor:=true} ->
+                            case nkactor_srv:sync_op(ActorId, get_actor) of
+                                {ok, Actor3} ->
+                                    {ok, SrvId, Actor3, #{}};
+                                {error, Error} ->
+                                    {error, Error}
+                            end;
+                        _ ->
+                            {ok, SrvId, ActorId, #{}}
                     end;
                 {error, actor_already_registered} ->
                     {error, uniqueness_violation};

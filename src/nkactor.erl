@@ -194,6 +194,7 @@
 -type create_opts() ::
     #{
         activate => boolean(),
+        get_actor => boolean(),
         ttl => pos_integer(),
         request => request(),
         forced_uid => binary()              % Use it only for non-persistent actors!
@@ -297,12 +298,12 @@ enable(Id, Enable) ->
 
 %% @doc Creates a new actor
 -spec create(actor(), create_opts()) ->
-    {ok, actor()} | {error, term()}.
+    {ok, actor_id()|actor()} | {error, term()}.
 
 create(Actor, Opts) ->
     case nkactor_backend:create(Actor, Opts) of
-        {ok, _SrvId, Actor2, _Meta} ->
-            {ok, Actor2};
+        {ok, _SrvId, Result, _Meta} ->
+            {ok, Result};
         {error, Error} ->
             {error, Error}
     end.

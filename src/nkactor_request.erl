@@ -224,7 +224,7 @@ create(ActorId, Config, Req) ->
                 {ok, Actor2} ->
                     Opts = set_opts(Config, Req),
                     ?REQ_DEBUG("creating actor ~p ~p", [Actor2, Opts]),
-                    case nkactor:create(Actor2, Opts) of
+                    case nkactor:create(Actor2, Opts#{get_actor=>true}) of
                         {ok, Actor3} ->
                             {created, Actor3};
                         {error, Error} ->
