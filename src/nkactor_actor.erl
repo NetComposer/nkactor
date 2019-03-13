@@ -43,7 +43,7 @@
 %% Callbacks definitions
 %% ===================================================================
 
--type id() :: nkactor:id().
+%-type id() :: nkactor:id().
 -type actor() :: nkactor:actor().
 -type subresource() :: nkactor:subresource().
 -type actor_id() :: nkactor:actor_id().
@@ -51,7 +51,7 @@
 -type request() :: nkactor:request().
 -type response() :: nkactor:response().
 -type verb() :: nkactor:verb().
--type vsn() :: nkactor:vsn().
+%-type vsn() :: nkactor:vsn().
 -type actor_st() :: nkactor:actor_st().
 
 -type continue() ::
@@ -73,12 +73,6 @@
 %% If not implemented, or 'continue' is returned, standard processing will apply
 -callback request(verb(), subresource(), actor_id(), request()) ->
     response() | continue.
-
-
-%% @doc Called to change the external representation of an actor,
-%% for example to change date's format. Vsn will be the current ApiVsn asking for it
--callback make_external(id(), actor(), vsn()) ->
-    {ok, nkactor:actor()} | continue.
 
 
 %% @doc Called when a new actor starts
@@ -178,7 +172,7 @@
 
 %% @doc
 -optional_callbacks([
-    parse/2, request/4, make_external/3, save/2,
+    parse/2, request/4, save/2,
     init/2, get/2, update/2, delete/1, sync_op/3, async_op/2, enabled/2, heartbeat/1,
     event/2, link_event/4, next_status_timer/1,
     handle_call/3, handle_cast/2, handle_info/2, stop/2, terminate/2]).
@@ -439,7 +433,6 @@ actor_srv_handle_cast(Msg, ActorSt) ->
 actor_srv_handle_info(Msg, ActorSt) ->
     case call_actor(handle_info, [Msg, ActorSt], ActorSt) of
         continue ->
-            lager:error("NKLOG MOD ~p", [ActorSt#actor_st.module]),
             lager:error("Module nkactor_srv received unexpected info: ~p", [Msg]),
             {noreply, ActorSt};
         Other ->

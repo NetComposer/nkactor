@@ -622,7 +622,6 @@ do_init(create, State) ->
             State2 = do_event(created, State),
             do_post_init(State2);
         {error, Error} ->
-            lager:error("NKLOG START ERROR ~p", [Error]),
             {stop, Error}
     end;
 

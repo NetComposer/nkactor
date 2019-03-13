@@ -31,7 +31,7 @@
 -export([send_external_event/3]).
 -export([get_linked_type/2, get_linked_uids/2, add_link/3, add_link/4, add_link/5, link_type/2]).
 -export([add_creation_fields/1, update/2, check_links/1, do_check_links/2]).
--export([add_labels/4]).
+-export([add_labels/4, add_label/3]).
 -export([actor_id_to_path/1]).
 -export([parse/2, parse/3, parse_actor_data/2, parse_request_params/2]).
 -export([make_rev_path/1, make_rev_parts/1]).
@@ -205,6 +205,13 @@ add_labels(Prefix, List, Value, #{metadata:=Meta}=Actor) ->
     Meta2 = Meta#{labels => Labels2},
     Actor#{metadata:=Meta2}.
 
+
+%% @doc
+add_label(Key, Value, #{metadata:=Meta}=Actor) ->
+    Labels1 = maps:get(labels, Meta, #{}),
+    Labels2 = Labels1#{to_bin(Key) => Value},
+    Meta2 = Meta#{labels => Labels2},
+    Actor#{metadata:=Meta2}.
 
 
 
