@@ -27,7 +27,7 @@
 -include("nkactor_debug.hrl").
 -include_lib("nkserver/include/nkserver.hrl").
 
--export([register_modules/2, get_module/2]).
+-export([register_modules/2, get_module/2, get_modules/0]).
 -export([get_services/0]).
 -export([get_actor_config/1, get_actor_config/2, get_actor_config/3]).
 -export([pre_create/3, pre_update/4]).
@@ -75,7 +75,11 @@ register_modules(Group, Modules) ->
         fun({Key, Mod}) ->
             nklib_util:do_config_put({nkactor_module, Group, Key}, Mod)
         end,
-        KeyList).
+        KeyList),
+    Modules1 = get_modules(),
+    Modules2 = lists:usort(Modules1++Modules),
+    nklib_util:do_config_put(nkactor_modules, Modules2).
+
 
 
 %% @doc Gets the callback module for an actor resource or type
@@ -84,6 +88,15 @@ register_modules(Group, Modules) ->
 
 get_module(Group, Key) ->
     nklib_util:do_config_get({nkactor_module, to_bin(Group), to_bin(Key)}).
+
+
+%% @doc Gets all of the registered actor callback modules
+-spec get_modules() ->
+    [module()].
+
+get_modules() ->
+    nklib_util:do_config_get(nkactor_modules, []).
+
 
 
 %% @doc
