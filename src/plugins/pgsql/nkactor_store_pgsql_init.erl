@@ -117,7 +117,7 @@ create_database_query() ->
             last_update STRING NOT NULL,
             expires INTEGER,
             fts_words STRING,
-            INDEX name_idx (namespace, \"group\", resource, name),
+            UNIQUE INDEX name_idx (namespace, \"group\", resource, name),
             INDEX last_update_idx (last_update),
             INDEX expires_idx (expires),
             INVERTED INDEX data_idx (data),
