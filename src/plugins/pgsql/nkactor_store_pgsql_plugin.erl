@@ -21,7 +21,7 @@
 %% @doc Default callbacks for plugin definitions
 -module(nkactor_store_pgsql_plugin).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
--export([plugin_deps/0, plugin_config/3, plugin_cache/3]).
+-export([plugin_deps/0, plugin_config/3, plugin_cache/3, plugin_start/3]).
 
 -include("nkactor.hrl").
 
@@ -55,4 +55,7 @@ plugin_cache(_SrvId, Config, _Service) ->
 		debug => Debug
 	}}.
 
+
+plugin_start(SrvId, _Config, _Service) ->
+	nkactor_store_pgsql_init:init(SrvId).
 
