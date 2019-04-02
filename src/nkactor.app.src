@@ -6,6 +6,7 @@
     {mod, {nkactor_app, []}},
     {applications, [
         nkserver,
+        nkserver_ot,
         hackney
     ]},
     {env, [

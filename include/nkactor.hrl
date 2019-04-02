@@ -7,6 +7,9 @@
 
 -define(PACKAGE_CLASS_NKACTOR, <<"Actor">>).
 
+-define(TRACE(Id), nkactor_trace:insert(Id, #{})).
+-define(TRACE(Id, Meta), nkactor_trace:insert(Id, Meta)).
+
 
 %% ===================================================================
 %% Records
@@ -39,7 +42,8 @@
     stop_reason = false :: false | nkserver:msg(),
     unload_policy :: permanent | {expires, nklib_util:m_timestamp()} | {ttl, integer()},
     ttl_timer :: reference() | undefined,
-    status_timer :: reference() | undefined
+    status_timer :: reference() | undefined,
+    parent_span :: nkserver_ot:parent() | undefined
 }).
 
 

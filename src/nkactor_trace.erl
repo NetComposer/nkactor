@@ -23,221 +23,30 @@
 -module(nkactor_trace).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--include("nkactor.hrl").
--include("nkactor_debug.hrl").
--include_lib("nkserver/include/nkserver.hrl").
+-export([create/0, on/0, off/0, insert/2, insert_traces/1, dump/0]).
+-compile(inline).
 
--export([get_services/0]).
--export([get_module/3]).
--export([get_actor_config/1, get_actor_config/2, get_actor_config/3]).
--export([pre_create/3, pre_update/4]).
--export([activate_actors/1]).
--export([trace_create/0, trace_on/0, trace_off/0, trace_insert/2,
-         trace_insert_traces/1, trace_dump/0]).
+-define(ETS, nkactor_trace).
 
--type group() :: nkactor:group().
--type resource() :: nkactor:resource().
 
 %% ===================================================================
 %% Public
 %% ===================================================================
 
-%% @doc
-get_services() ->
-    [
-        SrvId ||
-        {SrvId, _Hash, _Pid} <- nkserver_srv:get_all_local(?PACKAGE_CLASS_NKACTOR)
-    ].
+
+create() ->
+    ets:new(nkactor_trace, [ordered_set, public, named_table]).
 
 
-%% @doc Gets the callback module for an actor resource or type
--spec get_module(nkserver:id(), group(), resource()|{singular, binary()}|{camel, binary()}|{short, binary()}) ->
-    module() | undefined.
-
-get_module(SrvId, Group, Key) ->
-    nkserver:get_cached_config(SrvId, nkactor, {module, to_bin(Group), Key}).
-
-
-%% @doc Used to get modified configuration for the service responsible
-get_actor_config(ActorId) ->
-    #actor_id{group=Group, resource=Resource, namespace=Namespace} = ActorId,
-    case nkactor_namespace:get_namespace(Namespace) of
-        {ok, SrvId, _} ->
-            case get_module(SrvId, Group, Resource) of
-                undefined ->
-                    {error, resource_invalid};
-                Module ->
-                    {ok, Config} = get_actor_config(SrvId, Module),
-                    {ok, SrvId, Config}
-            end;
-        {error, Error} ->
-            {error, Error}
-    end.
-
-
-%% @doc Used to get modified configuration for the service responsible
-get_actor_config(SrvId, Group, Resource) ->
-    case get_module(SrvId, Group, Resource) of
-        undefined ->
-            {error, resource_invalid};
-        Module ->
-            get_actor_config(SrvId, Module)
-    end.
-
-
-%% @doc Used to get modified configuration for the service responsible
-get_actor_config(SrvId, Module) when is_atom(SrvId), is_atom(Module) ->
-    case catch nklib_util:do_config_get({nkactor_config, SrvId, Module}) of
-        undefined ->
-            Config1 = nkactor_actor:config(Module),
-            Config2 = ?CALL_SRV(SrvId, actor_config, [Config1]),
-            Config3 = Config2#{module=>Module},
-            nklib_util:do_config_put({nkactor_config, SrvId, Module}, Config2),
-            {ok, Config3};
-        Config when is_map(Config) ->
-            {ok, Config}
-    end.
-
-
-%% @private
-pre_create(Actor, Syntax, Opts) ->
-    case nkactor_syntax:parse_actor(Actor, Syntax) of
-        {ok, Actor2} ->
-            Actor3 = nkactor_lib:add_creation_fields(Actor2),
-            Actor4 = case Opts of
-                #{forced_uid:=UID} ->
-                    Actor3#{uid := UID};
-                _ ->
-                    Actor3
-            end,
-            #{group:=Group, resource:=Res, namespace:=Namespace} = Actor4,
-            case nkactor_namespace:get_namespace(Namespace) of
-                {ok, SrvId, _Pid} ->
-                    Req1 = maps:get(request, Opts, #{}),
-                    Req2 = Req1#{
-                        verb => create,
-                        srv => SrvId
-                    },
-                    Module = nkactor_util:get_module(SrvId, Group, Res),
-                    case nkactor_actor:parse(Module, Actor4, Req2) of
-                        {ok, Actor5} ->
-                            case nkactor_lib:check_links(Actor5) of
-                                {ok, Actor6} ->
-                                    {ok, SrvId, Actor6};
-                                {error, Error} ->
-                                    {error, Error}
-                            end;
-                        {error, Error} ->
-                            {error, Error}
-                    end;
-                {error, Error} ->
-                    {error, Error}
-            end;
-        {error, Error} ->
-            {error, Error}
-    end.
-
-
-
-%% @private
-pre_update(ActorId, Syntax, Actor, Opts) ->
-    #actor_id{group=Group, resource=Res, namespace=Namespace} = ActorId,
-    case nkactor_syntax:parse_actor(Actor, Syntax) of
-        {ok, Actor2} ->
-            case nkactor_namespace:get_namespace(Namespace) of
-                {ok, SrvId, _Pid} ->
-                    Req1 = maps:get(request, Opts, #{}),
-                    Req2 = Req1#{
-                        verb => update,
-                        srv => SrvId
-                    },
-                    Module = nkactor_util:get_module(SrvId, Group, Res),
-                    case nkactor_actor:parse(Module, Actor2, Req2) of
-                        {ok, Actor3} ->
-                            case nkactor_lib:check_links(Actor3) of
-                                {ok, Actor4} ->
-                                    {ok, SrvId, Actor4};
-                                {error, Error} ->
-                                    {error, Error}
-                            end;
-                        {error, Error} ->
-                            {error, Error}
-                    end;
-                {error, Error} ->
-                    {error, Error}
-            end;
-        {error, Error} ->
-            {error, Error}
-    end.
-
-
-%% @doc Performs an query on database for actors marked as 'active' and tries
-%% to active them if not already activated
-activate_actors(SrvId) ->
-    nkserver_ot:new(auto_activate, SrvId, <<"Actor::auto-activate">>),
-    activate_actors(SrvId, <<>>),
-    nkserver_ot:finish(auto_activate),
-    ok.
-
-
-%% @private
-activate_actors(SrvId, StartDate) ->
-    nkserver_ot:log(auto_activate, {"starting date: ~s", [StartDate]}),
-    ParentSpan = nkserver_ot:get_parent(auto_activate),
-    case nkactor:search_active(SrvId, StartDate, #{parent_span=>ParentSpan}) of
-        {ok, [], _} ->
-            nkserver_ot:log(auto_activate, <<"no more actors">>),
-            ok;
-        {ok, ActorIds, #{last_date:=LastDate, size:=Size}} ->
-            nkserver_ot:log(auto_activate, {"found '~p' actors", [Size]}),
-            lists:foreach(
-                fun(#actor_id{uid=UID}=ActorId) ->
-                    case nkactor_namespace:find_registered_actor(ActorId) of
-                        {true, _, _} ->
-                            ok;
-                        _ ->
-                            case nkactor:activate(ActorId) of
-                                {ok, _} ->
-                                    nkserver_ot:log(auto_activate, {"activated actor '~s'", [UID]}),
-                                    lager:notice("NkACTOR auto-activating ~p", [ActorId]);
-                                {error, Error} ->
-                                    nkserver_ot:log(auto_activate, {"could not activated actor '~s': ~p",
-                                                    [UID, Error]}),
-                                    nkserver_ot:tag_error(auto_activate, could_not_activate_actor),
-                                    lager:warning("NkACTOR could not auto-activate ~p: ~p",
-                                                 [ActorId, Error])
-                            end
-                    end
-                end,
-                ActorIds),
-            activate_actors(SrvId, LastDate);
-        {error, Error} ->
-            {error, Error}
-    end.
-
-
-%% @private
-to_bin(Term) when is_binary(Term) -> Term;
-to_bin(Term) -> nklib_util:to_binary(Term).
-
-
-
-
-
-
-trace_create() ->
-    catch ets:new(nkactor_trace, [ordered_set, public, named_table]).
-
-
-trace_on() ->
+on() ->
     put(nkserver_trace, true).
 
 
-trace_off() ->
+off() ->
     put(nkserver_trace, false).
 
 
-trace_insert(Id, Meta) ->
+insert(Id, Meta) ->
     case get(nkserver_trace) of
         true ->
             Time = nklib_date:epoch(usecs),
@@ -248,7 +57,7 @@ trace_insert(Id, Meta) ->
     end.
 
 
-trace_insert_traces(Traces) ->
+insert_traces(Traces) ->
     case get(nkserver_trace) of
         true ->
             ets:insert(nkactor_trace, Traces);
@@ -257,10 +66,23 @@ trace_insert_traces(Traces) ->
     end.
 
 
-trace_dump() ->
-    Traces = ets:tab2list(nkactor_trace),
+dump() ->
+    {_, Lines} = lists:foldl(
+        fun({{Time, _Pos}, Log, Meta}, {LastTime, Acc}) ->
+            Diff = Time-LastTime,
+            M = Diff div 1000,
+            U = Diff rem 1000,
+            Text = case map_size(Meta)==0 of
+                true ->
+                    io_lib:format("~p ~6..0B.~3..0B ~s\n", [Time, M, U, Log]);
+                false ->
+                    io_lib:format("~p ~6..0B.~3..0B ~s ~p\n", [Time, M, U, Log, Meta])
+            end,
+            {Time, [Text|Acc]}
+        end,
+        {0, []},
+        ets:tab2list(nkactor_trace)),
     ets:delete_all_objects(nkactor_trace),
-    Traces.
-
+    lists:reverse(Lines).
 
 

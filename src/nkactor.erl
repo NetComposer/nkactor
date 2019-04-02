@@ -71,8 +71,9 @@
             is_enabled => boolean(),
             in_alarm => boolean(),
             alarms => [alarm()],
-            next_status_time => boolean(),
-            description => binary()
+            next_status_time => binary(),
+            description => binary(),
+            trace_id => binary()
         }
     }.
 
@@ -197,6 +198,8 @@
         get_actor => boolean(),
         ttl => pos_integer(),
         request => request(),
+        use_span_local_id => nkserver_ot:id(),
+        parent_span => nkserver_ot:parent(),
         forced_uid => binary()              % Use it only for non-persistent actors!
     }.
 
