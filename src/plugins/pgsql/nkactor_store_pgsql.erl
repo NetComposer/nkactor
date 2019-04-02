@@ -20,6 +20,7 @@
 
 -module(nkactor_store_pgsql).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
+-export([get_pgsql_srv/1]).
 -export([query/2, query/3]).
 -export([quote/1, quote_list/1, filter_path/2]).
 -export_type([result_fun/0]).
@@ -42,24 +43,29 @@
 % https://www.cockroachlabs.com/docs/stable/
 % https://www.cockroachlabs.com/docs/dev/
 
-%% @doc Performs a query
+%% @doc
+get_pgsql_srv(ActorSrvId) ->
+    nkserver:get_cached_config(ActorSrvId, nkactor_store_pgsql, pgsql_service).
+
+
+%% @doc Performs a query. Must use the PgSQL service
 -spec query(nkserver:id(), binary()|nkpgsql:query_fun()) ->
     {ok, list(), Meta::map()} |
     {error, {pgsql_error, nkpgsql:pgsql_error()}|term()}.
 
 query(SrvId, Query) ->
-    PgSrvId = nkserver:get_cached_config(SrvId, nkactor_store_pgsql, pgsql_service),
-    nkpgsql:query(PgSrvId, Query, #{}).
+    nkserver_ot:tag(actor_store_pgsql, sql, Query),
+    nkpgsql:query(SrvId, Query, #{}).
 
 
-%% @doc Performs a query
+%% @doc Performs a query. Must use the PgSQL service
 -spec query(nkserver:id(), binary()|nkpgsql:query_fun(), nkpgsql:query_meta()) ->
     {ok, list(), Meta::map()} |
     {error, {pgsql_error, nkpgsql:pgsql_error()}|term()}.
 
 query(SrvId, Query, QueryMeta) ->
-    PgSrvId = nkserver:get_cached_config(SrvId, nkactor_store_pgsql, pgsql_service),
-    nkpgsql:query(PgSrvId, Query, QueryMeta).
+    nkserver_ot:tag(actor_store_pgsql, sql, Query),
+    nkpgsql:query(SrvId, Query, QueryMeta).
 
 
 

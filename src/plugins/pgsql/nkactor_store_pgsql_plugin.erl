@@ -24,6 +24,7 @@
 -export([plugin_deps/0, plugin_config/3, plugin_cache/3, plugin_start/3]).
 
 -include("nkactor.hrl").
+-include_lib("nkserver/include/nkserver.hrl").
 
 %% ===================================================================
 %% Plugin Callbacks
@@ -57,5 +58,8 @@ plugin_cache(_SrvId, Config, _Service) ->
 
 
 plugin_start(SrvId, _Config, _Service) ->
-	nkactor_store_pgsql_init:init(SrvId).
+	PgSrvId = nkactor_store_pgsql:get_pgsql_srv(SrvId),
+	nkactor_store_pgsql_init:init(PgSrvId),
+	?CALL_SRV(SrvId, actor_db_init, [SrvId]).
+
 

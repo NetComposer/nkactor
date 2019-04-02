@@ -59,8 +59,9 @@ init(SrvId, Tries) when Tries > 0 ->
                     {error, database_unrecognized}
             end;
         {error, relation_unknown} ->
-            ?LLOG(warning, "database not found: Creating it", []),
-            case nkactor_store_pgsql:query(SrvId, create_database_query()) of
+            Flavour = nkserver:get_cached_config(SrvId, nkpgsql, flavour),
+            ?LLOG(warning, "database not found: Creating it (~p)", [Flavour]),
+            case nkactor_store_pgsql:query(SrvId, create_database_query(Flavour)) of
                 {ok, _, _} ->
                     ok;
                 {error, Error} ->
@@ -97,7 +98,75 @@ drop(SrvId) ->
 
 
 %% @private
-create_database_query() ->
+create_database_query(postgresql) ->
+    <<"
+        -- Comment
+        BEGIN;
+        CREATE TABLE versions (
+            id TEXT PRIMARY KEY NOT NULL,
+            version TEXT NOT NULL
+        );
+        CREATE TABLE actors (
+            uid TEXT PRIMARY KEY NOT NULL,
+            \"group\" TEXT NOT NULL,
+            resource TEXT NOT NULL,
+            name TEXT NOT NULL,
+            namespace TEXT NOT NULL,
+            data JSONB NOT NULL,
+            metadata JSONB NOT NULL,
+            path TEXT NOT NULL,
+            hash TEXT NOT NULL,
+            last_update TEXT NOT NULL,
+            is_active TEXT,
+            expires INTEGER,
+            fts_words TEXT
+        );
+        CREATE UNIQUE INDEX name_idx on actors (namespace, \"group\", resource, name);
+        CREATE INDEX last_update_idx on actors (last_update);
+        CREATE INDEX expires_idx on actors (expires);
+        CREATE INDEX active_idx on actors (is_active, last_update);
+        CREATE INDEX data_idx on actors USING gin(data);
+        CREATE INDEX metadata_idx on actors USING gin(metadata);
+        INSERT INTO versions VALUES ('actors', '1');
+        CREATE TABLE labels (
+            uid TEXT NOT NULL REFERENCES actors(uid) ON DELETE CASCADE,
+            label_key TEXT NOT NULL,
+            label_value TEXT NOT NULL,
+            path TEXT NOT NULL,
+            PRIMARY KEY (uid, label_key)
+        );
+        CREATE INDEX label_idx on labels (label_key, label_value, path);
+        INSERT INTO versions VALUES ('labels', '1');
+        CREATE TABLE links (
+            uid TEXT NOT NULL REFERENCES actors(uid) ON DELETE CASCADE,
+            link_target TEXT NOT NULL REFERENCES actors(uid) ON DELETE CASCADE,
+            link_type TEXT NOT NULL,
+            path TEXT NOT NULL,
+            PRIMARY KEY (uid, link_target, link_type)
+        );
+        CREATE UNIQUE INDEX link_idx ON links (link_target, link_type, uid);
+        INSERT INTO versions VALUES ('links', '1');
+        CREATE TABLE fts (
+            uid TEXT NOT NULL REFERENCES actors(uid) ON DELETE CASCADE,
+            fts_word TEXT NOT NULL,
+            fts_field TEXT NOT NULL,
+            path TEXT NOT NULL,
+            PRIMARY KEY (uid, fts_word, fts_field)
+        );
+        CREATE UNIQUE INDEX fts_idx ON fts (fts_word, fts_field, uid);
+        INSERT INTO versions VALUES ('fts', '1');
+        CREATE TABLE namespaces (
+            namespace TEXT PRIMARY KEY NOT NULL,
+            service TEXT NOT NULL,
+            cluster TEXT NOT NULL,
+            last_update TEXT NOT NULL,
+            data JSONB NOT NULL
+        );
+        INSERT INTO versions VALUES ('namespaces', '1');
+        COMMIT;
+    ">>;
+
+create_database_query(cockroachdb) ->
     <<"
         BEGIN;
         CREATE TABLE versions (
@@ -115,11 +184,13 @@ create_database_query() ->
             path STRING NOT NULL,
             hash STRING NOT NULL,
             last_update STRING NOT NULL,
+            is_active STRING,
             expires INTEGER,
             fts_words STRING,
             UNIQUE INDEX name_idx (namespace, \"group\", resource, name),
             INDEX last_update_idx (last_update),
             INDEX expires_idx (expires),
+            INDEX active_idx (is_active, last_update),
             INVERTED INDEX data_idx (data),
             INVERTED INDEX metadata_idx (metadata)
         );
@@ -130,7 +201,7 @@ create_database_query() ->
             label_value STRING NOT NULL,
             path STRING NOT NULL,
             PRIMARY KEY (uid, label_key),
-            UNIQUE INDEX label_idx (label_key, uid)
+            INDEX label_idx (label_key, label_value, path)
         ) INTERLEAVE IN PARENT actors(uid);
         INSERT INTO versions VALUES ('labels', '1');
         CREATE TABLE links (
@@ -160,5 +231,70 @@ create_database_query() ->
         );
         INSERT INTO versions VALUES ('namespaces', '1');
         COMMIT;
-    ">>.
+    ">>;
 
+create_database_query(yugabyte) ->
+    <<"
+        -- Comment
+        BEGIN;
+        CREATE TABLE versions (
+            id TEXT PRIMARY KEY NOT NULL,
+            version TEXT NOT NULL
+        );
+        CREATE TABLE actors (
+            uid TEXT PRIMARY KEY NOT NULL,
+            \"group\" TEXT NOT NULL,
+            resource TEXT NOT NULL,
+            name TEXT NOT NULL,
+            namespace TEXT NOT NULL,
+            data JSONB NOT NULL,
+            metadata JSONB NOT NULL,
+            path TEXT NOT NULL,
+            hash TEXT NOT NULL,
+            last_update TEXT NOT NULL,
+            is_active TEXT,
+            expires INTEGER,
+            fts_words TEXT
+        );
+        CREATE UNIQUE INDEX name_idx on actors (namespace, \"group\", resource, name);
+        CREATE INDEX last_update_idx on actors (last_update);
+        CREATE INDEX expires_idx on actors (expires);
+        CREATE INDEX active_idx on actors (is_active, last_update);
+        INSERT INTO versions VALUES ('actors', '1');
+        CREATE TABLE labels (
+            uid TEXT NOT NULL,
+            label_key TEXT NOT NULL,
+            label_value TEXT NOT NULL,
+            path TEXT NOT NULL,
+            PRIMARY KEY (uid, label_key)
+        );
+        CREATE INDEX label_idx on labels (label_key, label_value, path);
+        INSERT INTO versions VALUES ('labels', '1');
+        CREATE TABLE links (
+            uid TEXT NOT NULL,
+            link_target TEXT NOT NULL,
+            link_type TEXT NOT NULL,
+            path TEXT NOT NULL,
+            PRIMARY KEY (uid, link_target, link_type)
+        );
+        CREATE UNIQUE INDEX link_idx ON links (link_target, link_type, uid);
+        INSERT INTO versions VALUES ('links', '1');
+        CREATE TABLE fts (
+            uid TEXT NOT NULL,
+            fts_word TEXT NOT NULL,
+            fts_field TEXT NOT NULL,
+            path TEXT NOT NULL,
+            PRIMARY KEY (uid, fts_word, fts_field)
+        );
+        CREATE UNIQUE INDEX fts_idx ON fts (fts_word, fts_field, uid);
+        INSERT INTO versions VALUES ('fts', '1');
+        CREATE TABLE namespaces (
+            namespace TEXT PRIMARY KEY NOT NULL,
+            service TEXT NOT NULL,
+            cluster TEXT NOT NULL,
+            last_update TEXT NOT NULL,
+            data JSONB NOT NULL
+        );
+        INSERT INTO versions VALUES ('namespaces', '1');
+        COMMIT;
+    ">>.

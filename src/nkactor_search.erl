@@ -42,6 +42,7 @@
         totals => boolean(),
         filter => filter(),
         sort => [sort_spec()],
+        only_uid => boolean(),
         get_data => boolean(),
         get_metadata => boolean(),
         do_delete => boolean(),
@@ -66,11 +67,12 @@
 
 
 % Field types are used to cast the correct value from JSON
-% Byt default, they will be extracted as strings (so they will be sorted incorrectly)
-% For arrays, for example, for field spec.phone.phone => array, the query
+% By default, they will be extracted as strings (so they will be sorted incorrectly)
+% For JSON fields, the type 'object' can be used for @> operator
+% for example, for field spec.phone.phone => array, the query
 %   #{field => "spec.phone.phone", eq=>"123} generates data->'spec'->'phone' @> '[{"phone": "123456"}]'
 
--type field_type() :: string | boolean | integer | array.
+-type field_type() :: string | boolean | integer | object.
 
 
 -type filter_spec() ::
@@ -112,7 +114,7 @@ parse(SearchSpec) ->
     SyntaxOpts = #{search_opts=>maps:get(meta, SearchSpec, #{})},
     case nklib_syntax:parse(SearchSpec, Syntax, SyntaxOpts) of
         {ok, Parsed, []} ->
-            {ok, Parsed};
+            {ok, analyze(Parsed)};
         {ok, _, [Field|_]} ->
             {error, {field_unknown, Field}};
         {error, Error} ->
@@ -135,8 +137,10 @@ search_spec_syntax() ->
         },
         sort => {list, search_spec_syntax_sort()},
         do_delete => boolean,
+        only_uid => boolean,
         get_data => boolean,
         get_metadata => boolean,
+        parent_span => any,
         meta => ignore,
         '__defaults' => #{namespace => <<>>}
     }.
@@ -146,7 +150,7 @@ search_spec_syntax() ->
 search_spec_syntax_filter() ->
     #{
         field => binary,
-        type => {atom, [string, integer, boolean]},
+        type => {atom, [string, integer, boolean, object]},
         op => {atom, [eq, ne, lt, lte, gt, gte, values, exists, prefix, ignore]},
         value => any,
         '__mandatory' => [field, value],
@@ -239,4 +243,21 @@ syntax_parse_trans(Field, List, Trans) ->
         error ->
             {Field, List}
     end.
+
+
+
+analyze(Spec) ->
+    Filter1 = maps:get(filter, Spec, #{}),
+    Filter2 =
+        maps:get('and', Filter1, []) ++
+        maps:get('or', Filter1, []) ++
+        maps:get('not', Filter1, []),
+    FilterFields = [{Field, Op} || #{field:=Field, op:=Op} <- Filter2],
+    Sort = maps:get(sort, Spec, []),
+    SortFields = [Field || #{field:=Field} <-Sort],
+    Spec#{filter_fields=>FilterFields, sort_fields=>SortFields}.
+
+
+
+
 

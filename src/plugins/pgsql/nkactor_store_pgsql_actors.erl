@@ -20,13 +20,12 @@
 
 -module(nkactor_store_pgsql_actors).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
--export([find/2, read/2, save/3, delete/3]).
+-export([find/2, read/2, create/2, update/2, delete/3]).
 -export([get_links/3, get_linked/3]).
 -import(nkactor_store_pgsql, [query/2, query/3, quote/1, quote_list/1]).
 
 -define(MAX_CASCADE_DELETE, 10000).
 -define(LLOG(Type, Txt, Args), lager:Type("NkACTOR PGSQL "++Txt, Args)).
--define(RETURN_NOTHING,  <<" RETURNING NOTHING; ">>).
 
 
 -include("nkactor.hrl").
@@ -222,6 +221,7 @@ read(SrvId, #actor_id{namespace=Namespace, name=Name})
 
 
 -record(save_fields, {
+    names = [],
     uids = [],
     actors = [],
     labels = [],
@@ -230,64 +230,109 @@ read(SrvId, #actor_id{namespace=Namespace, name=Name})
 }).
 
 
+%% @doc
+create(SrvId, Actor) ->
+    save(SrvId, create, Actor).
+
+
+%% @doc
+update(SrvId, Actor) ->
+    save(SrvId, update, Actor).
+
+
+
 %% @doc Called from actor_srv_save callback
 %% Links to invalid objects will not be allowed (foreign key)
 save(SrvId, Mode, Actor) when is_map(Actor) ->
     save(SrvId, Mode, [Actor]);
 
 save(SrvId, Mode, Actors) ->
+    Flavour = nkserver:get_cached_config(SrvId, nkpgsql, flavour),
     Fields = populate_fields(Actors, #save_fields{}),
     #save_fields{
+        names = FieldNames,
         uids = UIDs,
-        actors = ActorFields,
+        actors = ActorsFields,
         labels = LabelFields,
         links = LinkFields,
         fts = FtsFields
     } = Fields,
-    Verb = case Mode of
+    ActorsQuery = case Mode of
         create ->
-            <<"INSERT">>;
+            FieldNames2 = nklib_util:bjoin(FieldNames),
+            [
+                <<"INSERT INTO actors (">>, FieldNames2, <<") VALUES ">>,
+                nklib_util:bjoin(
+                    [
+                        list_to_binary([<<"(">>, nklib_util:bjoin(ActorFields), <<")">>])
+                        || ActorFields <- ActorsFields
+                    ]),
+                return_nothing(Flavour)
+            ];
         update ->
-            <<"UPSERT">>
+            lists:map(
+                fun(ActorFields) ->
+                    Values = lists:zip(FieldNames, ActorFields),
+                    [
+                        <<"UPDATE actors SET ">>,
+                        nklib_util:bjoin([
+                            list_to_binary([Field, <<"=">>, Value])
+                            || {Field, Value} <- Values
+                        ]),
+                        <<" WHERE uid=">>, hd(ActorFields), return_nothing(Flavour)
+                    ]
+                end,
+                ActorsFields)
     end,
-    ActorsQuery = [
-        Verb, <<" INTO actors">>,
-        <<" (uid,\"group\",resource,name,namespace,data,metadata,path,hash,last_update,expires,fts_words)">>,
-        <<" VALUES ">>, nklib_util:bjoin(ActorFields), ?RETURN_NOTHING
-    ],
     LabelsQuery = [
-        <<"DELETE FROM labels WHERE uid IN ">>, UIDs, ?RETURN_NOTHING,
+        case Mode of
+            create ->
+                [];
+            update ->
+                [<<"DELETE FROM labels WHERE uid IN ">>, UIDs, return_nothing(Flavour)]
+        end,
         case LabelFields of
             [] ->
                 [];
             _ ->
                 [
-                    <<"UPSERT INTO labels (uid,label_key,label_value,path) VALUES ">>,
-                    nklib_util:bjoin(LabelFields), ?RETURN_NOTHING
+                    <<"INSERT INTO labels (uid,label_key,label_value,path) VALUES ">>,
+                    nklib_util:bjoin(LabelFields), return_nothing(Flavour)
                 ]
         end
     ],
     LinksQuery = [
-        <<"DELETE FROM links WHERE uid IN ">>, UIDs, ?RETURN_NOTHING,
+        case Mode of
+            create ->
+                [];
+            update ->
+                [<<"DELETE FROM links WHERE uid IN ">>, UIDs, return_nothing(Flavour)]
+        end,
         case LinkFields of
             [] ->
                 [];
             _ ->
                 [
-                    <<"UPSERT INTO links (uid,link_target,link_type,path) VALUES ">>,
-                    nklib_util:bjoin(LinkFields), ?RETURN_NOTHING
+                    <<"INSERT INTO links (uid,link_target,link_type,path) VALUES ">>,
+                    nklib_util:bjoin(LinkFields), return_nothing(Flavour)
                 ]
         end
     ],
     FtsQuery = [
-        <<"DELETE FROM fts WHERE uid IN ">>, UIDs, ?RETURN_NOTHING,
+        case Mode of
+            create ->
+                [];
+            update ->
+                []
+                %[<<"DELETE FROM fts WHERE uid IN ">>, UIDs, return_nothing(Flavour)]
+        end,
         case FtsFields of
             [] ->
                 [];
             _ ->
                 [
-                    <<"UPSERT INTO fts (uid,fts_word,fts_field,path) VALUES ">>,
-                    nklib_util:bjoin(FtsFields), ?RETURN_NOTHING
+                    <<"INSERT INTO fts (uid,fts_word,fts_field,path) VALUES ">>,
+                    nklib_util:bjoin(FtsFields), return_nothing(Flavour)
                 ]
         end
     ],
@@ -308,6 +353,12 @@ save(SrvId, Mode, Actors) ->
         {error, Error} ->
             {error, Error}
     end.
+
+
+%% @private
+return_nothing(cockroachdb) -> <<" RETURNING NOTHING; ">>;
+return_nothing(_) -> <<"; ">>.
+
 
 
 %% @private
@@ -338,6 +389,10 @@ populate_fields([Actor|Rest], SaveFields) ->
     QPath = quote(Path),
     Hash = maps:get(hash, Meta, <<>>),
     Updated = maps:get(update_time, Meta),
+    IsActive = case maps:get(is_active, Meta, false) of
+        true -> <<"T">>;
+        false -> null
+    end,
     Expires = case maps:get(expires_time, Meta, <<>>) of
         <<>> ->
             null;
@@ -362,21 +417,22 @@ populate_fields([Actor|Rest], SaveFields) ->
         end,
         [],
         FtsWords1),
-    ActorFields = quote_list([
-        UID,
-        Group,
-        Res,
-        Name,
-        Namespace,
-        Data,
-        Meta,
-        Path,
-        Hash,
-        Updated,
-        Expires,
-        list_to_binary([FtsWords2, <<" ">>])
-    ]),
-    Actors2 = [list_to_binary([<<"(">>, ActorFields, <<")">>]) | Actors],
+    Actor2 = [
+        QUID,
+        quote(Group),
+        quote(Res),
+        quote(Name),
+        quote(Namespace),
+        quote(Data),
+        quote(Meta),
+        QPath,
+        quote(Hash),
+        quote(Updated),
+        quote(IsActive),
+        quote(Expires),
+        quote(list_to_binary([FtsWords2, <<" ">>]))
+    ],
+    %Actors2 = [list_to_binary([<<"(">>, ActorFields, <<")">>]) | Actors],
     Labels2 = maps:fold(
         fun(Key, Val, Acc) ->
             L = list_to_binary([
@@ -409,9 +465,15 @@ populate_fields([Actor|Rest], SaveFields) ->
         end,
         Fts,
         FtsWords1),
+    FieldNames = [
+        <<"uid">>, <<"\"group\"">>, <<"resource">>, <<"name">>, <<"namespace">>,
+        <<"data">>,<<"metadata">>,<<"path">>,<<"hash">>,<<"last_update">>,
+        <<"is_active">>,<<"expires">>,<<"fts_words">>
+    ],
     SaveFields2 = SaveFields#save_fields{
+        names = FieldNames,
         uids = [QUID|UIDs],
-        actors = Actors2,
+        actors = [Actor2|Actors],
         labels = Labels2,
         links = Links2,
         fts = Fts2
@@ -461,7 +523,6 @@ delete(SrvId, UIDs, Opts) ->
     end.
 
 
-%% @private Returns the list of UIDs an UID depends on
 delete_find_nested(_Pid, [], Set) ->
     sets:to_list(Set);
 
@@ -492,6 +553,7 @@ delete_actors(_SrvId, [], _CheckChilds, _Pid, _QueryMeta, ActorIds, QueryAcc) ->
     {ActorIds, QueryAcc};
 
 delete_actors(SrvId, [UID|Rest], CheckChilds, Pid, QueryMeta, ActorIds, QueryAcc) ->
+    Flavour = nkserver:get_cached_config(SrvId, nkpgsql, flavour),
     case nkactor_srv:raw_stop(UID, pre_delete) of
         ok ->
             ok;
@@ -525,10 +587,10 @@ delete_actors(SrvId, [UID|Rest], CheckChilds, Pid, QueryMeta, ActorIds, QueryAcc
                 name = Name
             },
             QueryAcc2 = [
-                <<"DELETE FROM actors WHERE uid=">>, QUID, ?RETURN_NOTHING,
-                <<"DELETE FROM labels WHERE uid=">>, QUID, ?RETURN_NOTHING,
-                <<"DELETE FROM links WHERE uid=">>, QUID, ?RETURN_NOTHING,
-                <<"DELETE FROM fts WHERE uid=">>, QUID, ?RETURN_NOTHING
+                <<"DELETE FROM actors WHERE uid=">>, QUID, return_nothing(Flavour),
+                <<"DELETE FROM labels WHERE uid=">>, QUID, return_nothing(Flavour),
+                <<"DELETE FROM links WHERE uid=">>, QUID, return_nothing(Flavour),
+                <<"DELETE FROM fts WHERE uid=">>, QUID, return_nothing(Flavour)
                 | QueryAcc
             ],
             delete_actors(SrvId, Rest, CheckChilds, Pid, QueryMeta, [ActorId|ActorIds], QueryAcc2);

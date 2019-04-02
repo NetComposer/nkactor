@@ -35,10 +35,6 @@
 -include("nkactor_debug.hrl").
 
 
-
-
-
-
 %% ===================================================================
 %% Callbacks definitions
 %% ===================================================================
@@ -487,6 +483,7 @@ filter_fields() ->
         'metadata.updated_by',
         'metadata.expires_time',
         'metadata.generation',
+        'metadata.is_active',
         'metadata.is_enabled',
         'metadata.in_alarm'
     ].
@@ -509,6 +506,7 @@ sort_fields() ->
         'metadata.updated_by',
         'metadata.expires_time',
         'metadata.generation',
+        'metadata.is_active',
         'metadata.is_enabled',
         'metadata.in_alarm'
     ].
@@ -528,6 +526,7 @@ sort_fields() ->
 field_type() ->
     #{
         'metadata.generation' => integer,
+        'metadata.is_active' => boolean,
         'metadata.is_enabled' => boolean,
         'metadata.in_alarm' => boolean
     }.
@@ -541,9 +540,13 @@ field_type() ->
 
 %% @private
 call_actor(Fun, Args, #actor_st{module=Module}) ->
+    %?TRACE(call_actor_1, #{'fun'=>Fun}),
     case erlang:function_exported(Module, Fun, length(Args)) of
         true ->
-            apply(Module, Fun, Args);
+            %?TRACE(call_actor_2),
+            R = apply(Module, Fun, Args),
+            %?TRACE(call_actor_3),
+            R;
         false ->
             continue
     end;
