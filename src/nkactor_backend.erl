@@ -88,7 +88,7 @@ do_find([], _ActorId) ->
     {error, actor_not_found};
 
 do_find([SrvId|Rest], ActorId) ->
-    case ?CALL_SRV(SrvId, actor_db_find, [SrvId, ActorId]) of
+    case ?CALL_SRV(SrvId, actor_db_find, [SrvId, ActorId, #{}]) of
         {ok, #actor_id{} = ActorId2, Meta} ->
             % If its was an UID, or a partial path, we must check now that
             % it could be registered, now that we have full data
@@ -179,7 +179,7 @@ read(Id, Opts) ->
                 false ->
                     get_actor
             end,
-            case nkactor_srv:sync_op(ActorId, Op) of
+            case nkactor_srv:sync_op(ActorId, Op, infinity) of
                 {ok, Actor} ->
                     {ok, SrvId, Actor, Meta};
                 {error, Error} ->
@@ -197,11 +197,14 @@ read(Id, Opts) ->
 
 create(Actor, #{activate:=false}=Opts) ->
     Syntax = #{'__mandatory' => [group, resource, namespace]},
+    SpanLocalId = maps:get(use_span_local_id, Opts, undefined),
+    nkserver_ot:log(SpanLocalId, starting_actor_create_without_activation),
     case nkactor_util:pre_create(Actor, Syntax, Opts) of
         {ok, SrvId, Actor2} ->
             % Non recommended for non-relational databases, if name is not
             % randomly generated
-            case ?CALL_SRV(SrvId, actor_db_create, [SrvId, Actor2]) of
+            Config = maps:with([parent_span], Opts),
+            case ?CALL_SRV(SrvId, actor_db_create, [SrvId, Actor2, Config]) of
                 {ok, Meta} ->
                     % Use the alternative method for sending the event
                     nkactor_lib:send_external_event(SrvId, created, Actor2),
@@ -221,23 +224,20 @@ create(Actor, #{activate:=false}=Opts) ->
 
 create(Actor, Opts) ->
     Syntax = #{'__mandatory' => [group, resource, namespace]},
+    SpanLocalId = maps:get(use_span_local_id, Opts, undefined),
+    nkserver_ot:log(SpanLocalId, <<"starting actor create">>),
     case nkactor_util:pre_create(Actor, Syntax, Opts) of
         {ok, SrvId, Actor2} ->
             % If we use the activate option, the object is first
             % registered with leader, so you cannot have two with same
             % name even on non-relational databases
             % The process will send the 'create' event in-server
-            Config = case maps:find(ttl, Opts) of
-                {ok, TTL} ->
-                    #{ttl=>TTL};
-                error ->
-                    #{}
-            end,
+            Config = maps:with([ttl, parent_span], Opts),
             case ?CALL_SRV(SrvId, actor_create, [Actor2, Config]) of
                 {ok, #actor_id{pid=Pid}=ActorId} when is_pid(Pid) ->
                     case Opts of
                         #{get_actor:=true} ->
-                            case nkactor_srv:sync_op(ActorId, get_actor) of
+                            case nkactor_srv:sync_op(ActorId, get_actor, infinity) of
                                 {ok, Actor3} ->
                                     {ok, SrvId, Actor3, #{}};
                                 {error, Error} ->
@@ -272,9 +272,9 @@ update(Id, Actor, Opts) ->
             case activate(ActorId, Opts) of
                 {ok, SrvId, ActorId2, _} ->
                     UpdOpts = maps:get(update_opts, Opts, #{}),
-                    case nkactor_srv:sync_op(ActorId2, {update, Actor, UpdOpts}) of
+                    case nkactor_srv:sync_op(ActorId2, {update, Actor, UpdOpts}, infinity) of
                         ok ->
-                            {ok, Actor2} = nkactor_srv:sync_op(ActorId2, get_actor),
+                            {ok, Actor2} = nkactor_srv:sync_op(ActorId2, get_actor, infinity),
                             {ok, SrvId, Actor2, #{}};
                         {error, Error} ->
                             {error, Error}
@@ -296,7 +296,7 @@ delete(Id, Opts) ->
         {ok, SrvId, #actor_id{uid=UID, pid=Pid}=ActorId2, _Meta} ->
             case maps:get(cascade, Opts, false) of
                 false when is_pid(Pid) ->
-                    case nkactor_srv:sync_op(ActorId2, delete) of
+                    case nkactor_srv:sync_op(ActorId2, delete, infinity) of
                         ok ->
                             % The object is loaded, and it will perform the delete
                             % itself, including sending the event (a full event)
@@ -415,12 +415,11 @@ aggregation(SrvId, AggType, Opts) ->
 %% Internal
 %% ===================================================================
 
-
 do_read(SrvId, ActorId, Opts) ->
-    case ?CALL_SRV(SrvId, actor_db_read, [SrvId, ActorId]) of
+    case ?CALL_SRV(SrvId, actor_db_read, [SrvId, ActorId, #{}]) of
         {ok, Actor, Meta} ->
             #actor_id{group = Group, resource = Res} = ActorId,
-            case nkactor_util:get_module(Group, Res) of
+            case nkactor_util:get_module(SrvId, Group, Res) of
                 undefined ->
                     ?LLOG(warning, "actor resource unknown ~s:~s", [Group, Res]),
                     {error, actor_invalid};

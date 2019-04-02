@@ -20,7 +20,7 @@
 
 
 %% @doc Basic Actor utilities
--module(nkactor_util).
+-module(nkactor_trace).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -include("nkactor.hrl").

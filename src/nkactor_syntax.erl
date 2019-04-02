@@ -77,7 +77,7 @@ meta_syntax() ->
         creation_time => date_3339,
         update_time => date_3339,
         is_enabled => boolean,
-        is_activated => boolean,
+        is_active => boolean,
         expires_time => date_3339,
         labels => #{'__key_binary' => binary},
         annotations => #{'__key_binary' => binary},
@@ -89,6 +89,7 @@ meta_syntax() ->
         description => binary,
         created_by => binary,
         updated_by => binary,
+        trace_id => integer,
         '__defaults' => #{
             vsn => <<"0">>
         }

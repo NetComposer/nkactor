@@ -127,7 +127,8 @@ stop_all_namespaces(Namespace, Reason) ->
 -record(state, {
     base_namespace :: nkactor:namespace(),
     base_namespace_pid :: pid() | undefined,
-    namespaces :: [{[binary()], nkactor:namespace(), pid()}]
+    namespaces :: [{[binary()], nkactor:namespace(), pid()}],
+    next_auto_activate :: integer()
 }).
 
 -type state() :: #{nkactor => #state{}}.
@@ -138,9 +139,16 @@ stop_all_namespaces(Namespace, Reason) ->
     {continue, [{nkserver:id(), state()}]}.
 
 srv_master_init(SrvId, State) ->
+    NextActivate = case nkserver:get_config(SrvId) of
+        #{auto_activate_actors_period:=Time} ->
+            nklib_date:epoch(msecs) + Time;
+        _ ->
+            0
+    end,
     AcState = #state{
         base_namespace = nkactor:base_namespace(SrvId),
-        namespaces = []
+        namespaces = [],
+        next_auto_activate = NextActivate
     },
     gen_server:cast(self(), nkactor_check_base_namespace),
     {continue, [SrvId, State#{nkactor => AcState}]}.
@@ -214,7 +222,8 @@ srv_master_handle_info(_Msg, _SrvId, _State) ->
 srv_master_timed_check(IsLeader, SrvId, State) ->
     AcState1 = get_actor_state(State),
     AcState2 = check_base_namespace(SrvId, IsLeader, AcState1),
-    {continue, [IsLeader, SrvId, set_actor_state(AcState2, State)]}.
+    AcState3 = check_auto_activate(SrvId, AcState2),
+    {continue, [IsLeader, SrvId, set_actor_state(AcState3, State)]}.
 
 
 %% ===================================================================
@@ -240,6 +249,23 @@ check_base_namespace(SrvId, IsLeader, #state{base_namespace=Namespace}=AcState) 
             spawn_link(fun() -> nkactor_namespace:do_start(SrvId, Namespace, true) end),
             AcState
     end.
+
+
+%% @private
+check_auto_activate(SrvId, #state{next_auto_activate=Next}=AcState) when Next > 0 ->
+    Now = nklib_date:epoch(msecs),
+    case Now > Next of
+        true ->
+            spawn(fun() -> nkactor_util:activate_actors(SrvId) end),
+            #{auto_activate_actors_period:=Time} = nkserver:get_config(SrvId),
+            AcState#state{next_auto_activate = Now+Time};
+        false ->
+            AcState
+    end;
+
+check_auto_activate(_SrvId, State) ->
+    State.
+
 
 
 %% @private

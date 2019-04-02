@@ -385,7 +385,7 @@ start_and_call(Namespace, Msg, Timeout, Tries) when Tries > 0 ->
     case start_namespace(Namespace) of
         {ok, Pid} ->
             case nklib_util:call2(Pid, Msg, Timeout) of
-                {error, process_not_found} ->
+                process_not_found ->
                     timer:sleep(250),
                     lager:warning("NkACTOR Namespace '~s' failed, retrying...", [Namespace]),
                     start_and_call(Namespace, Msg, Timeout, Tries-1);

@@ -33,7 +33,7 @@
          actor_srv_alarms/1, actor_srv_heartbeat/1,
          actor_srv_handle_call/3, actor_srv_handle_cast/2, actor_srv_handle_info/2]).
 -export([actor_do_active/1, actor_do_expired/1]).
--export([actor_db_find/2, actor_db_read/2, actor_db_create/2, actor_db_update/2,
+-export([actor_db_find/3, actor_db_read/3, actor_db_create/3, actor_db_update/3,
          actor_db_delete/3, actor_db_search/3, actor_db_aggregate/3]).
 -export([srv_master_init/2, srv_master_handle_call/4, srv_master_handle_cast/3,
          srv_master_handle_info/3, srv_master_timed_check/3]).
@@ -51,6 +51,7 @@
 
 msg(actor_deleted)                  -> "Actor has been deleted";
 msg({actors_deleted, N})            -> {"Actors (~p) have been deleted", [N]};
+msg(actor_already_registered)       -> "Actor already registered";
 msg(actor_not_found)                -> "Actor not found";
 msg({actor_invalid, _})             -> "Actor is invalid";
 msg(actor_id_invalid)               -> "Actor ID is invalid";
@@ -77,6 +78,7 @@ msg(_)   		                    -> continue.
 -type actor_st() :: #actor_st{}.
 
 
+
 %% @doc Called when activating an actor to get it's config and module
 %% Config is the added config used when calling the function
 -spec actor_authorize(nkactor:request()) ->
@@ -84,7 +86,6 @@ msg(_)   		                    -> continue.
 
 actor_authorize(_Req) ->
     false.
-
 
 
 %% @doc Called when activating an actor to get it's config and module
@@ -335,43 +336,44 @@ actor_do_expired(_Actor) ->
 %% Persistence callbacks
 %% ===================================================================
 
+-type db_opts() :: map().
 
 %% @doc Must find an actor on disk by UID (if available) or name, and return
 %% full actor_id data
--spec actor_db_find(nkserver:id(), actor_id()) ->
+-spec actor_db_find(nkserver:id(), actor_id(), db_opts()) ->
     {ok, actor_id(), Meta::map()} | {error, actor_not_found|term()}.
 
-actor_db_find(_SrvId, _ActorId) ->
+actor_db_find(_SrvId, _ActorId, _Opts) ->
     {error, persistence_not_defined}.
 
 
 %% @doc Must find and read a full actor on disk by UID (if available) or name
--spec actor_db_read(nkserver:id(), actor_id()) ->
+-spec actor_db_read(nkserver:id(), actor_id(), map()) ->
     {ok, nkactor:actor(), Meta::map()} | {error, actor_not_found|term()}.
 
-actor_db_read(_SrvId, _ActorId) ->
+actor_db_read(_SrvId, _ActorId, _Opts) ->
     {error, persistence_not_defined}.
 
 
 %% @doc Must create a new actor on disk. Should fail if already present
--spec actor_db_create(nkserver:id(), actor()) ->
+-spec actor_db_create(nkserver:id(), actor(), map()) ->
     {ok, Meta::map()} | {error, uniqueness_violation|term()}.
 
-actor_db_create(_SrvId, _Actor) ->
+actor_db_create(_SrvId, _Actor, _Opts) ->
     {error, persistence_not_defined}.
 
 
 %% @doc Must update a new actor on disk.
--spec actor_db_update(nkserver:id(), actor()) ->
+-spec actor_db_update(nkserver:id(), actor(), map()) ->
     {ok, Meta::map()} | {error, term()}.
 
 
-actor_db_update(_SrvId, _Actor) ->
+actor_db_update(_SrvId, _Actor, _Opts) ->
     {error, persistence_not_defined}.
 
 
 %% @doc
--spec actor_db_delete(nkserver:id(), [nkactor:uid()], #{cascade=>boolean()}) ->
+-spec actor_db_delete(nkserver:id(), [nkactor:uid()], map()) ->
     {ok, [actor_id()], Meta::map()} | {error, term()}.
 
 
@@ -380,7 +382,7 @@ actor_db_delete(_SrvId, _UIDs, _Opts) ->
 
 
 %% @doc
--spec actor_db_search(nkserver:id(), nkactor_backend:search_type(), nkactor_backend:opts()) ->
+-spec actor_db_search(nkserver:id(), nkactor_backend:search_type(), map()) ->
     term().
 
 actor_db_search(_SrvId, _Type, _Opts) ->
@@ -388,7 +390,7 @@ actor_db_search(_SrvId, _Type, _Opts) ->
 
 
 %% @doc
--spec actor_db_aggregate(nkserver:id(), nkactor_backend:agg_type(), nkactor_backend:opts()) ->
+-spec actor_db_aggregate(nkserver:id(), nkactor_backend:agg_type(), map()) ->
     term().
 
 actor_db_aggregate(_SrvId, _Type, _Opts) ->

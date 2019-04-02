@@ -27,6 +27,7 @@
 -export([get_actor/1, get_actor/2, get_path/1, is_enabled/1, enable/2, stop/1, stop/2]).
 -export([search_groups/2, search_resources/3]).
 -export([search_linked_to/3, search_fts/3, search_actors/2, search_delete/2, delete_old/5]).
+-export([search_active/3, db_truncate/1]).
 -export([base_namespace/1]).
 -export([sync_op/2, sync_op/3, async_op/2]).
 -export_type([actor/0, id/0, uid/0, namespace/0, resource/0, path/0, name/0,
@@ -144,7 +145,6 @@
         field_type => #{
             nkservie_actor_search:field_name() => nkactor_search:field_type()
         },
-
         camel => binary(),
         singular => binary(),
         short_names => [binary()]
@@ -272,7 +272,7 @@ get_actor(Id, Opts) ->
     {ok, path()} | {error, term()}.
 
 get_path(Id) ->
-    case nkactor_srv:sync_op(Id, get_actor_id) of
+    case nkactor_srv:sync_op(Id, get_actor_id, infinity) of
         {ok, ActorId} ->
             {ok, nkactor_lib:actor_id_to_path(ActorId)};
         {error, Error} ->
@@ -285,7 +285,7 @@ get_path(Id) ->
     {ok, boolean()} | {error, term()}.
 
 is_enabled(Id) ->
-    nkactor_srv:sync_op(Id, is_enabled).
+    nkactor_srv:sync_op(Id, is_enabled, infinity).
 
 
 %% @doc Enables/disabled an object, activates first
@@ -293,7 +293,7 @@ is_enabled(Id) ->
     ok | {error, term()}.
 
 enable(Id, Enable) ->
-    nkactor_srv:sync_op(Id, {enable, Enable}).
+    nkactor_srv:sync_op(Id, {enable, Enable}, infinity).
 
 
 %% @doc Creates a new actor
@@ -446,6 +446,9 @@ search_fts(SrvId, Word, Opts) ->
 
 
 %% @doc Generic search returning actors
+%% If 'meta' is not populated with filters available, types, etc.:
+%% - any field can be used for filter, sort, etc.
+%% - you must supply the type, or it will be converted to string
 -spec search_actors(nkserver:id(), nkactor_search:search_spec()) ->
     {ok, [actor()], Meta::map()} | {error, term()}.
 
@@ -465,6 +468,8 @@ search_actors(SrvId, SearchSpec) ->
 
 %% @doc Generic deletion of objects
 %% Use do_delete=>true for real deletion
+%% THIS WILL NOT UNLOAD STARTED ACTORS
+%% You may want to stop related namespaces before and after
 -spec search_delete(nkserver:id(), nkactor_search:search_spec()) ->
     {ok|deleted, integer(), Meta::map()}.
 
@@ -492,6 +497,25 @@ search_delete(SrvId, SearchSpec) ->
 delete_old(SrvId, Group, Res, Date, Opts) ->
     Params = Opts#{group=>Group, resource=>Res, epoch=>Date},
     nkactor_backend:search(SrvId, actors_delete_old, Params).
+
+
+db_truncate(SrvId) ->
+    case nkactor_backend:search(SrvId, actors_truncate, {}) of
+        {ok, _, _} ->
+            ok;
+        {error, Error} ->
+            {error, Error}
+    end.
+
+
+
+%% @doc
+-spec search_active(nkactor:id(), binary(), map()) ->
+    {ok, [uid()], #{last_date=>binary(), size=>integer()}}.
+
+search_active(SrvId, StartDate, Opts) ->
+    Params = Opts#{from_date=>StartDate, size=>100},
+    nkactor_backend:search(SrvId, actors_active, Params).
 
 
 %% @doc

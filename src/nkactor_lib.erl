@@ -340,14 +340,13 @@ add_creation_fields(Actor) ->
         NormName ->
             NormName
     end,
-    Time = nklib_date:now_3339(msecs),
+    Time = nklib_date:now_3339(usecs),
     Actor2 = Actor#{
         name => Name2,
         uid => UID,
         metadata => Meta#{creation_time => Time}
     },
     update(Actor2, Time).
-
 
 
 %% @private

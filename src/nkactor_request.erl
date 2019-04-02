@@ -118,7 +118,7 @@ do_request(Req) ->
             namespace = Namespace
         },
         Config = case catch nkactor_util:get_actor_config(ActorId) of
-            {ok, Config0} ->
+            {ok, _SrvId, Config0} ->
                 Config0;
             {error, ConfigError} ->
                 throw({error, ConfigError})
