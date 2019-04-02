@@ -44,7 +44,7 @@
 %%
 %% Save policy
 %%
-%% - It will saved on 'save' operations (sync and async) and returning
+%% - It will saved on 'save' operations (sync and async) that return
 %%   reply_and_save and noreply_and_save on operations
 %% - Also before deletion, on unload, on update (if is_dirty:true)
 %% - Periodically, at each heartbeat (5secs) save_time parameter if check and it will
@@ -52,6 +52,22 @@
 %% - Also, at each check_ttl (for example after each sync or async operation)
 %%   if is_dirty:true, a timer will be started (save_time in config)
 %%   if it is saved, the timers is removed. If it fires, it is saved
+%%
+%% Opentracing
+%%
+%% - The actor will start a new span while being initialized called "Actor::init"
+%% - If we use the option 'parent_span' when activating the actor, that span
+%%   will be created as child of the indicated span, and stored in 'parent_span'
+%%   field in actor state
+%% - If it is not provided, but option 'trace_id' is used in metadata, init span
+%%   will be attached to that trace, and it will be stored in 'parent_span' field
+%% - When saving, the parent span, if defined, is passed to backends so they can
+%%   create spans based on ours
+%% - Actor callbacks can change at any moment field 'parent_span'
+
+
+
+
 
 
 -module(nkactor_srv).
@@ -60,11 +76,11 @@
 
 -export([create/2, start/2, sync_op/2, sync_op/3, async_op/2, live_async_op/2, delayed_async_op/3]).
 -export([init/1, terminate/2, code_change/3, handle_call/3,  handle_cast/2, handle_info/2]).
--export([get_all/0, unload_all/0, get_state/1, raw_stop/2]).
+-export([count/0, get_state/1, get_timers/1, raw_stop/2]).
 -export([do_event/2, do_event_link/2, do_update/3, do_delete/1, do_set_next_status_time/2,
-         do_get_links/1, do_add_link/3, do_remove_link/2]).
+         do_unset_next_status_time/1, do_get_links/1, do_add_link/3, do_remove_link/2,
+         do_save/2, do_hibernate/0]).
 -export_type([event/0, save_reason/0]).
-
 
 -include("nkactor.hrl").
 -include("nkactor_debug.hrl").
@@ -122,7 +138,6 @@
     get_alarms |
     {set_alarm, nkactor:alarm_class(), nkactor:alarm_body()} |
     {apply, Mod::module(), Fun::atom(), Args::list()} |
-    actor_deleted |
     term().
 
 -type async_op() ::
@@ -160,7 +175,7 @@
 
 %% @private
 %% Call nkactor:create/2 instead calling this directly!
--spec create(nkactor:actor(), nkactor:config()) ->
+-spec create(nkactor:actor(), nkactor:config()|#{parent_span=>nkserver_ot:parent()}) ->
     {ok, #actor_id{}} | {error, term()}.
 
 create(Actor, Config) ->
@@ -169,7 +184,7 @@ create(Actor, Config) ->
 
 %% @private
 %% Call nkactor:activate/1 instead calling this directly!
--spec start(nkactor:actor(), nkactor:config()) ->
+-spec start(nkactor:actor(), nkactor:config()|#{parent_span=>nkserver_ot:parent()}) ->
     {ok, #actor_id{}} | {error, term()}.
 
 start(Actor, Config) ->
@@ -180,12 +195,12 @@ start(Actor, Config) ->
 do_start(Op, Actor, StartConfig) ->
     ActorId = nkactor_lib:actor_to_actor_id(Actor),
     case nkactor_util:get_actor_config(ActorId) of
-        {ok, #{activable:=false}} ->
+        {ok, _SrvId, #{activable:=false}} ->
             {error, actor_is_not_activable};
-        {ok, BaseConfig} ->
+        {ok, SrvId, BaseConfig} ->
             Ref = make_ref(),
             Config = maps:merge(BaseConfig, StartConfig),
-            Opts = {Op, ActorId, Actor, Config, self(), Ref},
+            Opts = {Op, ActorId, Actor, Config, SrvId, self(), Ref},
             case gen_server:start(?MODULE, Opts, []) of
                 {ok, Pid} ->
                     {ok, ActorId#actor_id{pid = Pid}};
@@ -202,7 +217,6 @@ do_start(Op, Actor, StartConfig) ->
     end.
 
 
-
 %% @doc
 -spec sync_op(nkactor:id()|pid(), sync_op()) ->
     term() | {error, timeout|process_not_found|object_not_found|term()}.
@@ -216,7 +230,12 @@ sync_op(Id, Op) ->
     term() | {error, timeout|process_not_found|object_not_found|term()}.
 
 sync_op(Pid, Op, Timeout) when is_pid(Pid) ->
-    nklib_util:call2(Pid, {nkactor_sync_op, Op}, Timeout);
+    case nklib_util:call2(Pid, {nkactor_sync_op, Op}, Timeout) of
+        process_not_found ->
+            {error, process_not_found};
+        Other ->
+            Other
+    end;
 
 sync_op(Id, Op, Timeout) ->
     sync_op(Id, Op, Timeout, 5).
@@ -230,7 +249,7 @@ sync_op(Id, Op, Timeout, Tries) ->
     ActorId = nkactor_lib:id_to_actor_id(Id),
     case ActorId of
         #actor_id{pid=Pid} when is_pid(Pid) ->
-            case sync_op(Pid, Op, Timeout) of
+           case sync_op(Pid, Op, Timeout) of
                 {error, process_not_found} ->
                     ActorId2 = ActorId#actor_id{pid=undefined},
                     timer:sleep(250),
@@ -304,17 +323,6 @@ delayed_async_op(Id, Op, Time) ->
 
 
 
-%%%% @private Disabled the actor, only if it is activated
-%%%% used before external deletion
-%%raw_disable(SrvId, Id) ->
-%%    case nkactor_db:is_activated(SrvId, Id) of
-%%        {true, #actor_id{pid=Pid}} ->
-%%            sync_op(none, Pid, {enable, false});
-%%        false ->
-%%            ok
-%%    end.
-
-
 %% @private
 %% If the object is activated, it will be unloaded without saving
 %% before launching the deletion
@@ -330,23 +338,25 @@ raw_stop(Id, Reason) ->
 
 
 %% @private
+do_hibernate() ->
+    gen_server:cast(self(), nkactor_hibernate).
+
+
+%% @private
 get_state(Id) ->
     sync_op(Id, get_state).
 
 
-%% @doc
--spec get_all() ->
-    [#actor_id{}].
-
-get_all() ->
-    [ActorId || {#actor_id{pid=Pid}=ActorId, Pid} <- nklib_proc:values(?MODULE)].
-
-
 %% @private
-unload_all() ->
-    lists:foreach(
-        fun(#actor_id{pid=Pid}) -> async_op(Pid, {stop, normal}) end,
-        get_all()).
+get_timers(Id) ->
+    sync_op(Id, get_timers).
+
+
+%% @doc
+-spec count() -> integer().
+
+count() ->
+    nklib_counters:value(?MODULE).
 
 
 
@@ -377,20 +387,27 @@ do_event_link(Event, #actor_st{links=Links}=State) ->
 
 
 %% @private
-do_set_next_status_time(NextTime, State) ->
-    #actor_st{status_timer = Timer1} = State,
-    nklib_util:cancel_timer(Timer1),
-    Now = nklib_date:epoch(secs),
-    NextTime2 = nklib_date:to_epoch(NextTime, secs),
-    Timer2 = case NextTime2 - Now of
-        Step when Step=<0 ->
-            self() ! nkactor_next_status_timer,
-            undefined;
-        Step ->
-            Step2 = min(Step, ?MAX_STATUS_TIME),
-            erlang:send_after(Step2, self(), nkactor_next_status_timer)
-    end,
-    State#actor_st{status_timer = Timer2}.
+do_set_next_status_time(NextTime, #actor_st{actor=Actor}=State) ->
+    {ok, NextTime2} = nklib_date:to_3339(NextTime, msecs),
+    #{metadata:=Meta} = Actor,
+    Meta2 = Meta#{next_status_time => NextTime2},
+    Actor2 = Actor#{metadata:=Meta2},
+    self() ! nkactor_check_next_status_time,
+    State#actor_st{actor=Actor2, is_dirty=true}.
+
+
+%% @private
+do_unset_next_status_time(#actor_st{actor=Actor, status_timer=Timer}=State) ->
+    nklib_util:cancel_timer(Timer),
+    #{metadata:=Meta} = Actor,
+    case maps:is_key(next_status_time, Meta) of
+        true ->
+            Meta2 = maps:remove(next_status_time, Meta),
+            Actor2 = Actor#{metadata:=Meta2},
+            State#actor_st{actor=Actor2, is_dirty=true};
+        false ->
+            State
+    end.
 
 
 %% @private
@@ -527,12 +544,11 @@ do_update(UpdActor, Opts, #actor_st{srv=SrvId, actor_id=ActorId, actor=Actor}=St
                         case handle(actor_srv_update, [NewActor], State) of
                             {ok, NewActor2, State2} ->
                                 State3 = State2#actor_st{actor=NewActor2, is_dirty=true},
-                                State4 = do_update_version(State3),
-                                State5 = do_enabled(UpdEnabled, State4),
-                                State6 = set_unload_policy(State5),
-                                case do_save(update, State6) of
-                                    {ok, State7} ->
-                                        {ok, do_event({updated, UpdActor}, State7)};
+                                State4 = do_enabled(UpdEnabled, State3),
+                                State5 = set_unload_policy(State4),
+                                case do_save(update, State5) of
+                                    {ok, State6} ->
+                                        {ok, do_event({updated, UpdActor}, State6)};
                                     {{error, SaveError}, State6} ->
                                         {error, SaveError, State6}
                                 end;
@@ -573,25 +589,114 @@ do_delete(#actor_st{srv=SrvId, actor_id=ActorId, actor=Actor}=State) ->
     end.
 
 
+%% @private
+do_save(Reason, #actor_st{is_dirty=true}=State) ->
+    #actor_st{
+        srv = SrvId,
+        actor = Actor,
+        save_timer = Timer,
+        parent_span = ParentSpan
+    } = State,
+    Span1 = nkserver_ot:span(SrvId, <<"Actor::save">>, ParentSpan),
+    Span2 = nkserver_ot:tag(Span1, <<"reason">>, Reason),
+    ParentSpan1 = nkserver_ot:get_parent(Span1),
+    nklib_util:cancel_timer(Timer),
+    Actor2 = nkactor_lib:update(Actor, nklib_date:now_3339(usecs)),
+    State2 = State#actor_st{actor=Actor2, save_timer=undefined},
+    SaveFun = case Reason of
+        create ->
+            actor_db_create;
+        _ ->
+            actor_db_update
+    end,
+    SaveOpts = #{parent_span=>ParentSpan1},
+    case handle(actor_srv_save, [Actor2], State2) of
+        {ok, SaveActor, #actor_st{config=Config}=State2} ->
+            case Config of
+                #{async_save:=true} when Reason /= create->
+                    Self = self(),
+                    spawn_link(
+                        fun() ->
+                            case ?CALL_SRV(SrvId, SaveFun, [SrvId, SaveActor, SaveOpts]) of
+                                {ok, DbMeta} ->
+                                    Span3 = nkserver_ot:log(Span2, <<"actor saved">>),
+                                    nkserver_ot:finish(Span3),
+                                    ?ACTOR_DEBUG("save (~p) (~p)", [Reason, DbMeta], State2),
+                                    async_op(Self, {send_event, saved});
+                                {error, Error} ->
+                                    Span3 = nkserver_ot:log(Span2, {"save error: ~p", [Error]}),
+                                    Span4 = nkserver_ot:tag_error(Span3, Error),
+                                    nkserver_ot:finish(Span4),
+                                    ?ACTOR_LOG(warning, "save error: ~p", [Error], State2)
+                            end
+                        end),
+                    {ok, State2#actor_st{is_dirty = false}};
+                _ ->
+                    case ?CALL_SRV(SrvId, SaveFun, [SrvId, SaveActor, SaveOpts]) of
+                        {ok, DbMeta} ->
+                            Span3 = nkserver_ot:log(Span2, <<"actor saved">>),
+                            nkserver_ot:finish(Span3),
+                            ?ACTOR_DEBUG("save (~p) (~p)", [Reason, DbMeta], State2),
+                            State3 = State2#actor_st{is_dirty=false},
+                            {ok, do_event(saved, State3)};
+                        {error, not_implemented} ->
+                            Span3 = nkserver_ot:log(Span2, <<"save not implemented">>),
+                            nkserver_ot:finish(Span3),
+                            {{error, not_implemented}, State2};
+                        {error, Error} ->
+                            Span3 = nkserver_ot:log(Span2, {"save error: ~p", [Error]}),
+                            Span4 = nkserver_ot:tag_error(Span3, Error),
+                            nkserver_ot:finish(Span4),
+                            ?ACTOR_LOG(warning, "save error: ~p", [Error], State2),
+                            {{error, Error}, State2}
+                    end
+            end;
+        {ignore, State2} ->
+            Span3 = nkserver_ot:log(Span2, <<"save ignored">>),
+            nkserver_ot:finish(Span3),
+            {ok, State2}
+    end;
+
+do_save(_Reason, State) ->
+    {ok, State}.
+
+
 % ===================================================================
 %% gen_server behaviour
 %% ===================================================================
-
 
 
 %% @private
 -spec init(term()) ->
     {ok, state()} | {stop, term()}.
 
-init({Op, ActorId, Actor, Config, Caller, Ref}) ->
-    State = do_pre_init(ActorId, Actor, Config),
+init({Op, ActorId, Actor, Config, SrvId, Caller, Ref}) ->
+    State = do_pre_init(ActorId, Actor, Config, SrvId),
+    #actor_id{
+        group = Group,
+        resource = Res,
+        name = Name,
+        namespace = Namespace,
+        uid = UID
+    } = ActorId,
+    Tags = #{
+        <<"actor.group">> => Group,
+        <<"actor.resource">> => Res,
+        <<"actor.name">> => Name,
+        <<"actor.namespace">> => Namespace,
+        <<"actor.uid">> => UID
+    },
+    nkserver_ot:tags(actor_init, Tags),
     case do_check_expired(State) of
         {false, State2} ->
+            nkserver_ot:log(actor_init, <<"registering with namespace">>),
             case do_register(1, State2) of
-                {ok, State3} ->
+                {ok, #actor_st{srv=SrvId}=State3} ->
+                    nkserver_ot:update_srv_id(actor_init, SrvId),
+                    nkserver_ot:log(actor_init, <<"registered with namespace">>),
                     case handle(actor_srv_init, [Op], State3) of
                         {ok, State4} ->
-                            do_init(Op, State4);
+                            do_post_init(Op, State4);
                         {error, Error} ->
                             do_init_stop(Error, Caller, Ref);
                         {delete, Error} ->
@@ -607,32 +712,6 @@ init({Op, ActorId, Actor, Config, Caller, Ref}) ->
             _ = do_stop(actor_expired, State),
             do_init_stop(actor_not_found, Caller, Ref)
     end.
-
-
-%% @private
-do_init(create, State) ->
-    #actor_st{srv=SrvId, actor=Actor} = State,
-    case ?CALL_SRV(SrvId, actor_db_create, [SrvId, Actor]) of
-        {ok, _Meta} ->
-            ?ACTOR_DEBUG("created (~p)", [self()], State),
-            State2 = do_event(created, State),
-            do_post_init(State2);
-        {error, persistence_not_defined} ->
-            ?ACTOR_LOG(info, "actor will not be persisted!", [], State),
-            State2 = do_event(created, State),
-            do_post_init(State2);
-        {error, Error} ->
-            {stop, Error}
-    end;
-
-do_init(start, State) ->
-    do_post_init(State).
-
-
-%% @private
-do_init_stop(Error, Caller, Ref) ->
-    Caller ! {do_start_ignore, Ref, {error, Error}},
-    ignore.
 
 
 %% @private
@@ -692,6 +771,9 @@ handle_cast({nkactor_async_op, Op}, State) ->
             error(invalid_async_response)
     end;
 
+handle_cast(nkactor_hibernate, State) ->
+    {noreply, State, hibernate};
+
 handle_cast(Msg, State) ->
     safe_handle(actor_srv_handle_cast, [Msg], State).
 
@@ -718,10 +800,14 @@ handle_info(nkactor_ttl_timeout, State) ->
 handle_info(nkactor_timer_save, State) ->
     do_async_op({save, timer}, State);
 
-handle_info(nkactor_next_status_timer, State) ->
-    State2 = State#actor_st{status_timer=undefined},
-    {ok, State3} = handle(actor_srv_next_status_timer, [], State2),
-    noreply(State3);
+handle_info(nkactor_check_next_status_time, State) ->
+    case is_next_status_time(State) of
+        {true, State2} ->
+            {ok, State3} = handle(actor_srv_next_status_timer, [], State2),
+            noreply(State3);
+        {false, State2} ->
+            noreply(State2)
+    end;
 
 handle_info(nkactor_heartbeat, State) ->
     erlang:send_after(?HEARTBEAT_TIME, self(), nkactor_heartbeat),
@@ -801,6 +887,15 @@ do_sync_op(consume_actor, From, #actor_st{actor=Actor}=State) ->
 do_sync_op(get_state, _From, State) ->
     reply({ok, State}, State);
 
+do_sync_op(get_timers, _From, State) ->
+    #actor_st{ttl_timer=TTL, save_timer=Save, status_timer=Status} = State,
+    Data = #{
+        ttl => case is_reference(TTL) of true -> erlang:read_timer(TTL); _ -> 0 end,
+        save => case is_reference(Save) of true -> erlang:read_timer(Save); _ -> 0 end,
+        status => case is_reference(Status) of true -> erlang:read_timer(Status); _ -> 0 end
+    },
+    reply({ok, Data}, State);
+
 do_sync_op(get_links, _From, State) ->
     Data = do_get_links(State),
     reply({ok, Data}, State);
@@ -870,19 +965,6 @@ do_sync_op({update, Actor, Opts}, _From, #actor_st{  is_enabled=IsEnabled, confi
                     reply({error, Error}, State2)
             end
     end;
-
-%%do_sync_op({update_name, Name}, _From, #actor_st{is_enabled=IsEnabled, config=Config}=State) ->
-%%    case {IsEnabled, Config} of
-%%        {false, #{dont_update_on_disabled:=true}} ->
-%%            reply({error, object_is_disabled}, State);
-%%        _ ->
-%%            case do_update_name(Name, State) of
-%%                {ok, State2} ->
-%%                    reply(ok, do_refresh_ttl(State2));
-%%                {error, Error, State2} ->
-%%                    reply({error, Error}, State2)
-%%            end
-%%    end;
 
 do_sync_op(get_alarms, _From, #actor_st{actor=Actor}=State) ->
     Alarms = case Actor of
@@ -967,12 +1049,23 @@ do_async_op(Op, State) ->
 %% ===================================================================
 
 %% @private
-do_pre_init(ActorId, Actor, Config) ->
+do_pre_init(ActorId, Actor, Config, SrvId) ->
     #actor_id{uid=UID}=ActorId,
     #{metadata:=Meta} = Actor,
     ActorId2 = ActorId#actor_id{pid=self()},
     true = is_binary(UID) andalso UID /= <<>>,
-    State1 = #actor_st{
+    ParentSpan = case maps:find(parent_span, Config) of
+        {ok, ConfigParentSpan} ->
+            ConfigParentSpan;
+        error ->
+            case Meta of
+                #{trace_id:=TraceId} ->
+                    {TraceId, undefined};
+                _ ->
+                    undefined
+            end
+    end,
+    State = #actor_st{
         module = maps:get(module, Config),
         config = Config,
         actor_id = ActorId2,
@@ -983,32 +1076,68 @@ do_pre_init(ActorId, Actor, Config) ->
         is_enabled = maps:get(is_enabled, Meta, true),
         save_timer = undefined,
         activated_time = nklib_date:epoch(usecs),
-        unload_policy = permanent           % Updated later
+        unload_policy = permanent,          % Updated later
+        parent_span = ParentSpan
     },
-    State2 =  case Meta of
-        #{next_status_time:=NextStatusTime} ->
-            do_set_next_status_time(NextStatusTime, State1);
-        _ ->
-            State1
+    case maps:is_key(next_status_time, Meta) of
+        true ->
+            self() ! nkactor_check_next_status_time;
+        false ->
+            ok
     end,
-    set_unload_policy(State2).
+    case ParentSpan of
+        undefined ->
+            ok;
+        _ ->
+            nkserver_ot:new(actor_init, SrvId, <<"Actor::init">>, ParentSpan)
+    end,
+    set_unload_policy(State).
 
 
 %% @private
-do_post_init(State) ->
-    #actor_st{actor_id=ActorId} = State,
+%% For create, we respect the original parent_span
+do_post_init(Op, State) ->
+    #actor_st{actor_id=_ActorId, parent_span=Parent} = State,
     ?ACTOR_DEBUG("started (~p)", [self()], State),
-    State3 = do_event(activated, State),
-    State4 = do_check_alarms(State3),
-    erlang:send_after(?HEARTBEAT_TIME, self(), nkactor_heartbeat),
-    % actor_init could have set the is_dirty flag
-    nklib_proc:put(?MODULE, ActorId),
-    case do_save(init, State4) of
-        {ok, State5} ->
+    State2 = case Op of
+        create ->
+            nkserver_ot:log(actor_init, <<"creating actor in db">>),
+            InitParent = nkserver_ot:get_parent(actor_init),
+            State#actor_st{is_dirty=true, parent_span=InitParent};
+        _ ->
+            State
+    end,
+    case do_save(Op, State2) of
+        {ok, State3} ->
+            State4 = case Op of
+                create ->
+                    nkserver_ot:log(actor_init, <<"actor created on db">>),
+                    do_event(created, State3);
+                _ ->
+                    nkserver_ot:log(actor_init, <<"actor activated">>),
+                    do_event(activated, State3)
+            end,
+            State5 = do_check_alarms(State4#actor_st{parent_span=Parent}),
+            erlang:send_after(?HEARTBEAT_TIME, self(), nkactor_heartbeat),
+            nklib_counters:async([?MODULE]),
+            nkserver_ot:log(actor_init, <<"actor init completed">>),
+            nkserver_ot:finish(actor_init),
             {ok, do_refresh_ttl(State5)};
-        {{error, Error}, _State5} ->
+        {{error, Error}, _State3} ->
+            nkserver_ot:log(actor_init, {"actor save error: ~p", [Error]}),
+            nkserver_ot:tag_error(actor_init, Error),
+            nkserver_ot:finish(actor_init),
             {error, Error}
     end.
+
+
+%% @private
+do_init_stop(Error, Caller, Ref) ->
+    nkserver_ot:log(actor_init, {"Actor init error: ~p", [Error]}),
+    nkserver_ot:tag_error(actor_init, Error),
+    nkserver_ot:finish(actor_init),
+    Caller ! {do_start_ignore, Ref, {error, Error}},
+    ignore.
 
 
 %% @private
@@ -1058,6 +1187,8 @@ do_register(Tries, #actor_st{actor_id=ActorId} = State) ->
             set_debug(State2),
             ?ACTOR_DEBUG("registered with namespace (pid:~p)", [Pid]),
             {ok, State2};
+        {error, actor_already_registered} ->
+            {error, actor_already_registered};
         {error, Error} ->
             case Tries > 1 of
                 true ->
@@ -1081,46 +1212,6 @@ do_check_alarms(#actor_st{actor=#{metadata:=Meta}}=State) ->
         _ ->
             State
     end.
-
-
-%% @private
-do_save(Reason, #actor_st{srv=SrvId, actor=Actor, is_dirty=true, save_timer=Timer}=State) ->
-    nklib_util:cancel_timer(Timer),
-    case handle(actor_srv_save, [Actor], State#actor_st{save_timer=undefined}) of
-        {ok, SaveActor, #actor_st{config=Config}=State2} ->
-            case Config of
-                #{async_save:=true} ->
-                    Self = self(),
-                    spawn_link(
-                        fun() ->
-                            case ?CALL_SRV(SrvId, actor_db_update, [SrvId, SaveActor]) of
-                                {ok, DbMeta} ->
-                                    ?ACTOR_DEBUG("save (~p) (~p)", [Reason, DbMeta], State2),
-                                    async_op(Self, {send_event, saved});
-                                {error, Error} ->
-                                    ?ACTOR_LOG(warning, "save error: ~p", [Error], State2)
-                            end
-                        end),
-                    {ok, State2#actor_st{is_dirty = false}};
-                _ ->
-                    case ?CALL_SRV(SrvId, actor_db_update, [SrvId, SaveActor]) of
-                        {ok, DbMeta} ->
-                            ?ACTOR_DEBUG("save (~p) (~p)", [Reason, DbMeta], State2),
-                            State3 = State2#actor_st{is_dirty=false},
-                            {ok, do_event(saved, State3)};
-                        {error, not_implemented} ->
-                            {{error, not_implemented}, State2};
-                        {error, Error} ->
-                            ?ACTOR_LOG(warning, "save error: ~p", [Error], State2),
-                            {{error, Error}, State2}
-                    end
-            end;
-        {ignore, State2} ->
-            {ok, State2}
-    end;
-
-do_save(_Reason, State) ->
-    {ok, State}.
 
 
 %% @private Reset TTL
@@ -1169,39 +1260,6 @@ do_stop2(Reason, #actor_st{stop_reason=false}=State) ->
 
 do_stop2(_Reason, State) ->
     State.
-
-
-
-%%%% @private
-%%do_update_name(Name, #actor_st{actor=Actor}=State) ->
-%%    #actor{id=#actor_id{name=OldName}=Id} = Actor,
-%%    lager:error("NKLOG UPDATE NAME ~p", [Name]),
-%%    case nkactor_lib:normalized_name(Name) of
-%%        OldName ->
-%%            {ok, State};
-%%        NewName ->
-%%            Id2 = Id#actor_id{name=NewName},
-%%            Actor2 = Actor#actor{id=Id2},
-%%            case register_with_leader(State#actor_st{actor=Actor2}) of
-%%                {ok, State2} ->
-%%                    State3 = State2#actor_st{is_dirty=true},
-%%                    State4 = do_update_version(State3),
-%%                    case do_save(update, State4) of
-%%                        {ok, #actor_st{actor=Actor}=State5} ->
-%%                            {ok, do_event({updated, Actor}, State5)};
-%%                        {{error, SaveError}, State5} ->
-%%                            {error, SaveError, State5}
-%%                    end;
-%%                {error, RegError} ->
-%%                    {error, RegError, State}
-%%            end
-%%    end.
-
-
-%% @private
-do_update_version(#actor_st{actor=Actor}=State) ->
-    Time = nklib_date:now_3339(msecs),
-    State#actor_st{actor=nkactor_lib:update(Actor, Time)}.
 
 
 %% @private
@@ -1285,6 +1343,35 @@ do_ttl_timeout(#actor_st{unload_policy={ttl, _}}=State) ->
     noreply(do_refresh_ttl(State)).
 
 
+%% @private
+is_next_status_time(State) ->
+    #actor_st{actor=Actor, status_timer=Timer1} = State,
+    case Actor of
+        #{metadata:=#{next_status_time:=NextTime}=Meta} ->
+            nklib_util:cancel_timer(Timer1),
+            Now = nklib_date:epoch(msecs),
+            {ok, NextTime2} = nklib_date:to_epoch(NextTime, msecs),
+            case NextTime2 - Now of
+                Step when Step=<0 ->
+                    Meta2 = maps:remove(next_status_time, Meta),
+                    State2 = State#actor_st{
+                        status_timer = undefined,
+                        actor = Actor#{metadata:=Meta2},
+                        is_dirty = true
+                    },
+                    {true, State2};
+                Step ->
+                    Step2 = min(Step, ?MAX_STATUS_TIME),
+                    Timer2 = erlang:send_after(Step2, self(), nkactor_check_next_status_time),
+                    State2 = State#actor_st{status_timer = Timer2},
+                    {false, State2}
+            end;
+        _ ->
+            {false, State}
+    end.
+
+
+
 %% ===================================================================
 %% Util
 %% ===================================================================
@@ -1344,7 +1431,6 @@ link_down(Mon, #actor_st{links=Links}=State) ->
         not_found ->
             not_found
     end.
-
 
 
 
