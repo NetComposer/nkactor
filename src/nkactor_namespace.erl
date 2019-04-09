@@ -368,7 +368,7 @@ do_start(SrvId, Namespace, IsMain) when is_binary(Namespace)->
 %% @private
 call(Namespace, Msg) ->
     case nklib_util:call2({global, get_global_name(Namespace)}, Msg) of
-        {error, process_not_found} ->
+        process_not_found ->
             {error, {namespace_not_found, Namespace}};
         Other ->
             Other

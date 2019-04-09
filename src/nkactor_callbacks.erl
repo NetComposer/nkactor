@@ -34,7 +34,7 @@
          actor_srv_handle_call/3, actor_srv_handle_cast/2, actor_srv_handle_info/2]).
 -export([actor_do_active/1, actor_do_expired/1]).
 -export([actor_db_find/3, actor_db_read/3, actor_db_create/3, actor_db_update/3,
-         actor_db_delete/3, actor_db_search/3, actor_db_aggregate/3]).
+         actor_db_add_label/5, actor_db_delete/3, actor_db_search/3, actor_db_aggregate/3]).
 -export([srv_master_init/2, srv_master_handle_call/4, srv_master_handle_cast/3,
          srv_master_handle_info/3, srv_master_timed_check/3]).
 
@@ -367,8 +367,15 @@ actor_db_create(_SrvId, _Actor, _Opts) ->
 -spec actor_db_update(nkserver:id(), actor(), map()) ->
     {ok, Meta::map()} | {error, term()}.
 
-
 actor_db_update(_SrvId, _Actor, _Opts) ->
+    {error, persistence_not_defined}.
+
+
+%% @doc
+-spec actor_db_add_label(nkserver:id(), Key::binary(), Value::binary(), actor_id(), map()) ->
+    {ok, Meta::map()} | {error, term()}.
+
+actor_db_add_label(_SrvId, _Key, _Value, _ActorId, _Opts) ->
     {error, persistence_not_defined}.
 
 

@@ -272,10 +272,10 @@ update(Id, Actor, Opts) ->
             case activate(ActorId, Opts) of
                 {ok, SrvId, ActorId2, _} ->
                     UpdOpts = maps:get(update_opts, Opts, #{}),
-                    case nkactor_srv:sync_op(ActorId2, {update, Actor, UpdOpts}, infinity) of
+                    case nkactor_srv:sync_op(ActorId2, {update, Actor2, UpdOpts}, infinity) of
                         ok ->
-                            {ok, Actor2} = nkactor_srv:sync_op(ActorId2, get_actor, infinity),
-                            {ok, SrvId, Actor2, #{}};
+                            {ok, Actor3} = nkactor_srv:sync_op(ActorId2, get_actor, infinity),
+                            {ok, SrvId, Actor3, #{}};
                         {error, Error} ->
                             {error, Error}
                     end;

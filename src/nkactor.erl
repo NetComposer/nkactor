@@ -27,7 +27,7 @@
 -export([get_actor/1, get_actor/2, get_path/1, is_enabled/1, enable/2, stop/1, stop/2]).
 -export([search_groups/2, search_resources/3]).
 -export([search_linked_to/3, search_fts/3, search_actors/2, search_delete/2, delete_old/5]).
--export([search_active/3, db_truncate/1]).
+-export([search_active/3]).
 -export([base_namespace/1]).
 -export([sync_op/2, sync_op/3, async_op/2]).
 -export_type([actor/0, id/0, uid/0, namespace/0, resource/0, path/0, name/0,
@@ -134,6 +134,7 @@
         verbs => [atom()],
         permanent => boolean(),                         %% Do not unload
         ttl => integer(),                               %% Unload after msecs
+        heartbeat_time => integer(),                    %% msecs for heartbeat
         save_time => integer(),                         %% msecs for auto-save
         activable => boolean(),                         %% Default true
         dont_update_on_disabled => boolean(),           %% Default false
@@ -500,16 +501,6 @@ search_delete(SrvId, SearchSpec) ->
 delete_old(SrvId, Group, Res, Date, Opts) ->
     Params = Opts#{group=>Group, resource=>Res, epoch=>Date},
     nkactor_backend:search(SrvId, actors_delete_old, Params).
-
-
-db_truncate(SrvId) ->
-    case nkactor_backend:search(SrvId, actors_truncate, {}) of
-        {ok, _, _} ->
-            ok;
-        {error, Error} ->
-            {error, Error}
-    end.
-
 
 
 %% @doc

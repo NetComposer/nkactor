@@ -24,7 +24,7 @@
 %% - when a namespace starts, it registers with the leader of the master
 %%   process that belongs to the namespace's registered service,
 %%   calling register_namespace/2
-%% - the leader registers and monitors the namespace process
+%% - the leader registers and monitors the namespace's processes
 %% - every instance at each node (not only leaders) checks periodically
 %%   that the 'base' namespace for the service
 %%   is started, and belong to this service
@@ -33,7 +33,7 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([register_namespace/2, get_namespace/2]).
--export([get_namespaces/1, get_namespaces/2, get_all_namespaces/1]).
+-export([get_namespaces/1, get_namespaces/2, get_all_namespaces/0, get_all_namespaces/1]).
 -export([stop_all_namespaces/2]).
 -export([srv_master_init/2, srv_master_handle_call/4,
          srv_master_handle_cast/3, srv_master_handle_info/3,
@@ -43,7 +43,7 @@
 -include_lib("nkserver/include/nkserver.hrl").
 
 -define(LLOG(Type, Txt, Args, State),
-    lager:Type("NkACTOR Master (~s) "++Txt, [State#state.base_namespace|Args])).
+    lager:Type("NkACTOR Master (~s) "++Txt, [maps:get(base_namespace, State)|Args])).
 
 
 %% ===================================================================
@@ -90,6 +90,11 @@ get_namespaces(SrvId, Namespace) ->
     end.
 
 
+%% @doc Finds all namespaces for all services
+get_all_namespaces() ->
+    get_all_namespaces(<<>>).
+
+
 %% @doc Finds all namespaces for all services under a base
 get_all_namespaces(Namespace) ->
     Services = nkactor_util:get_services(),
@@ -124,14 +129,13 @@ stop_all_namespaces(Namespace, Reason) ->
 %% ===================================================================
 
 
--record(state, {
-    base_namespace :: nkactor:namespace(),
-    base_namespace_pid :: pid() | undefined,
-    namespaces :: [{[binary()], nkactor:namespace(), pid()}],
-    next_auto_activate :: integer()
-}).
-
--type state() :: #{nkactor => #state{}}.
+-type state() ::
+    #{
+        base_namespace := nkactor:namespace(),
+        base_namespace_pid := pid() | undefined,
+        namespaces := [{[binary()], nkactor:namespace(), pid()}],
+        next_auto_activate := integer()
+    }.
 
 
 %% @private
@@ -145,22 +149,23 @@ srv_master_init(SrvId, State) ->
         _ ->
             0
     end,
-    AcState = #state{
-        base_namespace = nkactor:base_namespace(SrvId),
-        namespaces = [],
-        next_auto_activate = NextActivate
+    State2 = State#{
+        base_namespace => nkactor:base_namespace(SrvId),
+        base_namespace_pid => undefined,
+        namespaces => [],
+        next_auto_activate => NextActivate
     },
     gen_server:cast(self(), nkactor_check_base_namespace),
-    {continue, [SrvId, State#{nkactor => AcState}]}.
+    {continue, [SrvId, State2]}.
 
 
 %% @private
 srv_master_handle_call({nkactor_get_namespaces, <<>>}, _From, _SrvId, State) ->
-    #state{namespaces = Namespaces} = get_actor_state(State),
+    #{namespaces := Namespaces} = State,
     {reply, {ok, Namespaces}, State};
 
 srv_master_handle_call({nkactor_get_namespaces, Namespace}, _From, _SrvId, State) ->
-    #state{namespaces = NS1} = get_actor_state(State),
+    #{namespaces := NS1} = State,
     Base = nkactor_lib:make_rev_parts(Namespace),
     NS2 = lists:filter(
         fun({Path, _N, _Pid}) -> lists:prefix(Base, Path) end,
@@ -168,17 +173,15 @@ srv_master_handle_call({nkactor_get_namespaces, Namespace}, _From, _SrvId, State
     {reply, {ok, NS2}, State};
 
 srv_master_handle_call({nkactor_register_namespace, Namespace, Pid}, _From, _SrvId, State) ->
-    AcState = get_actor_state(State),
-    case do_register_namespace(Namespace, Pid, AcState) of
-        {ok, AcState2} ->
-            {reply, {ok, self()}, set_actor_state(AcState2, State)};
+    case do_register_namespace(Namespace, Pid, State) of
+        {ok, State2} ->
+            {reply, {ok, self()}, State2};
         {error, Error} ->
             {reply, {error, Error}, State}
     end;
 
 srv_master_handle_call({nkactor_get_namespace, Namespace}, _From, _SrvId, State) ->
-    AcState = get_actor_state(State),
-    Reply = do_find_namespace(Namespace, AcState),
+    Reply = do_find_namespace(Namespace, State),
     {reply, Reply, State};
 
 srv_master_handle_call(_Msg, _From, _SrvId, _State) ->
@@ -187,9 +190,7 @@ srv_master_handle_call(_Msg, _From, _SrvId, _State) ->
 
 %% @private
 srv_master_handle_cast(nkactor_check_base_namespace, SrvId, State) ->
-    AcState1 = get_actor_state(State),
-    AcState2 = check_base_namespace(SrvId, false, AcState1),
-    {noreply, set_actor_state(AcState2, State)};
+    {noreply, check_base_namespace(SrvId, false, State)};
 
 srv_master_handle_cast(_Msg,  _SrvId, _State) ->
     continue.
@@ -197,18 +198,17 @@ srv_master_handle_cast(_Msg,  _SrvId, _State) ->
 
 %% @private
 srv_master_handle_info({'DOWN', _Ref, process, Pid, _Reason}, SrvId, State) ->
-    AcState = get_actor_state(State),
-    case AcState of
-        #state{base_namespace_pid = Pid} ->
-            ?LLOG(notice, "base namespace has failed!", [], AcState),
-            AcState2 = AcState#state{base_namespace_pid = undefined},
+    case State of
+        #{base_namespace_pid := Pid} ->
+            ?LLOG(notice, "base namespace has failed!", [], State),
+            State2 = State#{base_namespace_pid := undefined},
             % We may not be leaders any more
-            AcState3 = check_base_namespace(SrvId, false, AcState2),
-            {noreply, set_actor_state(AcState3, State)};
+            State3 = check_base_namespace(SrvId, false, State2),
+            {noreply, State3};
         _ ->
-            case do_remove_namespace(Pid, AcState) of
-                {true, AcState2} ->
-                    {noreply, set_actor_state(AcState2, State)};
+            case do_remove_namespace(Pid, State) of
+                {true, State2} ->
+                    {noreply, State2};
                 false ->
                     continue
             end
@@ -220,10 +220,9 @@ srv_master_handle_info(_Msg, _SrvId, _State) ->
 
 %% @private
 srv_master_timed_check(IsLeader, SrvId, State) ->
-    AcState1 = get_actor_state(State),
-    AcState2 = check_base_namespace(SrvId, IsLeader, AcState1),
-    AcState3 = check_auto_activate(SrvId, AcState2),
-    {continue, [IsLeader, SrvId, set_actor_state(AcState3, State)]}.
+    State2 = check_base_namespace(SrvId, IsLeader, State),
+    State3 = check_auto_activate(SrvId, State2),
+    {continue, [IsLeader, SrvId, State3]}.
 
 
 %% ===================================================================
@@ -233,34 +232,34 @@ srv_master_timed_check(IsLeader, SrvId, State) ->
 %% @private
 %% All processes master (leader or not) check that base namespace is started
 %% The leader also monitors it, to restart it immediately
-check_base_namespace(SrvId, IsLeader, #state{base_namespace=Namespace}=AcState) ->
+check_base_namespace(SrvId, IsLeader, #{base_namespace:=Namespace}=State) ->
     case nkactor_namespace:get_pid(Namespace) of
         Pid when is_pid(Pid), IsLeader ->
-            case AcState of
-                #state{base_namespace_pid=Pid} ->
-                    AcState;
+            case State of
+                #{base_namespace_pid:=Pid} ->
+                    State;
                 _ ->
                     monitor(process, Pid),
-                    AcState#state{base_namespace_pid = Pid}
+                    State#{base_namespace_pid := Pid}
             end;
         Pid when is_pid(Pid) ->
-            AcState;
+            State;
         undefined ->
             spawn_link(fun() -> nkactor_namespace:do_start(SrvId, Namespace, true) end),
-            AcState
+            State
     end.
 
 
 %% @private
-check_auto_activate(SrvId, #state{next_auto_activate=Next}=AcState) when Next > 0 ->
+check_auto_activate(SrvId, #{next_auto_activate:=Next}=State) when Next > 0 ->
     Now = nklib_date:epoch(msecs),
     case Now > Next of
         true ->
             spawn(fun() -> nkactor_util:activate_actors(SrvId) end),
             #{auto_activate_actors_period:=Time} = nkserver:get_config(SrvId),
-            AcState#state{next_auto_activate = Now+Time};
+            State#{next_auto_activate := Now+Time};
         false ->
-            AcState
+            State
     end;
 
 check_auto_activate(_SrvId, State) ->
@@ -269,30 +268,30 @@ check_auto_activate(_SrvId, State) ->
 
 
 %% @private
-do_register_namespace(Namespace, Pid, AcState) ->
-    #state{base_namespace=Base, namespaces=Namespaces} = AcState,
+do_register_namespace(Namespace, Pid, State) ->
+    #{base_namespace:=Base, namespaces:=Namespaces} = State,
     case binary:match(Namespace, Base) of
         {S, T} when S+T == byte_size(Namespace) ->
             case lists:keyfind(Namespace, 2, Namespaces) of
                 {_, _, Pid} ->
-                    {ok, AcState};
+                    {ok, State};
                 {Namespace, OldPid} ->
                     {error, {already_registered, OldPid}};
                 false ->
                     monitor(process, Pid),
                     Parts = lists:reverse(binary:split(Namespace, <<".">>, [global])),
                     Namespaces2 = lists:sort([{Parts, Namespace, Pid}|Namespaces]),
-                    AcState2 = AcState#state{namespaces=Namespaces2},
-                    {ok, AcState2}
+                    State2 = State#{namespaces:=Namespaces2},
+                    {ok, State2}
             end;
         _ ->
-            ?LLOG(warning, "invalid namespace ~s for base ~s", [Namespace, Base], AcState),
+            ?LLOG(warning, "invalid namespace ~s for base ~s", [Namespace, Base], State),
             {error, service_invalid}
     end.
 
 
 %% @private
-do_find_namespace(Namespace, #state{namespaces=Namespaces}) ->
+do_find_namespace(Namespace, #{namespaces:=Namespaces}) ->
     case lists:keyfind(Namespace, 2, Namespaces) of
         {_, _, Pid} ->
             {true, Pid};
@@ -302,17 +301,11 @@ do_find_namespace(Namespace, #state{namespaces=Namespaces}) ->
 
 
 %% @private
-do_remove_namespace(Pid, #state{namespaces=Namespaces}=AcState) ->
+do_remove_namespace(Pid, #{namespaces:=Namespaces}=State) ->
     case lists:keytake(Pid, 3, Namespaces) of
         {value, _, Namespaces2} ->
-            {true, AcState#state{namespaces=Namespaces2}};
+            {true, State#{namespaces:=Namespaces2}};
         false ->
             false
     end.
 
-
-%% @private
-get_actor_state(#{nkactor:=AcState}) -> AcState.
-
-%% @private
-set_actor_state(#state{}=AcState, State) -> State#{nkactor:=AcState}.

@@ -47,11 +47,8 @@
 %% - It will saved on 'save' operations (sync and async) that return
 %%   reply_and_save and noreply_and_save on operations
 %% - Also before deletion, on unload, on update (if is_dirty:true)
-%% - Periodically, at each heartbeat (5secs) save_time parameter if check and it will
-%%   be saved if dirty and save_time has passed
-%% - Also, at each check_ttl (for example after each sync or async operation)
-%%   if is_dirty:true, a timer will be started (save_time in config)
-%%   if it is saved, the timers is removed. If it fires, it is saved
+%% - After each sync or async operation, if 'is_dirty' is true, a timer is started
+%%   (if it was not yet started) to save the actor automatically
 %%
 %% Opentracing
 %%
@@ -64,9 +61,6 @@
 %% - When saving, the parent span, if defined, is passed to backends so they can
 %%   create spans based on ours
 %% - Actor callbacks can change at any moment field 'parent_span'
-
-
-
 
 
 
@@ -129,6 +123,7 @@
     get_actor_id |
     get_links |
     save |
+    {add_label, binary(), binary()} |
     delete |
     {enable, boolean()} |
     is_enabled |
@@ -479,7 +474,7 @@ do_update(UpdActor, Opts, #actor_st{srv=SrvId, actor_id=ActorId, actor=Actor}=St
         end,
         DataFieldsList = maps:get(data_fields, Opts, all),
         Data = maps:get(data, Actor, #{}),
-        Meta = maps:get(metadatas, Actor),
+        Meta = maps:get(metadata, Actor),
         DataFields = case DataFieldsList of
             all ->
                 Data;
@@ -611,7 +606,7 @@ do_save(Reason, #actor_st{is_dirty=true}=State) ->
     end,
     SaveOpts = #{parent_span=>ParentSpan1},
     case handle(actor_srv_save, [Actor2], State2) of
-        {ok, SaveActor, #actor_st{config=Config}=State2} ->
+        {ok, SaveActor, #actor_st{config=Config}=State3} ->
             case Config of
                 #{async_save:=true} when Reason /= create->
                     Self = self(),
@@ -621,40 +616,40 @@ do_save(Reason, #actor_st{is_dirty=true}=State) ->
                                 {ok, DbMeta} ->
                                     Span3 = nkserver_ot:log(Span2, <<"actor saved">>),
                                     nkserver_ot:finish(Span3),
-                                    ?ACTOR_DEBUG("save (~p) (~p)", [Reason, DbMeta], State2),
+                                    ?ACTOR_DEBUG("save (~p) (~p)", [Reason, DbMeta], State3),
                                     async_op(Self, {send_event, saved});
                                 {error, Error} ->
                                     Span3 = nkserver_ot:log(Span2, {"save error: ~p", [Error]}),
                                     Span4 = nkserver_ot:tag_error(Span3, Error),
                                     nkserver_ot:finish(Span4),
-                                    ?ACTOR_LOG(warning, "save error: ~p", [Error], State2)
+                                    ?ACTOR_LOG(warning, "save error: ~p", [Error], State3)
                             end
                         end),
-                    {ok, State2#actor_st{is_dirty = false}};
+                    {ok, State3#actor_st{is_dirty = false}};
                 _ ->
                     case ?CALL_SRV(SrvId, SaveFun, [SrvId, SaveActor, SaveOpts]) of
                         {ok, DbMeta} ->
                             Span3 = nkserver_ot:log(Span2, <<"actor saved">>),
                             nkserver_ot:finish(Span3),
-                            ?ACTOR_DEBUG("save (~p) (~p)", [Reason, DbMeta], State2),
-                            State3 = State2#actor_st{is_dirty=false},
-                            {ok, do_event(saved, State3)};
+                            ?ACTOR_DEBUG("save (~p) (~p)", [Reason, DbMeta], State3),
+                            State4 = State3#actor_st{is_dirty=false},
+                            {ok, do_event(saved, State4)};
                         {error, not_implemented} ->
                             Span3 = nkserver_ot:log(Span2, <<"save not implemented">>),
                             nkserver_ot:finish(Span3),
-                            {{error, not_implemented}, State2};
+                            {{error, not_implemented}, State3};
                         {error, Error} ->
                             Span3 = nkserver_ot:log(Span2, {"save error: ~p", [Error]}),
                             Span4 = nkserver_ot:tag_error(Span3, Error),
                             nkserver_ot:finish(Span4),
-                            ?ACTOR_LOG(warning, "save error: ~p", [Error], State2),
-                            {{error, Error}, State2}
+                            ?ACTOR_LOG(warning, "save error: ~p", [Error], State3),
+                            {{error, Error}, State3}
                     end
             end;
-        {ignore, State2} ->
+        {ignore, State3} ->
             Span3 = nkserver_ot:log(Span2, <<"save ignored">>),
             nkserver_ot:finish(Span3),
-            {ok, State2}
+            {ok, State3}
     end;
 
 do_save(_Reason, State) ->
@@ -696,7 +691,12 @@ init({Op, ActorId, Actor, Config, SrvId, Caller, Ref}) ->
                     nkserver_ot:log(actor_init, <<"registered with namespace">>),
                     case handle(actor_srv_init, [Op], State3) of
                         {ok, State4} ->
-                            do_post_init(Op, State4);
+                            case do_post_init(Op, State4) of
+                                {ok, State5} ->
+                                    {ok, State5};
+                                {error, Error} ->
+                                    do_init_stop(Error, Caller, Ref)
+                            end;
                         {error, Error} ->
                             do_init_stop(Error, Caller, Ref);
                         {delete, Error} ->
@@ -809,8 +809,9 @@ handle_info(nkactor_check_next_status_time, State) ->
             noreply(State2)
     end;
 
-handle_info(nkactor_heartbeat, State) ->
-    erlang:send_after(?HEARTBEAT_TIME, self(), nkactor_heartbeat),
+handle_info(nkactor_heartbeat, #actor_st{config=Config}=State) ->
+    HeartbeatTime = maps:get(heartbeat_time, Config),
+    erlang:send_after(HeartbeatTime, self(), nkactor_heartbeat),
     do_heartbeat(State);
 
 handle_info({'DOWN', _Ref, process, Pid, normal}, #actor_st{namespace_pid=Pid}=State) ->
@@ -911,15 +912,6 @@ do_sync_op(force_save, _From, State) ->
 do_sync_op(get_unload_policy, _From, #actor_st{unload_policy=Policy}=State) ->
     reply({ok, Policy}, State);
 
-do_sync_op(get_save_time, _From, #actor_st{save_timer=Timer}=State) ->
-    Reply = case is_reference(Timer) of
-        true ->
-            erlang:read_timer(Timer);
-        false ->
-            undefined
-    end,
-    reply({ok, Reply}, State);
-
 do_sync_op(delete, From, #actor_st{is_enabled=IsEnabled, config=Config}=State) ->
     case {IsEnabled, Config} of
         {false, #{dont_delete_on_disabled:=true}} ->
@@ -951,7 +943,7 @@ do_sync_op(is_enabled, _From, #actor_st{is_enabled=IsEnabled}=State) ->
 
 do_sync_op({link, Link, Opts}, _From, State) ->
     State2 = do_add_link(Link, Opts, State),
-    {reply, ok, do_refresh_ttl(State2)};
+    reply(ok, do_refresh_ttl(State2));
 
 do_sync_op({update, Actor, Opts}, _From, #actor_st{  is_enabled=IsEnabled, config=Config}=State) ->
     case {IsEnabled, Config} of
@@ -973,10 +965,30 @@ do_sync_op(get_alarms, _From, #actor_st{actor=Actor}=State) ->
         _ ->
             []
     end,
-    {reply, {ok, Alarms}, State};
+    reply({ok, Alarms}, State);
 
 do_sync_op({set_alarm, Class, Body}, _From, State) ->
     reply(ok, do_add_alarm(Class, Body, State));
+
+do_sync_op({add_label, Key, Value}, _From, State) ->
+    Key2 = nklib_util:to_binary(Key),
+    Value2 = nklib_util:to_binary(Value),
+    #actor_st{srv=SrvId, actor_id=ActorId, actor=Actor} = State,
+    case ?CALL_SRV(SrvId, actor_db_add_label, [SrvId, Key, Value, ActorId, #{}]) of
+        {ok, _} ->
+            #{metadata:=Meta} = Actor,
+            case maps:get(labels, Meta, #{}) of
+                #{Key2:=Value2} ->
+                    reply(ok, State);
+                Labels ->
+                    Labels2 = Labels#{Key2 => Value2},
+                    Actor2 = Actor#{metadata:=Meta#{labels=>Labels2}},
+                    State2 = State#actor_st{actor=Actor2, is_dirty=true},
+                    reply(ok, do_check_save(State2))
+            end;
+        {error, Error} ->
+            reply({error, Error}, State)
+    end;
 
 do_sync_op({apply, Mod, Fun, Args}, From, State) ->
     apply(Mod, Fun, Args++[From, do_refresh_ttl(State)]);
@@ -1097,7 +1109,7 @@ do_pre_init(ActorId, Actor, Config, SrvId) ->
 %% @private
 %% For create, we respect the original parent_span
 do_post_init(Op, State) ->
-    #actor_st{actor_id=_ActorId, parent_span=Parent} = State,
+    #actor_st{actor_id=_ActorId, parent_span=Parent, config=Config} = State,
     ?ACTOR_DEBUG("started (~p)", [self()], State),
     State2 = case Op of
         create ->
@@ -1118,7 +1130,12 @@ do_post_init(Op, State) ->
                     do_event(activated, State3)
             end,
             State5 = do_check_alarms(State4#actor_st{parent_span=Parent}),
-            erlang:send_after(?HEARTBEAT_TIME, self(), nkactor_heartbeat),
+            case Config of
+                #{heartbeat_time:=HeartbeatTime} ->
+                    erlang:send_after(HeartbeatTime, self(), nkactor_heartbeat);
+                _ ->
+                    ok
+            end,
             nklib_counters:async([?MODULE]),
             nkserver_ot:log(actor_init, <<"actor init completed">>),
             nkserver_ot:finish(actor_init),
@@ -1214,7 +1231,7 @@ do_check_alarms(#actor_st{actor=#{metadata:=Meta}}=State) ->
     end.
 
 
-%% @private Reset TTL
+%% @private Reset TTL and check dirty
 do_refresh_ttl(#actor_st{unload_policy={ttl, Time}, ttl_timer=Timer}=State) when is_integer(Time) ->
     nklib_util:cancel_timer(Timer),
     Ref = erlang:send_after(Time, self(), nkactor_ttl_timeout),
@@ -1315,9 +1332,13 @@ do_clear_all_alarms(#actor_st{actor=Actor}=State) ->
 
 %% @private
 do_check_save(#actor_st{is_dirty=true, save_timer=undefined, config=Config}=State) ->
-    SaveTime = maps:get(save_time, Config, ?DEFAULT_SAVE_TIME),
-    Timer = erlang:send_after(SaveTime, self(), nkactor_timer_save),
-    State#actor_st{save_timer=Timer};
+    case maps:get(save_time, Config, undefined) of
+        undefined ->
+            State;
+        SaveTime ->
+            Timer = erlang:send_after(SaveTime, self(), nkactor_timer_save),
+            State#actor_st{save_timer=Timer}
+    end;
 
 do_check_save(State) ->
     State.
