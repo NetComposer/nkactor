@@ -23,13 +23,6 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([config/1, parse/3, request/3]).
--export([actor_srv_init/2, actor_srv_sync_op/3, actor_srv_async_op/2,
-         actor_srv_heartbeat/1, actor_srv_get/2, actor_srv_enabled/2,
-         actor_srv_save/2,
-         actor_srv_update/2, actor_srv_delete/1,
-         actor_srv_handle_call/3, actor_srv_handle_cast/2, actor_srv_handle_info/2,
-         actor_srv_event/2, actor_srv_next_status_timer/1, actor_srv_link_down/3,
-         actor_srv_stop/2, actor_srv_terminate/2]).
 
 -include("nkactor.hrl").
 -include("nkactor_debug.hrl").
@@ -37,6 +30,7 @@
 
 %% ===================================================================
 %% Callbacks definitions
+%% @see functions actor_srv_... in nkactor_callbacks
 %% ===================================================================
 
 %-type id() :: nkactor:id().
@@ -283,180 +277,6 @@ request(Module, ActorId, Request) ->
     end.
 
 
-
-%% ===================================================================
-%% Actor Operations
-%% - Operations called from nkactor_callbacks if not overridden
-%% - All are generated from situations in nkactor_srv
-%% ===================================================================
-
-
-
-%% @doc Called after successful registration
-actor_srv_init(Op, ActorSt) ->
-    case call_actor(init, [Op, ActorSt], ActorSt) of
-        continue ->
-            {ok, ActorSt};
-        Other ->
-            Other
-    end.
-
-
-%% @doc Called on a periodic basis
-actor_srv_heartbeat(ActorSt) ->
-    case call_actor(heartbeat, [ActorSt], ActorSt) of
-        continue ->
-            {ok, ActorSt};
-        Other ->
-            Other
-    end.
-
-
-%% @doc Called when performing operations get_actor and consume_actor
-%% to modify the returned actor
-actor_srv_get(Actor, ActorSt) ->
-    case call_actor(get, [Actor, ActorSt], ActorSt) of
-        continue ->
-            {ok, Actor, ActorSt};
-        Other ->
-            Other
-    end.
-
-
-%% @doc Called after enable change for an actor
-actor_srv_enabled(Enabled, ActorSt) ->
-    case call_actor(enabled, [Enabled, ActorSt], ActorSt) of
-        continue ->
-            {ok, ActorSt};
-        Other ->
-            Other
-    end.
-
-
-%% @doc Called after approving an update, to change the updated actor
-actor_srv_update(Actor, ActorSt) ->
-    case call_actor(update, [Actor, ActorSt], ActorSt) of
-        continue ->
-            {ok, Actor, ActorSt};
-        Other ->
-            Other
-    end.
-
-
-%% @doc Called after approving an update, to change the updated actor
-actor_srv_delete(ActorSt) ->
-    case call_actor(delete, [ActorSt], ActorSt) of
-        continue ->
-            {ok, ActorSt};
-        Other ->
-            Other
-    end.
-
-
-%% @doc Called for sync operations
-actor_srv_sync_op(Op, From, ActorSt) ->
-    call_actor(sync_op, [Op, From, ActorSt], ActorSt).
-
-
-%% @doc Called for async operations
-actor_srv_async_op(Op, ActorSt) ->
-    call_actor(async_op, [Op,  ActorSt], ActorSt).
-
-
-%% @doc Called when a event is sent, after linked events
-actor_srv_event(Op, ActorSt) ->
-    case call_actor(event, [Op,  ActorSt], ActorSt) of
-        continue ->
-            {ok, ActorSt};
-        Other ->
-            Other
-    end.
-
-
-%% @doc Called when next_status_timer is fired
-actor_srv_next_status_timer(ActorSt) ->
-    case call_actor(next_status_timer, [ActorSt], ActorSt) of
-        continue ->
-            {ok, ActorSt};
-        Other ->
-            Other
-    end.
-
-
-%% @doc Called when next_status_timer is fired
-actor_srv_link_down(Link, Data, ActorSt) ->
-    case call_actor(link_down, [Link, Data, ActorSt], ActorSt) of
-        continue ->
-            {ok, ActorSt};
-        Other ->
-            Other
-    end.
-
-
-%% @doc Called before saving the actor
-actor_srv_save(Actor, ActorSt) ->
-    case call_actor(save, [Actor, ActorSt], ActorSt) of
-        continue ->
-            {ok, Actor, ActorSt};
-        Other ->
-            Other
-    end.
-
-
-%% @doc Called for handle_call
-actor_srv_handle_call(Msg, From, ActorSt) ->
-    case call_actor(handle_call, [Msg, From, ActorSt], ActorSt) of
-        continue ->
-            lager:error("Module nkactor_srv received unexpected call: ~p", [Msg]),
-            {noreply, ActorSt};
-        Other ->
-            Other
-    end.
-
-
-%% @doc Called for handle_cast
-actor_srv_handle_cast(Msg, ActorSt) ->
-    case call_actor(handle_cast, [Msg, ActorSt], ActorSt) of
-        continue ->
-            lager:error("Module nkactor_srv received unexpected cast: ~p", [Msg]),
-            {noreply, ActorSt};
-        Other ->
-            Other
-    end.
-
-
-%% @doc Called for handle_info
-actor_srv_handle_info(Msg, ActorSt) ->
-    case call_actor(handle_info, [Msg, ActorSt], ActorSt) of
-        continue ->
-            lager:error("Module nkactor_srv received unexpected info: ~p", [Msg]),
-            {noreply, ActorSt};
-        Other ->
-            Other
-    end.
-
-
-%% @doc Called when a stop is being processed
-actor_srv_stop(Reason, ActorSt) ->
-    case call_actor(stop, [Reason,  ActorSt], ActorSt) of
-        continue ->
-            {ok, ActorSt};
-        Other ->
-            Other
-    end.
-
-
-%% @doc Called on actor termination
-actor_srv_terminate(Reason, ActorSt) ->
-    case call_actor(terminate, [Reason,  ActorSt], ActorSt) of
-        continue ->
-            {ok, ActorSt};
-        Other ->
-            Other
-    end.
-
-
-
 %% ===================================================================
 %% Common fields
 %% ===================================================================
@@ -537,22 +357,22 @@ field_type() ->
 %% ===================================================================
 %% Internal
 %% ===================================================================
-
-%% @private
-call_actor(Fun, Args, #actor_st{module=Module}) ->
-    %?TRACE(call_actor_1, #{'fun'=>Fun}),
-    case erlang:function_exported(Module, Fun, length(Args)) of
-        true ->
-            %?TRACE(call_actor_2),
-            R = apply(Module, Fun, Args),
-            %?TRACE(call_actor_3),
-            R;
-        false ->
-            continue
-    end;
-
-call_actor(_Fun, _Args, _ActorSt) ->
-    continue.
+%%
+%%%% @private
+%%call_actor(Fun, Args, #actor_st{module=Module}) ->
+%%    %?TRACE(call_actor_1, #{'fun'=>Fun}),
+%%    case erlang:function_exported(Module, Fun, length(Args)) of
+%%        true ->
+%%            %?TRACE(call_actor_2),
+%%            R = apply(Module, Fun, Args),
+%%            %?TRACE(call_actor_3),
+%%            R;
+%%        false ->
+%%            continue
+%%    end;
+%%
+%%call_actor(_Fun, _Args, _ActorSt) ->
+%%    continue.
 
 
 

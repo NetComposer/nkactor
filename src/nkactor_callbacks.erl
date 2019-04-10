@@ -127,36 +127,63 @@ actor_external_event(_SrvId, _Event, _Actor) ->
     ok.
 
 
-%% @doc Called when a new session starts
+%% @doc Called on successful registration (callback init/2 in actor)
 -spec actor_srv_init(create|start, actor_st()) ->
     {ok, actor_st()} | {error, Reason::term()}.
 
 actor_srv_init(Op, ActorSt) ->
-    nkactor_actor:actor_srv_init(Op, ActorSt).
+    #actor_st{srv=SrvId, actor_id=#actor_id{group=Group, resource=Res}} = ActorSt,
+    case ?CALL_SRV(SrvId, nkactor_callback, [init, Group, Res, [Op, ActorSt]]) of
+        continue ->
+            {ok, ActorSt};
+        Other ->
+            Other
+    end.
 
 
-%% @doc Called on a periodic basis
+
+%% @doc Called on a periodic basis, if heartbeat_time is defined  (callback heartbeat/1 in actor)
 -spec actor_srv_heartbeat(actor_st()) ->
     {ok, actor_st()} | {error, nkactor_msg:msg(), actor_st()} | continue().
 
 actor_srv_heartbeat(ActorSt) ->
-    nkactor_actor:actor_srv_heartbeat(ActorSt).
+    #actor_st{srv=SrvId, actor_id=#actor_id{group=Group, resource=Res}} = ActorSt,
+    case ?CALL_SRV(SrvId, nkactor_callback, [heartbeat, Group, Res, [ActorSt]]) of
+        continue ->
+            {ok, ActorSt};
+        Other ->
+            Other
+    end.
 
 
-%%  @doc Called when get_actor is called
+%%  @doc Called when performing operations get_actor and consume_actor
+%% to modify the returned actor  (callback get/2 in actor)
 -spec actor_srv_get(nkactor:actor(), actor_st()) ->
     {ok, nkactor:actor(), actor_st()} | continue().
 
 actor_srv_get(Actor, ActorSt) ->
-    nkactor_actor:actor_srv_get(Actor, ActorSt).
+    #actor_st{srv=SrvId, actor_id=#actor_id{group=Group, resource=Res}} = ActorSt,
+    case ?CALL_SRV(SrvId, nkactor_callback, [get, Group, Res, [Actor, ActorSt]]) of
+        continue ->
+            {ok, Actor, ActorSt};
+        Other ->
+            Other
+    end.
 
 
-%%  @doc Called before finishing an update
+
+%%  @doc Called after approving an update, to change the updated actor  (callback update/2 in actor)
 -spec actor_srv_update(nkactor:actor(), actor_st()) ->
     {ok, nkactor:actor(), actor_st()} | {error, nkserver:msg(), actor_st()} |continue().
 
 actor_srv_update(Actor, ActorSt) ->
-    nkactor_actor:actor_srv_update(Actor, ActorSt).
+    #actor_st{srv=SrvId, actor_id=#actor_id{group=Group, resource=Res}} = ActorSt,
+    case ?CALL_SRV(SrvId, nkactor_callback, [update, Group, Res, [Actor, ActorSt]]) of
+        continue ->
+            {ok, Actor, ActorSt};
+        Other ->
+            Other
+    end.
 
 
 %%  @doc Called before finishing a deletion
@@ -164,7 +191,27 @@ actor_srv_update(Actor, ActorSt) ->
     {ok, actor_st()} | {error, nkserver:msg(), actor_st()} |continue().
 
 actor_srv_delete(ActorSt) ->
-    nkactor_actor:actor_srv_delete(ActorSt).
+    #actor_st{srv=SrvId, actor_id=#actor_id{group=Group, resource=Res}} = ActorSt,
+    case ?CALL_SRV(SrvId, nkactor_callback, [delete, Group, Res, [ActorSt]]) of
+        continue ->
+            {ok, ActorSt};
+        Other ->
+            Other
+    end.
+
+
+%% @doc Called when an object is enabled/disabled
+-spec actor_srv_enabled(boolean(), actor_st()) ->
+    {ok, actor_st()} | continue().
+
+actor_srv_enabled(Enabled, ActorSt) ->
+    #actor_st{srv=SrvId, actor_id=#actor_id{group=Group, resource=Res}} = ActorSt,
+    case ?CALL_SRV(SrvId, nkactor_callback, [enabled, Group, Res, [Enabled, ActorSt]]) of
+        continue ->
+            {ok, ActorSt};
+        Other ->
+            Other
+    end.
 
 
 %% @doc Called to send an event from inside an actor's process
@@ -174,7 +221,13 @@ actor_srv_delete(ActorSt) ->
     {ok, actor_st()} | continue().
 
 actor_srv_event(Event, ActorSt) ->
-    nkactor_actor:actor_srv_event(Event, ActorSt).
+    #actor_st{srv=SrvId, actor_id=#actor_id{group=Group, resource=Res}} = ActorSt,
+    case ?CALL_SRV(SrvId, nkactor_callback, [event, Group, Res, [Event, ActorSt]]) of
+        continue ->
+            {ok, ActorSt};
+        Other ->
+            Other
+    end.
 
 
 %% @doc Called when an event is sent, for each registered process to the session
@@ -183,8 +236,14 @@ actor_srv_event(Event, ActorSt) ->
 -spec actor_srv_link_event(nklib:link(), term(), nkactor_srv:event(), actor_st()) ->
     {ok, actor_st()} | continue().
 
-actor_srv_link_event(_Link, _LinkData, _Event, ActorSt) ->
-    {ok, ActorSt}.
+actor_srv_link_event(Link, LinkData, Event, ActorSt) ->
+    #actor_st{srv=SrvId, actor_id=#actor_id{group=Group, resource=Res}} = ActorSt,
+    case ?CALL_SRV(SrvId, nkactor_callback, [link_event, Group, Res, [Link, LinkData, Event, ActorSt]]) of
+        continue ->
+            {ok, ActorSt};
+        Other ->
+            Other
+    end.
 
 
 %% @doc Allows to modify the actor that is going to be saved
@@ -192,7 +251,13 @@ actor_srv_link_event(_Link, _LinkData, _Event, ActorSt) ->
     {ok, actor(), actor_st()} | {ignore, actor_st()} | continue().
 
 actor_srv_save(Actor, ActorSt) ->
-    nkactor_actor:actor_srv_save(Actor, ActorSt).
+    #actor_st{srv=SrvId, actor_id=#actor_id{group=Group, resource=Res}} = ActorSt,
+    case ?CALL_SRV(SrvId, nkactor_callback, [save, Group, Res, [Actor, ActorSt]]) of
+        continue ->
+            {ok, Actor, ActorSt};
+        Other ->
+            Other
+    end.
 
 
 %% @doc
@@ -206,7 +271,8 @@ actor_srv_save(Actor, ActorSt) ->
     continue().
 
 actor_srv_sync_op(Op, From, ActorSt) ->
-    nkactor_actor:actor_srv_sync_op(Op, From, ActorSt).
+    #actor_st{srv=SrvId, actor_id=#actor_id{group=Group, resource=Res}} = ActorSt,
+    ?CALL_SRV(SrvId, nkactor_callback, [sync_op, Group, Res, [Op, From, ActorSt]]).
 
 
 %% @doc
@@ -216,7 +282,8 @@ actor_srv_sync_op(Op, From, ActorSt) ->
     continue().
 
 actor_srv_async_op(Op, ActorSt) ->
-    nkactor_actor:actor_srv_async_op(Op, ActorSt).
+    #actor_st{srv=SrvId, actor_id=#actor_id{group=Group, resource=Res}} = ActorSt,
+    ?CALL_SRV(SrvId, nkactor_callback, [async_op, Group, Res, [Op, ActorSt]]).
 
 
 %% @doc Called when a linked process goes down
@@ -224,15 +291,13 @@ actor_srv_async_op(Op, ActorSt) ->
     {ok, actor_st()} | continue().
 
 actor_srv_link_down(Link, Data, ActorSt) ->
-    nkactor_actor:actor_srv_link_down(Link, Data, ActorSt).
-
-
-%% @doc Called when an object is enabled/disabled
--spec actor_srv_enabled(boolean(), actor_st()) ->
-    {ok, actor_st()} | continue().
-
-actor_srv_enabled(Enabled, ActorSt) ->
-    nkactor_actor:actor_srv_enabled(Enabled, ActorSt).
+    #actor_st{srv=SrvId, actor_id=#actor_id{group=Group, resource=Res}} = ActorSt,
+    case ?CALL_SRV(SrvId, nkactor_callback, [link_down, Group, Res, [Link, Data, ActorSt]]) of
+        continue ->
+            {ok, ActorSt};
+        Other ->
+            Other
+    end.
 
 
 %% @doc Called when the timer in next_status_time is fired
@@ -240,7 +305,13 @@ actor_srv_enabled(Enabled, ActorSt) ->
     {ok, actor_st()} | continue().
 
 actor_srv_next_status_timer(ActorSt) ->
-    nkactor_actor:actor_srv_next_status_timer(ActorSt).
+    #actor_st{srv=SrvId, actor_id=#actor_id{group=Group, resource=Res}} = ActorSt,
+    case ?CALL_SRV(SrvId, nkactor_callback, [next_status_timer, Group, Res, [ActorSt]]) of
+        continue ->
+            {ok, ActorSt};
+        Other ->
+            Other
+    end.
 
 
 %% @doc Called when a object with alarms is loaded
@@ -248,7 +319,13 @@ actor_srv_next_status_timer(ActorSt) ->
     {ok, actor_st()} | {error, term(), actor_st()} | continue().
 
 actor_srv_alarms(ActorSt) ->
-    {ok, ActorSt}.
+    #actor_st{srv=SrvId, actor_id=#actor_id{group=Group, resource=Res}} = ActorSt,
+    case ?CALL_SRV(SrvId, nkactor_callback, [alarms, Group, Res, [ActorSt]]) of
+        continue ->
+            {ok, ActorSt};
+        Other ->
+            Other
+    end.
 
 
 %% @doc
@@ -258,7 +335,14 @@ actor_srv_alarms(ActorSt) ->
     {stop, Reason::term(), actor_st()} | continue().
 
 actor_srv_handle_call(Msg, From, ActorSt) ->
-    nkactor_actor:actor_srv_handle_call(Msg, From, ActorSt).
+    #actor_st{srv=SrvId, actor_id=#actor_id{group=Group, resource=Res}} = ActorSt,
+    case ?CALL_SRV(SrvId, nkactor_callback, [handle_call, Group, Res, [Msg, From, ActorSt]]) of
+        continue ->
+            lager:error("Module nkactor_srv received unexpected call: ~p", [Msg]),
+            {noreply, ActorSt};
+        Other ->
+            Other
+    end.
 
 
 %% @doc
@@ -266,7 +350,14 @@ actor_srv_handle_call(Msg, From, ActorSt) ->
     {noreply, actor_st()} | {stop, term(), actor_st()} | continue().
 
 actor_srv_handle_cast(Msg, ActorSt) ->
-    nkactor_actor:actor_srv_handle_cast(Msg, ActorSt).
+    #actor_st{srv=SrvId, actor_id=#actor_id{group=Group, resource=Res}} = ActorSt,
+    case ?CALL_SRV(SrvId, nkactor_callback, [handle_cast, Group, Res, [Msg, ActorSt]]) of
+        continue ->
+            lager:error("Module nkactor_srv received unexpected cast: ~p", [Msg]),
+            {noreply, ActorSt};
+        Other ->
+            Other
+    end.
 
 
 %% @doc
@@ -274,7 +365,14 @@ actor_srv_handle_cast(Msg, ActorSt) ->
     {noreply, actor_st()} | {stop, term(), actor_st()} | continue().
 
 actor_srv_handle_info(Msg, ActorSt) ->
-    nkactor_actor:actor_srv_handle_info(Msg, ActorSt).
+    #actor_st{srv=SrvId, actor_id=#actor_id{group=Group, resource=Res}} = ActorSt,
+    case ?CALL_SRV(SrvId, nkactor_callback, [handle_info, Group, Res, [Msg, ActorSt]]) of
+        continue ->
+            lager:error("Module nkactor_srv received unexpected info: ~p", [Msg]),
+            {noreply, ActorSt};
+        Other ->
+            Other
+    end.
 
 
 %% @private Called on proper stop
@@ -282,7 +380,13 @@ actor_srv_handle_info(Msg, ActorSt) ->
     {ok, actor_st()} | {delete, actor_st()} | continue().
 
 actor_srv_stop(Reason, ActorSt) ->
-    nkactor_actor:actor_srv_stop(Reason, ActorSt).
+    #actor_st{srv=SrvId, actor_id=#actor_id{group=Group, resource=Res}} = ActorSt,
+    case ?CALL_SRV(SrvId, nkactor_callback, [stop, Group, Res, [Reason, ActorSt]]) of
+        continue ->
+            {ok, ActorSt};
+        Other ->
+            Other
+    end.
 
 
 %% @doc Called when the server terminate is called
@@ -290,7 +394,13 @@ actor_srv_stop(Reason, ActorSt) ->
     {ok, actor_st()}.
 
 actor_srv_terminate(Reason, ActorSt) ->
-    nkactor_actor:actor_srv_terminate(Reason, ActorSt).
+    #actor_st{srv=SrvId, actor_id=#actor_id{group=Group, resource=Res}} = ActorSt,
+    case ?CALL_SRV(SrvId, nkactor_callback, [terminate, Group, Res, [Reason, ActorSt]]) of
+        continue ->
+            {ok, ActorSt};
+        Other ->
+            Other
+    end.
 
 
 
