@@ -81,6 +81,7 @@
 -export([register_actor/1, find_actor/1, find_registered_actor/1, get_registered_actors/1]).
 -export([get_counters/1, get_detailed_counters/1]).
 -export([get_namespace/1, find_namespace/1, stop_namespace/2]).
+-export([register_index/2, find_index/2]).
 -export([get_pid/1, do_start/3]).
 -export([init/1, terminate/2, code_change/3, handle_call/3, handle_cast/2,
          handle_info/2]).
@@ -251,6 +252,15 @@ get_detailed_counters(Namespace) ->
         end,
         #{},
         nkactor_master:get_all_namespaces(Namespace)).
+
+
+%% @doc
+register_index(#actor_id{namespace=Namespace}=ActorId, Index) ->
+    call(Namespace, {nkactor_register_index, ActorId, Index}).
+
+
+find_index(Namespace, Index) ->
+    call(Namespace, {nkactor_find_index, Index}).
 
 
 
@@ -479,7 +489,7 @@ handle_call({nkactor_register_actor, ActorId}, _From, State) ->
 
 handle_call({nkactor_find_actor, #actor_id{}=ActorId}, _From, #state{id=SrvId}=State) ->
     Reply = case do_find_actor_name(ActorId, State) of
-        {true, ActorId2} ->
+        {true, ActorId2, _Indices} ->
             {true, SrvId, ActorId2};
         false ->
             {false, SrvId}
@@ -492,6 +502,14 @@ handle_call(nkactor_get_registered_actors, _From, #state{register_ets=Ets}=State
 
 handle_call(nkactor_get_counters, _From, #state{counters=Counters}=State) ->
     reply({ok, Counters}, State);
+
+handle_call({nkactor_register_index, ActorId, Index}, _From, State) ->
+    Reply = do_register_index(ActorId, Index, State),
+    {reply, Reply, State};
+
+handle_call({nkactor_find_index, Index}, _From, State) ->
+    Reply = do_find_index(Index, State),
+    reply(Reply, State);
 
 handle_call(Msg, _From, State) ->
     lager:warning("Module ~p received unexpected call: ~p", [?MODULE, Msg]),
@@ -576,13 +594,13 @@ do_register_actor(ActorId, #state{register_ets=Ets}=State) ->
             #actor_id{group=Group, resource=Res, name=Name, uid=UID, pid=Pid} = ActorId,
             Ref = monitor(process, Pid),
             Objs = [
-                {{name, Group, Res, Name}, ActorId},
+                {{name, Group, Res, Name}, ActorId, []},
                 {{pid, Pid}, {name, Group, Res, Name}, UID, Ref}
             ],
             ets:insert(Ets, Objs),
             State2 = do_add_actor(ActorId, State),
             {ok, State2};
-        {true, _OldActorId} ->
+        {true, _OldActorId, _Indices} ->
             {error, actor_already_registered}
     end.
 
@@ -591,8 +609,8 @@ do_register_actor(ActorId, #state{register_ets=Ets}=State) ->
 do_find_actor_name(#actor_id{}=ActorId, #state{register_ets=Ets}) ->
     #actor_id{group=Group, resource=Res, name=Name} = ActorId,
     case ets:lookup(Ets, {name, Group, Res, Name}) of
-        [{_, ActorId2}] ->
-            {true, ActorId2};
+        [{_, ActorId2, Indices}] ->
+            {true, ActorId2, Indices};
         [] ->
             false
     end.
@@ -603,9 +621,10 @@ do_remove_actor(Pid, #state{register_ets=Ets}=State) ->
     case ets:lookup(Ets, {pid, Pid}) of
         [{{pid, Pid}, {name, Group, Res, Name}, UID, Ref}] ->
             nklib_util:demonitor(Ref),
+            [{_, _, Indices}] = ets:lookup(Ets, {name, Group, Res, Name}),
             ets:delete(Ets, {pid, Pid}),
             ets:delete(Ets, {name, Group, Res, Name}),
-            ets:delete(Ets, {uid, UID}),
+            lists:foreach(fun(Index) -> ets:delete(Ets, {index, Index}) end, Indices),
             ActorId = #actor_id{
                 uid = UID,
                 group = Group,
@@ -614,6 +633,37 @@ do_remove_actor(Pid, #state{register_ets=Ets}=State) ->
             },
             State2 = do_rm_actor_counters(ActorId, State),
             {true, State2};
+        [] ->
+            false
+    end.
+
+
+%% @private
+do_register_index(ActorId, Index, #state{register_ets=Ets}=State) ->
+    case do_find_actor_name(ActorId, State) of
+        {true, ActorId2, Indices} ->
+            case do_find_index(Index, State) of
+                false ->
+                    #actor_id{group=Group, resource=Res, name=Name} = ActorId2,
+                    Objs = [
+                        {{name, Group, Res, Name}, ActorId, [Index|Indices]},
+                        {{index, Index}, ActorId2}
+                    ],
+                    ets:insert(Ets, Objs),
+                    ok;
+                true ->
+                    {error, index_already_defined}
+            end;
+        false ->
+            {error, actor_not_registered}
+    end.
+
+
+%% @private
+do_find_index(Index, #state{register_ets=Ets}) ->
+    case ets:lookup(Ets, {index, Index}) of
+        [{_, ActorId}] ->
+            {true, ActorId};
         [] ->
             false
     end.
