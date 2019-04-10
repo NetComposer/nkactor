@@ -68,12 +68,12 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -behaviour(gen_server).
 
--export([create/2, start/2, sync_op/2, sync_op/3, async_op/2, live_async_op/2, delayed_async_op/3]).
+-export([create/2, start/2, sync_op/2, sync_op/3, async_op/2, live_async_op/2, delayed_async_op/3, hibernate/0]).
 -export([init/1, terminate/2, code_change/3, handle_call/3,  handle_cast/2, handle_info/2]).
 -export([count/0, get_state/1, get_timers/1, raw_stop/2]).
 -export([do_event/2, do_event_link/2, do_update/3, do_delete/1, do_set_next_status_time/2,
          do_unset_next_status_time/1, do_get_links/1, do_add_link/3, do_remove_link/2,
-         do_save/2, do_hibernate/0]).
+         do_save/2]).
 -export_type([event/0, save_reason/0]).
 
 -include("nkactor.hrl").
@@ -333,7 +333,7 @@ raw_stop(Id, Reason) ->
 
 
 %% @private
-do_hibernate() ->
+hibernate() ->
     gen_server:cast(self(), nkactor_hibernate).
 
 
@@ -772,7 +772,8 @@ handle_cast({nkactor_async_op, Op}, State) ->
     end;
 
 handle_cast(nkactor_hibernate, State) ->
-    {noreply, State, hibernate};
+    {_, State2} = do_save(hibernate, State),
+    {noreply, State2, hibernate};
 
 handle_cast(Msg, State) ->
     safe_handle(actor_srv_handle_cast, [Msg], State).
