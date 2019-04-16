@@ -38,6 +38,9 @@
 -type group() :: nkactor:group().
 -type resource() :: nkactor:resource().
 
+-define(ACTIVATE_SPAN, auto_activate).
+
+
 %% ===================================================================
 %% Public
 %% ===================================================================
@@ -174,36 +177,36 @@ pre_update(ActorId, Syntax, Actor, Opts) ->
 %% @doc Performs an query on database for actors marked as 'active' and tries
 %% to active them if not already activated
 activate_actors(SrvId) ->
-    nkserver_ot:new(auto_activate, SrvId, <<"Actor::auto-activate">>),
+    nkserver_ot:new(?ACTIVATE_SPAN, SrvId, <<"Actor::auto-activate">>),
     activate_actors(SrvId, <<>>),
-    nkserver_ot:finish(auto_activate),
+    nkserver_ot:finish(?ACTIVATE_SPAN),
     ok.
 
 
 %% @private
-activate_actors(SrvId, StartDate) ->
-    nkserver_ot:log(auto_activate, {"starting date: ~s", [StartDate]}),
-    ParentSpan = nkserver_ot:get_parent(auto_activate),
-    case nkactor:search_active(SrvId, StartDate, #{parent_span=>ParentSpan}) of
+activate_actors(SrvId, StartCursor) ->
+    nkserver_ot:log(?ACTIVATE_SPAN, {"starting cursor: ~s", [StartCursor]}),
+    ParentSpan = nkserver_ot:get_parent(?ACTIVATE_SPAN),
+    case nkactor:search_active(SrvId, #{last_cursor=>StartCursor, parent_span=>ParentSpan, size=>2}) of
         {ok, [], _} ->
-            nkserver_ot:log(auto_activate, <<"no more actors">>),
+            nkserver_ot:log(?ACTIVATE_SPAN, <<"no more actors">>),
             ok;
-        {ok, ActorIds, #{last_date:=LastDate, size:=Size}} ->
-            nkserver_ot:log(auto_activate, {"found '~p' actors", [Size]}),
+        {ok, ActorIds, #{last_cursor:=LastDate}} ->
+            nkserver_ot:log(?ACTIVATE_SPAN, {"found '~p' actors", [length(ActorIds)]}),
             lists:foreach(
-                fun(#actor_id{uid=UID}=ActorId) ->
+                fun(ActorId) ->
                     case nkactor_namespace:find_registered_actor(ActorId) of
                         {true, _, _} ->
                             ok;
                         _ ->
                             case nkactor:activate(ActorId) of
                                 {ok, _} ->
-                                    nkserver_ot:log(auto_activate, {"activated actor '~s'", [UID]}),
+                                    nkserver_ot:log(?ACTIVATE_SPAN, {"activated actor ~p", [ActorId]}),
                                     lager:notice("NkACTOR auto-activating ~p", [ActorId]);
                                 {error, Error} ->
-                                    nkserver_ot:log(auto_activate, {"could not activated actor '~s': ~p",
-                                                    [UID, Error]}),
-                                    nkserver_ot:tag_error(auto_activate, could_not_activate_actor),
+                                    nkserver_ot:log(?ACTIVATE_SPAN, {"could not activated actor ~p: ~p",
+                                                    [ActorId, Error]}),
+                                    nkserver_ot:tag_error(?ACTIVATE_SPAN, could_not_activate_actor),
                                     lager:warning("NkACTOR could not auto-activate ~p: ~p",
                                                  [ActorId, Error])
                             end

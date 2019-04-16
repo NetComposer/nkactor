@@ -78,7 +78,7 @@ meta_syntax() ->
         update_time => date_3339,
         is_enabled => boolean,
         is_active => boolean,
-        expires_time => date_3339,
+        expires_time => [date_3339, {binary, [<<>>]}],
         labels => #{'__key_binary' => binary},
         annotations => #{'__key_binary' => binary},
         links => #{'__key_binary' => binary},

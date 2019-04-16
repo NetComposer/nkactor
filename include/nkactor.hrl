@@ -34,6 +34,7 @@
     actor :: nkactor:actor(),
     run_state :: term(),
     namespace_pid :: pid() | undefined,
+    saved_metadata :: map(),
     is_dirty :: true | false | deleted,
     save_timer :: reference(),
     is_enabled :: boolean(),

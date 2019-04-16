@@ -58,8 +58,8 @@
 %%   field in actor state
 %% - If it is not provided, but option 'trace_id' is used in metadata, init span
 %%   will be attached to that trace, and it will be stored in 'parent_span' field
-%% - When saving, the parent span, if defined, is passed to backends so they can
-%%   create spans based on ours
+%% - When saving, a new span called "Actor::save" is created under the parent span,
+%%   it also passed to backends so they can  create spans based on ours
 %% - Actor callbacks can change at any moment field 'parent_span'
 
 
@@ -460,10 +460,6 @@ do_update(UpdActor, Opts, #actor_st{srv=SrvId, actor_id=ActorId, actor=Actor}=St
             Class -> ok;
             _ -> throw({updated_invalid_field, group})
         end,
-        %case UpdActorId#actor_id.vsn of
-        %    Vsn -> ok;
-        %    _ -> throw({updated_invalid_field, vsn})
-        %end,
         case UpdActorId#actor_id.resource of
             Res -> ok;
             _ -> throw({updated_invalid_field, resource})
@@ -541,7 +537,7 @@ do_update(UpdActor, Opts, #actor_st{srv=SrvId, actor_id=ActorId, actor=Actor}=St
                                 State3 = State2#actor_st{actor=NewActor2, is_dirty=true},
                                 State4 = do_enabled(UpdEnabled, State3),
                                 State5 = set_unload_policy(State4),
-                                case do_save(update, State5) of
+                                case do_save(update, #{}, State5) of
                                     {ok, State6} ->
                                         {ok, do_event({updated, UpdActor}, State6)};
                                     {{error, SaveError}, State6} ->
@@ -585,26 +581,34 @@ do_delete(#actor_st{srv=SrvId, actor_id=ActorId, actor=Actor}=State) ->
 
 
 %% @private
-do_save(Reason, #actor_st{is_dirty=true}=State) ->
+do_save(Reason, State) ->
+    do_save(Reason, #{}, State).
+
+
+%% @private
+do_save(Reason, SaveOpts, #actor_st{is_dirty=true}=State) ->
     #actor_st{
         srv = SrvId,
         actor = Actor,
+        saved_metadata = SavedMeta,
         save_timer = Timer,
-        parent_span = ParentSpan
+        parent_span = ParentSpan,
+        config = Config
     } = State,
+    nklib_util:cancel_timer(Timer),
     Span1 = nkserver_ot:span(SrvId, <<"Actor::save">>, ParentSpan),
     Span2 = nkserver_ot:tag(Span1, <<"reason">>, Reason),
     ParentSpan1 = nkserver_ot:get_parent(Span1),
-    nklib_util:cancel_timer(Timer),
     Actor2 = nkactor_lib:update(Actor, nklib_date:now_3339(usecs)),
     State2 = State#actor_st{actor=Actor2, save_timer=undefined},
-    SaveFun = case Reason of
+    {SaveFun, SaveOpts2} = case Reason of
         create ->
-            actor_db_create;
+            CheckUnique = maps:get(create_check_unique, Config, true),
+            {actor_db_create, SaveOpts#{check_unique=>CheckUnique}};
         _ ->
-            actor_db_update
+            {actor_db_update, SaveOpts#{last_metadata=>SavedMeta}}
     end,
-    SaveOpts = #{parent_span=>ParentSpan1},
+    SaveOpts3 = SaveOpts2#{parent_span=>ParentSpan1},
     case handle(actor_srv_save, [Actor2], State2) of
         {ok, SaveActor, #actor_st{config=Config}=State3} ->
             case Config of
@@ -612,7 +616,7 @@ do_save(Reason, #actor_st{is_dirty=true}=State) ->
                     Self = self(),
                     spawn_link(
                         fun() ->
-                            case ?CALL_SRV(SrvId, SaveFun, [SrvId, SaveActor, SaveOpts]) of
+                            case ?CALL_SRV(SrvId, SaveFun, [SrvId, SaveActor, SaveOpts3]) of
                                 {ok, DbMeta} ->
                                     Span3 = nkserver_ot:log(Span2, <<"actor saved">>),
                                     nkserver_ot:finish(Span3),
@@ -625,14 +629,19 @@ do_save(Reason, #actor_st{is_dirty=true}=State) ->
                                     ?ACTOR_LOG(warning, "save error: ~p", [Error], State3)
                             end
                         end),
-                    {ok, State3#actor_st{is_dirty = false}};
+                    % We must guess that the save is successful
+                    #{metadata:=NewMeta} = Actor2,
+                    {ok, State3#actor_st{saved_metadata = NewMeta, is_dirty = false}};
                 _ ->
-                    case ?CALL_SRV(SrvId, SaveFun, [SrvId, SaveActor, SaveOpts]) of
+                    case ?CALL_SRV(SrvId, SaveFun, [SrvId, SaveActor, SaveOpts3]) of
                         {ok, DbMeta} ->
                             Span3 = nkserver_ot:log(Span2, <<"actor saved">>),
                             nkserver_ot:finish(Span3),
                             ?ACTOR_DEBUG("save (~p) (~p)", [Reason, DbMeta], State3),
-                            State4 = State3#actor_st{is_dirty=false},
+                            % The metadata of the updated actor is the new old metadata
+                            % to check differences
+                            #{metadata:=NewMeta} = Actor2,
+                            State4 = State3#actor_st{saved_metadata=NewMeta, is_dirty=false},
                             {ok, do_event(saved, State4)};
                         {error, not_implemented} ->
                             Span3 = nkserver_ot:log(Span2, <<"save not implemented">>),
@@ -652,7 +661,7 @@ do_save(Reason, #actor_st{is_dirty=true}=State) ->
             {ok, State3}
     end;
 
-do_save(_Reason, State) ->
+do_save(_Reason, _SaveOpts, State) ->
     {ok, State}.
 
 
@@ -971,26 +980,6 @@ do_sync_op(get_alarms, _From, #actor_st{actor=Actor}=State) ->
 do_sync_op({set_alarm, Class, Body}, _From, State) ->
     reply(ok, do_add_alarm(Class, Body, State));
 
-do_sync_op({add_label, Key, Value}, _From, State) ->
-    Key2 = nklib_util:to_binary(Key),
-    Value2 = nklib_util:to_binary(Value),
-    #actor_st{srv=SrvId, actor_id=ActorId, actor=Actor} = State,
-    case ?CALL_SRV(SrvId, actor_db_add_label, [SrvId, Key, Value, ActorId, #{}]) of
-        {ok, _} ->
-            #{metadata:=Meta} = Actor,
-            case maps:get(labels, Meta, #{}) of
-                #{Key2:=Value2} ->
-                    reply(ok, State);
-                Labels ->
-                    Labels2 = Labels#{Key2 => Value2},
-                    Actor2 = Actor#{metadata:=Meta#{labels=>Labels2}},
-                    State2 = State#actor_st{actor=Actor2, is_dirty=true},
-                    reply(ok, do_check_save(State2))
-            end;
-        {error, Error} ->
-            reply({error, Error}, State)
-    end;
-
 do_sync_op({apply, Mod, Fun, Args}, From, State) ->
     apply(Mod, Fun, Args++[From, do_refresh_ttl(State)]);
 
@@ -1079,6 +1068,7 @@ do_pre_init(ActorId, Actor, Config, SrvId) ->
             end
     end,
     State = #actor_st{
+        srv = SrvId,    % Provisional
         module = maps:get(module, Config),
         config = Config,
         actor_id = ActorId2,
@@ -1086,6 +1076,7 @@ do_pre_init(ActorId, Actor, Config, SrvId) ->
         run_state = undefined,
         links = nklib_links:new(),
         is_dirty = false,
+        saved_metadata = Meta,
         is_enabled = maps:get(is_enabled, Meta, true),
         save_timer = undefined,
         activated_time = nklib_date:epoch(usecs),
@@ -1361,7 +1352,7 @@ do_ttl_timeout(#actor_st{unload_policy={ttl, _}, links=Links, status_timer=undef
             do_stop(ttl_timeout, State)
     end;
 
-do_ttl_timeout(#actor_st{unload_policy={ttl, _}}=State) ->
+do_ttl_timeout(State) ->
     noreply(do_refresh_ttl(State)).
 
 
@@ -1453,6 +1444,9 @@ link_down(Mon, #actor_st{links=Links}=State) ->
         not_found ->
             not_found
     end.
+
+
+
 
 
 

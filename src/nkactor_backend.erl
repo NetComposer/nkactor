@@ -197,13 +197,13 @@ read(Id, Opts) ->
 
 create(Actor, #{activate:=false}=Opts) ->
     Syntax = #{'__mandatory' => [group, resource, namespace]},
-    SpanLocalId = maps:get(use_span_local_id, Opts, undefined),
-    nkserver_ot:log(SpanLocalId, starting_actor_create_without_activation),
+    SpanId = maps:get(span, Opts, undefined),
+    nkserver_ot:log(SpanId, starting_actor_create_without_activation),
     case nkactor_util:pre_create(Actor, Syntax, Opts) of
         {ok, SrvId, Actor2} ->
             % Non recommended for non-relational databases, if name is not
             % randomly generated
-            Config = maps:with([parent_span], Opts),
+            Config = maps:with([parent_span, check_unique], Opts),
             case ?CALL_SRV(SrvId, actor_db_create, [SrvId, Actor2, Config]) of
                 {ok, Meta} ->
                     % Use the alternative method for sending the event
@@ -224,15 +224,15 @@ create(Actor, #{activate:=false}=Opts) ->
 
 create(Actor, Opts) ->
     Syntax = #{'__mandatory' => [group, resource, namespace]},
-    SpanLocalId = maps:get(use_span_local_id, Opts, undefined),
-    nkserver_ot:log(SpanLocalId, <<"starting actor create">>),
+    SpanId = maps:get(span, Opts, undefined),
+    nkserver_ot:log(SpanId, <<"starting actor create">>),
     case nkactor_util:pre_create(Actor, Syntax, Opts) of
         {ok, SrvId, Actor2} ->
             % If we use the activate option, the object is first
             % registered with leader, so you cannot have two with same
             % name even on non-relational databases
             % The process will send the 'create' event in-server
-            Config = maps:with([ttl, parent_span], Opts),
+            Config = maps:with([ttl, parent_span, check_unique], Opts),
             case ?CALL_SRV(SrvId, actor_create, [Actor2, Config]) of
                 {ok, #actor_id{pid=Pid}=ActorId} when is_pid(Pid) ->
                     case Opts of

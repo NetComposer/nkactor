@@ -27,7 +27,7 @@
 -export([get_actor/1, get_actor/2, get_path/1, is_enabled/1, enable/2, stop/1, stop/2]).
 -export([search_groups/2, search_resources/3]).
 -export([search_linked_to/3, search_fts/3, search_actors/2, search_delete/2, delete_old/5]).
--export([search_active/3]).
+-export([search_active/2, search_expired/2]).
 -export([base_namespace/1]).
 -export([sync_op/2, sync_op/3, async_op/2]).
 -export_type([actor/0, id/0, uid/0, namespace/0, resource/0, path/0, name/0,
@@ -63,7 +63,7 @@
             creation_time => binary(),
             update_time => binary(),
             is_active => boolean(),         % must be loaded at all times
-            expires_time => binary(),
+            expires_time => binary(),       % Use <<>> to disable
             labels => #{binary() => binary() | integer() | boolean()},
             fts => #{binary() => [binary()]},
             links => #{uid() => binary},
@@ -137,11 +137,12 @@
         heartbeat_time => integer(),                    %% msecs for heartbeat
         save_time => integer(),                         %% msecs for auto-save
         activable => boolean(),                         %% Default true
+        auto_activate => boolean(),                     %% Periodic automatic activation
+        async_save => boolean(),
+        create_check_unique => boolean(),               %% Default true
         dont_update_on_disabled => boolean(),           %% Default false
         dont_delete_on_disabled => boolean(),           %% Default false
         immutable_fields => [nkactor_search:field_name()],  %% Don't allow updates
-        auto_activate => boolean(),                     %% Periodic automatic activation
-        async_save => boolean(),
         filter_fields => [nkactor_search:field_name()],
         sort_fields => [nkactor_search:field_name()],
         field_type => #{
@@ -193,14 +194,18 @@
     }.
 
 
+% 'span' would be used during the create process by this same process
+% 'parent_span' would be used as parent to newly created spans
+% (for example the actor process creates several spans)
 -type create_opts() ::
     #{
         activate => boolean(),
         get_actor => boolean(),
         ttl => pos_integer(),
         request => request(),
-        use_span_local_id => nkserver_ot:id(),
-        parent_span => nkserver_ot:parent(),
+        span => nkserver_ot:span_id(),      % Use this span during create process
+        parent_span => nkserver_ot:id() | nkserver_ot:parent(),     % Pass to create actor
+        check_unique => boolean(),          % Default true
         forced_uid => binary()              % Use it only for non-persistent actors!
     }.
 
@@ -504,12 +509,20 @@ delete_old(SrvId, Group, Res, Date, Opts) ->
 
 
 %% @doc
--spec search_active(nkactor:id(), binary(), map()) ->
-    {ok, [uid()], #{last_date=>binary(), size=>integer()}}.
+-spec search_active(nkactor:id(), #{last_cursor=>binary, size=>integer()}) ->
+    {ok, [uid()], #{last_cursor=>binary()}}.
 
-search_active(SrvId, StartDate, Opts) ->
-    Params = Opts#{from_date=>StartDate, size=>100},
-    nkactor_backend:search(SrvId, actors_active, Params).
+search_active(SrvId, Opts) ->
+    nkactor_backend:search(SrvId, actors_active, Opts).
+
+
+%% @doc
+%% Use last_cursor as initial date to expire
+-spec search_expired(nkactor:id(), #{last_cursor=>binary, size=>integer()}) ->
+    {ok, [uid()], #{last_cursor=>binary()}}.
+
+search_expired(SrvId, Opts) ->
+    nkactor_backend:search(SrvId, actors_expired, Opts).
 
 
 %% @doc

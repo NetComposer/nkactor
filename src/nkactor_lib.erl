@@ -65,11 +65,10 @@ actor_to_actor_id(Actor) ->
         namespace := Namespace
     } = Actor,
     #actor_id{
-        group = Group,
-        resource = Resource,
-        name = Name,
-        %vsn = maps:get(vsn, Actor, undefined),
-        namespace = Namespace,
+        group = to_bin(Group),
+        resource = to_bin(Resource),
+        name = to_bin(Name),
+        namespace = to_bin(Namespace),
         uid = maps:get(uid, Actor, undefined),
         pid = undefined
     }.

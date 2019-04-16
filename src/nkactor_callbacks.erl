@@ -34,7 +34,7 @@
          actor_srv_handle_call/3, actor_srv_handle_cast/2, actor_srv_handle_info/2]).
 -export([actor_do_active/1, actor_do_expired/1]).
 -export([actor_db_find/3, actor_db_read/3, actor_db_create/3, actor_db_update/3,
-         actor_db_add_label/5, actor_db_delete/3, actor_db_search/3, actor_db_aggregate/3]).
+         actor_db_delete/3, actor_db_search/3, actor_db_aggregate/3]).
 -export([srv_master_init/2, srv_master_handle_call/4, srv_master_handle_cast/3,
          srv_master_handle_info/3, srv_master_timed_check/3]).
 
@@ -448,6 +448,15 @@ actor_do_expired(_Actor) ->
 
 -type db_opts() :: map().
 
+-type db_create_opts() ::
+    #{
+        parent_span => term(),
+        check_unique => boolean()       % Default true
+    }.
+
+
+
+
 %% @doc Must find an actor on disk by UID (if available) or name, and return
 %% full actor_id data
 -spec actor_db_find(nkserver:id(), actor_id(), db_opts()) ->
@@ -466,7 +475,7 @@ actor_db_read(_SrvId, _ActorId, _Opts) ->
 
 
 %% @doc Must create a new actor on disk. Should fail if already present
--spec actor_db_create(nkserver:id(), actor(), map()) ->
+-spec actor_db_create(nkserver:id(), actor(), db_create_opts()) ->
     {ok, Meta::map()} | {error, uniqueness_violation|term()}.
 
 actor_db_create(_SrvId, _Actor, _Opts) ->
@@ -478,14 +487,6 @@ actor_db_create(_SrvId, _Actor, _Opts) ->
     {ok, Meta::map()} | {error, term()}.
 
 actor_db_update(_SrvId, _Actor, _Opts) ->
-    {error, persistence_not_defined}.
-
-
-%% @doc
--spec actor_db_add_label(nkserver:id(), Key::binary(), Value::binary(), actor_id(), map()) ->
-    {ok, Meta::map()} | {error, term()}.
-
-actor_db_add_label(_SrvId, _Key, _Value, _ActorId, _Opts) ->
     {error, persistence_not_defined}.
 
 
