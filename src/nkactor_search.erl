@@ -63,6 +63,13 @@
     }.
 
 % '.' used to separate levels in JSON
+% Special fields would include:
+% - label:'label'
+% - linked:'uid'
+% - fts:'
+
+
+
 -type field_name() :: binary().
 
 
@@ -79,9 +86,12 @@
     #{
         field => field_name(),
         type => field_type(),
-        op => eq | ne | lt | lte | gt | gte | values | exists | prefix,
+        op => filter_op(),
         value => value() | [value()]
     }.
+
+-type filter_op() ::
+    eq | ne | lt | lte | gt | gte | values | exists | prefix.
 
 
 -type value() :: string() | binary() | integer() | boolean().

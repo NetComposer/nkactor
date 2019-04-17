@@ -255,9 +255,15 @@ get_detailed_counters(Namespace) ->
 
 
 %% @doc
+-spec register_index(#actor_id{}, term()) ->
+    ok | {error, index_already_defined|actor_not_registered|term()}.
+
 register_index(#actor_id{namespace=Namespace}=ActorId, Index) ->
     call(Namespace, {nkactor_register_index, ActorId, Index}).
 
+
+-spec find_index(nkserver:namespace(), term()) ->
+    {true, #actor_id{}} | false | {error, term()}.
 
 find_index(Namespace, Index) ->
     call(Namespace, {nkactor_find_index, Index}).
@@ -651,7 +657,7 @@ do_register_index(ActorId, Index, #state{register_ets=Ets}=State) ->
                     ],
                     ets:insert(Ets, Objs),
                     ok;
-                true ->
+                {true, _} ->
                     {error, index_already_defined}
             end;
         false ->

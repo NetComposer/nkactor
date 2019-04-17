@@ -26,7 +26,7 @@
 -export([find/1, activate/1, update/3, create/2, delete/1, delete/2]).
 -export([get_actor/1, get_actor/2, get_path/1, is_enabled/1, enable/2, stop/1, stop/2]).
 -export([search_groups/2, search_resources/3]).
--export([search_linked_to/3, search_fts/3, search_actors/2, search_delete/2, delete_old/5]).
+-export([search_label/3, search_linked_to/3, search_fts/3, search_actors/2, search_delete/2, delete_old/5]).
 -export([search_active/2, search_expired/2]).
 -export([base_namespace/1]).
 -export([sync_op/2, sync_op/3, async_op/2]).
@@ -405,13 +405,53 @@ search_resources(SrvId, Group, Opts) ->
     end.
 
 
+
+-type search_labels_opts() ::
+    #{
+        op => nkactor_search:filter_op(),
+        value => nkactor_search:value(),
+        from => pos_integer(),
+        size => pos_integer(),
+        order => asc | desc
+    } | search_opts().
+
+
+%% @doc Gets objects having a label
+-spec search_label(nkservice:id(), binary(), search_labels_opts()) ->
+    {ok, [{Value::binary(), #actor_id{}}]} | {error, term()}.
+
+search_label(SrvId, Label, Opts) ->
+    Label2 = nklib_util:to_binary(Label),
+    Filter = #{
+        'and' => [
+            #{
+                field => <<"label:", Label2/binary>>,
+                op => maps:get(op, Opts, exists),
+                value => maps:get(value, Opts, <<>>)
+            }
+        ]
+    },
+    Sort = case Opts of
+        #{order := Order} ->
+            [#{field => <<"label:", Label2/binary>>, order=>Order}];
+        _ ->
+            []
+    end,
+    Opts2 = Opts#{filter=>Filter, sort=>Sort},
+    case nkactor_backend:search(SrvId, actors_search_labels, Opts2) of
+        {ok, Result, _Meta} ->
+            {ok, Result};
+        {error, Error} ->
+            {error, Error}
+    end.
+
+
 -type search_linked_opts() ::
     #{
         link_type => binary(),
         from => pos_integer(),
         size => pos_integer()
     } | search_opts().
-
 
 %% @doc Gets objects pointing to another
 -spec search_linked_to(nkservice:id(), id(),search_linked_opts()) ->
