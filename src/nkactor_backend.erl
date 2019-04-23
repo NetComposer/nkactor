@@ -24,7 +24,7 @@
 
 -export([find/1, activate/2, read/2]).
 -export([create/2, update/3, delete/2, delete_multi/2]).
--export([search/3, aggregation/3]).
+-export([search/3, aggregation/3, truncate/2]).
 %% -export([check_service/4]).
 %%-export_type([search_obj/0, search_objs_opts/0]).
 
@@ -365,50 +365,12 @@ aggregation(SrvId, AggType, Opts) ->
     ?CALL_SRV(SrvId, actor_db_aggregate, [SrvId, AggType, Opts]).
 
 
+%% @doc
+-spec truncate(nkactor:id(), map()) ->
+    ok | {error, term()}.
 
-%%%% @doc Check if the info on database for service is up to date, and update it
-%%%% - If the current info belongs to us (or it is missing), the time is updated
-%%%% - If the info does not belong to us, but it is old (more than serviceDbMaxHeartbeatTime)
-%%%%   it is overwritten
-%%%% - If it is recent, and error alternate_service is returned
-%%
-%%-spec check_service(nkactor:id(), nkactor:id(), binary(), integer()) ->
-%%    ok | {alternate_service, service_info()} | {error, term()}.
-%%
-%%check_service(SrvId, ActorSrvId, Cluster, MaxTime) ->
-%%    Node = node(),
-%%    Pid = self(),
-%%    case ?CALL_SRV(SrvId, actor_db_get_service, [SrvId, ActorSrvId]) of
-%%        {ok, #{cluster:=Cluster, node:=Node, pid:=Pid}, _} ->
-%%            check_service_update(SrvId, ActorSrvId, Cluster);
-%%        {ok, #{updated:=Updated}=Info, _} ->
-%%            Now = nklib_date:epoch(secs),
-%%            case Now - Updated < (MaxTime div 1000) of
-%%                true ->
-%%                    % It is recent, we consider it valid
-%%                    {alternate_service, Info};
-%%                false ->
-%%                    % Too old, we overwrite it
-%%                    check_service_update(SrvId, ActorSrvId, Cluster)
-%%            end;
-%%        {error, service_not_found} ->
-%%            check_service_update(SrvId, ActorSrvId, Cluster);
-%%        {error, Error} ->
-%%            {error, Error}
-%%    end.
-%%
-%%
-%%%% @private
-%%check_service_update(SrvId, ActorSrvId, Cluster) ->
-%%    case ?CALL_SRV(SrvId, actor_db_update_service, [SrvId, ActorSrvId, Cluster]) of
-%%        {ok, _} ->
-%%            ok;
-%%        {error, Error} ->
-%%            {error, Error}
-%%    end.
-
-
-
+truncate(SrvId, Opts) ->
+    ?CALL_SRV(SrvId, actor_db_truncate, [SrvId, Opts]).
 
 
 %% ===================================================================

@@ -27,7 +27,7 @@
 -export([get_actor/1, get_actor/2, get_path/1, is_enabled/1, enable/2, stop/1, stop/2]).
 -export([search_groups/2, search_resources/3]).
 -export([search_label/3, search_linked_to/3, search_fts/3, search_actors/2, search_delete/2, delete_old/5]).
--export([search_active/2, search_expired/2]).
+-export([search_active/2, search_expired/2, truncate/1]).
 -export([base_namespace/1]).
 -export([sync_op/2, sync_op/3, async_op/2]).
 -export_type([actor/0, id/0, uid/0, namespace/0, resource/0, path/0, name/0,
@@ -568,6 +568,11 @@ search_expired(SrvId, Opts) ->
 %% @doc
 base_namespace(SrvId) ->
     nkserver:get_cached_config(SrvId, nkactor, base_namespace).
+
+
+%% @doc DELETES ALL ACTORS!
+truncate(SrvId) ->
+    nkactor_backend:truncate(SrvId, #{}).
 
 
 %% @doc
