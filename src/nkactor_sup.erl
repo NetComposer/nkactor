@@ -37,7 +37,6 @@ start_link() ->
 
 %% @private
 init(ChildSpecs) ->
-    nkactor_trace:create(),
     {ok, ChildSpecs}.
 
 

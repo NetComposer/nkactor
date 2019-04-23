@@ -32,8 +32,6 @@
 -export([get_actor_config/1, get_actor_config/2, get_actor_config/3]).
 -export([pre_create/3, pre_update/4]).
 -export([activate_actors/1]).
--export([trace_create/0, trace_on/0, trace_off/0, trace_insert/2,
-         trace_insert_traces/1, trace_dump/0]).
 
 -type group() :: nkactor:group().
 -type resource() :: nkactor:resource().
@@ -222,48 +220,6 @@ activate_actors(SrvId, StartCursor) ->
 %% @private
 to_bin(Term) when is_binary(Term) -> Term;
 to_bin(Term) -> nklib_util:to_binary(Term).
-
-
-
-
-
-
-trace_create() ->
-    catch ets:new(nkactor_trace, [ordered_set, public, named_table]).
-
-
-trace_on() ->
-    put(nkserver_trace, true).
-
-
-trace_off() ->
-    put(nkserver_trace, false).
-
-
-trace_insert(Id, Meta) ->
-    case get(nkserver_trace) of
-        true ->
-            Time = nklib_date:epoch(usecs),
-            Pos = erlang:unique_integer([positive, monotonic]),
-            ets:insert(nkactor_trace, {{Time, Pos}, Id, Meta});
-        _ ->
-            ok
-    end.
-
-
-trace_insert_traces(Traces) ->
-    case get(nkserver_trace) of
-        true ->
-            ets:insert(nkactor_trace, Traces);
-        false ->
-            ok
-    end.
-
-
-trace_dump() ->
-    Traces = ets:tab2list(nkactor_trace),
-    ets:delete_all_objects(nkactor_trace),
-    Traces.
 
 
 

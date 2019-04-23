@@ -7,8 +7,8 @@
 
 -define(PACKAGE_CLASS_NKACTOR, <<"Actor">>).
 
--define(TRACE(Id), nkactor_trace:insert(Id, #{})).
--define(TRACE(Id, Meta), nkactor_trace:insert(Id, Meta)).
+-define(TRACE(Id), nklib_trace:insert(Id, #{})).
+-define(TRACE(Id, Meta), nklib_trace:insert(Id, Meta)).
 
 
 %% ===================================================================
