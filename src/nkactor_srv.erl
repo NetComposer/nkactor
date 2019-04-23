@@ -85,7 +85,7 @@
 -define(HEARTBEAT_TIME, 5000).
 -define(DEFAULT_SAVE_TIME, 5000).
 -define(MAX_STATUS_TIME, 24*60*60*1000).
-
+-define(INIT_SPAN, actor_init).
 
 %% ===================================================================
 %% Types
@@ -690,14 +690,14 @@ init({Op, ActorId, Actor, Config, SrvId, Caller, Ref}) ->
         <<"actor.namespace">> => Namespace,
         <<"actor.uid">> => UID
     },
-    nkserver_ot:tags(actor_init, Tags),
+    nkserver_ot:tags(?INIT_SPAN, Tags),
     case do_check_expired(State) of
         {false, State2} ->
-            nkserver_ot:log(actor_init, <<"registering with namespace">>),
+            nkserver_ot:log(?INIT_SPAN, <<"registering with namespace">>),
             case do_register(1, State2) of
                 {ok, #actor_st{srv=SrvId}=State3} ->
-                    nkserver_ot:update_srv_id(actor_init, SrvId),
-                    nkserver_ot:log(actor_init, <<"registered with namespace">>),
+                    nkserver_ot:update_srv_id(?INIT_SPAN, SrvId),
+                    nkserver_ot:log(?INIT_SPAN, <<"registered with namespace">>),
                     case handle(actor_srv_init, [Op], State3) of
                         {ok, State4} ->
                             case do_post_init(Op, State4) of
@@ -1058,13 +1058,16 @@ do_pre_init(ActorId, Actor, Config, SrvId) ->
     true = is_binary(UID) andalso UID /= <<>>,
     ParentSpan = case maps:find(parent_span, Config) of
         {ok, ConfigParentSpan} ->
+            nkserver_ot:new(?INIT_SPAN, SrvId, <<"Actor::init">>, ConfigParentSpan),
             ConfigParentSpan;
         error ->
             case Meta of
                 #{trace_id:=TraceId} ->
+                    nkserver_ot:new(?INIT_SPAN, SrvId, <<"Actor::init">>, {TraceId, undefined}),
                     {TraceId, undefined};
                 _ ->
-                    undefined
+                    Span = nkserver_ot:new(?INIT_SPAN, SrvId, <<"Actor::init">>),
+                    nkserver_ot:get_parent(Span)
             end
     end,
     State = #actor_st{
@@ -1089,12 +1092,6 @@ do_pre_init(ActorId, Actor, Config, SrvId) ->
         false ->
             ok
     end,
-    case ParentSpan of
-        undefined ->
-            ok;
-        _ ->
-            nkserver_ot:new(actor_init, SrvId, <<"Actor::init">>, ParentSpan)
-    end,
     set_unload_policy(State).
 
 
@@ -1105,8 +1102,8 @@ do_post_init(Op, State) ->
     ?ACTOR_DEBUG("started (~p)", [self()], State),
     State2 = case Op of
         create ->
-            nkserver_ot:log(actor_init, <<"creating actor in db">>),
-            InitParent = nkserver_ot:get_parent(actor_init),
+            nkserver_ot:log(?INIT_SPAN, <<"creating actor in db">>),
+            InitParent = nkserver_ot:get_parent(?INIT_SPAN),
             State#actor_st{is_dirty=true, parent_span=InitParent};
         _ ->
             State
@@ -1115,10 +1112,10 @@ do_post_init(Op, State) ->
         {ok, State3} ->
             State4 = case Op of
                 create ->
-                    nkserver_ot:log(actor_init, <<"actor created on db">>),
+                    nkserver_ot:log(?INIT_SPAN, <<"actor created on db">>),
                     do_event(created, State3);
                 _ ->
-                    nkserver_ot:log(actor_init, <<"actor activated">>),
+                    nkserver_ot:log(?INIT_SPAN, <<"actor activated">>),
                     do_event(activated, State3)
             end,
             State5 = do_check_alarms(State4#actor_st{parent_span=Parent}),
@@ -1129,22 +1126,22 @@ do_post_init(Op, State) ->
                     ok
             end,
             nklib_counters:async([?MODULE]),
-            nkserver_ot:log(actor_init, <<"actor init completed">>),
-            nkserver_ot:finish(actor_init),
+            nkserver_ot:log(?INIT_SPAN, <<"actor init completed">>),
+            nkserver_ot:finish(?INIT_SPAN),
             {ok, do_refresh_ttl(State5)};
         {{error, Error}, _State3} ->
-            nkserver_ot:log(actor_init, {"actor save error: ~p", [Error]}),
-            nkserver_ot:tag_error(actor_init, Error),
-            nkserver_ot:finish(actor_init),
+            nkserver_ot:log(?INIT_SPAN, {"actor save error: ~p", [Error]}),
+            nkserver_ot:tag_error(?INIT_SPAN, Error),
+            nkserver_ot:finish(?INIT_SPAN),
             {error, Error}
     end.
 
 
 %% @private
 do_init_stop(Error, Caller, Ref) ->
-    nkserver_ot:log(actor_init, {"Actor init error: ~p", [Error]}),
-    nkserver_ot:tag_error(actor_init, Error),
-    nkserver_ot:finish(actor_init),
+    nkserver_ot:log(?INIT_SPAN, {"Actor init error: ~p", [Error]}),
+    nkserver_ot:tag_error(?INIT_SPAN, Error),
+    nkserver_ot:finish(?INIT_SPAN),
     Caller ! {do_start_ignore, Ref, {error, Error}},
     ignore.
 

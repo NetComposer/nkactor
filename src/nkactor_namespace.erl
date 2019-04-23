@@ -503,7 +503,7 @@ handle_call({nkactor_find_actor, #actor_id{}=ActorId}, _From, #state{id=SrvId}=S
     reply(Reply, State);
 
 handle_call(nkactor_get_registered_actors, _From, #state{register_ets=Ets}=State) ->
-    List = [ActorId || {{name, _Group, _Res, _Name}, ActorId} <- ets:tab2list(Ets)],
+    List = [ActorId || {{name, _Group, _Res, _Name}, ActorId, _Idx} <- ets:tab2list(Ets)],
     reply(List, State);
 
 handle_call(nkactor_get_counters, _From, #state{counters=Counters}=State) ->
