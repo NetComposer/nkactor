@@ -88,7 +88,7 @@ get_actor_config(SrvId, Group, Resource) ->
 
 %% @doc Used to get modified configuration for the service responsible
 get_actor_config(SrvId, Module) when is_atom(SrvId), is_atom(Module) ->
-    case catch nklib_util:do_config_get({nkactor_config, SrvId, Module}) of
+    case catch nklib_util:do_config_get({nkactor_config, SrvId, Module}, undefined) of
         undefined ->
             Config1 = nkactor_actor:config(Module),
             Config2 = ?CALL_SRV(SrvId, actor_config, [Config1]),
