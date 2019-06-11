@@ -26,7 +26,7 @@
 
 -include("nkactor.hrl").
 -include("nkactor_debug.hrl").
-
+-include_lib("nkserver/include/nkserver.hrl").
 
 %% ===================================================================
 %% Callbacks definitions
@@ -38,8 +38,8 @@
 -type subresource() :: nkactor:subresource().
 -type actor_id() :: nkactor:actor_id().
 -type config() :: nkactor:config().
--type request() :: nkactor:request().
--type response() :: nkactor:response().
+-type request() :: nkactor_request:request().
+-type response() :: nkactor_request:response().
 -type verb() :: nkactor:verb().
 %-type vsn() :: nkactor:vsn().
 -type actor_st() :: nkactor:actor_st().
@@ -233,48 +233,47 @@ config(Module) ->
 
 %% @doc Used to parse an actor, trying the module callback first
 %% Actor should come with vsn
--spec parse(module(), actor(), any()) ->
+-spec parse(nkserver:id(), actor(), nkactor_request:request()) ->
     {ok, actor()} | {error, nkserver:msg()}.
 
-parse(undefined, _Actor, _Request) ->
-    error(module_undefined);
-
-parse(Module, Actor, Request) ->
-    SynSpec = case erlang:function_exported(Module, parse, 2) of
-        true ->
-            apply(Module, parse, [Actor, Request]);
-        false ->
-            {syntax, #{}}
-    end,
-    case SynSpec of
-        {ok, Actor3} ->
-            {ok, Actor3};
-        {syntax, Syntax2} when is_map(Syntax2) ->
-            nkactor_lib:parse_actor_data(Actor, Syntax2);
-        {syntax, Syntax2, Actor3} when is_map(Syntax2) ->
-            nkactor_lib:parse_actor_data(Actor3, Syntax2);
+parse(SrvId, Actor, Request) ->
+    #{group:=Group, resource:=Res} = Actor,
+    Args = [parse, Group, Res, [Actor, Request]],
+    % See nkactor_callback in nkactor_plugin
+    case ?CALL_SRV(SrvId, nkactor_callback, Args) of
+        continue ->
+            {syntax, #{}};
+        {ok, Actor2} ->
+            {ok, Actor2};
+        {syntax, Syntax} when is_map(Syntax) ->
+            nkactor_lib:parse_actor_data(Actor, Syntax);
+        {syntax, Syntax, Actor2} when is_map(Syntax) ->
+            nkactor_lib:parse_actor_data(Actor2, Syntax);
         {error, Error} ->
             {error, Error}
     end.
 
 
 
-%% @doc Used to call the 'request' callback on an actor's module
--spec request(module(), #actor_id{}, any()) ->
+%% @doc Used to call the 'request' callback on an actor's module, in case
+%% it has implemented it (to support specific requests)
+-spec request(nkserver:id(), #actor_id{}, any()) ->
     response() | continue.
 
-request(undefined, _ActorId, _Request) ->
-    error(module_undefined);
-
-request(Module, ActorId, Request) ->
+request(SrvId, ActorId, Request) ->
     Verb = maps:get(verb, Request),
     SubRes = maps:get(subresource, Request, []),
-    case erlang:function_exported(Module, request, 4) of
-        true ->
-            Module:request(Verb, SubRes, ActorId, Request);
-        false ->
-            continue
+    #actor_id{group = Group, resource = Res} = ActorId,
+    Args = [request, Group, Res, [Verb, SubRes, ActorId, Request]],
+    % See nkactor_callback in nkactor_plugin
+    case ?CALL_SRV(SrvId, nkactor_callback, Args) of
+        continue ->
+            continue;
+        Other ->
+            Other
     end.
+
+
 
 
 %% ===================================================================

@@ -28,6 +28,8 @@
 %% - every instance at each node (not only leaders) checks periodically
 %%   that the 'base' namespace for the service
 %%   is started, and belong to this service
+%% - it also performs auto-activation of actors
+
 
 -module(nkactor_master).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
@@ -66,7 +68,7 @@ register_namespace(SrvId, Namespace) when is_binary(Namespace) ->
     nkserver_master:call_leader(SrvId, {nkactor_register_namespace, Namespace, self()}).
 
 
-%% @doc Gets a namespace
+%% @doc Gets a namespace processor
 -spec get_namespace(id(), nkactor:namespace()) ->
     {ok, pid()} | {error, nkserver:msg()}.
 

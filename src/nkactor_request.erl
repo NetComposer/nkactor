@@ -35,6 +35,39 @@
 %% Types
 %% ===================================================================
 
+-type request() ::
+    #{
+        verb => verb(),
+        group => group(),
+        namespace => namespace(),
+        resource => resource(),
+        name => nkservice_actor:name(),
+        uid => uid(),
+        subresource => subresource(),
+        params => #{binary() => binary()},
+        body => term(),
+        auth => map(),
+        span_id => nkserver_ot:span_id(),
+        callback => module(),           % Implementing nkdomain_api behaviour
+        external_url => binary(),       % External url to use in callbacks
+        meta => map(),
+        %% added by system:
+        start_time => nklib_date:epoch(usecs),
+        srv => nkserver:id()            % Service managing namespace
+    }.
+
+
+-type response() ::
+    ok | {ok, map()} | {ok, map(), request()} |
+    created | {created, map()} | {created, map(), request()} |
+    {status, nkserver:msg()} |
+    {status, nkserver:msg(), map()} |  %% See status/2
+    {status, nkserver:msg(), map(), request()} |
+    {error, nkserver:msg()} |
+    {error, nkserver:msg(), request()}.
+
+
+
 
 
 %% ===================================================================
@@ -43,59 +76,93 @@
 
 
 %% @doc Launches an Request
--spec request(nkactor:request()) ->
-    nkactor:response().
+%% - If span_id is defined, it will add tags and will be used as father span
+%% - If not, parent_span will be used as father (if defined)
+%% - Calls actor_authorize/1 for authorization of the request
+%% - Finds service managing namespace, and adds srv and start_time
+
+
+-spec request(request()) ->
+    {ok|created, map(), request()} |
+    {raw, {CT::binary(), Body::binary()}, request()} |
+    {status|error, nkserver:msg(), request()}.
 
 request(Req) ->
+    SpanId = maps:get(span_id, Req, undefined),
     % Gets group and vsn from request or body
     case nkactor_syntax:parse_request(Req) of
-        {ok, #{namespace:=Namespace}=Req2} ->
+        {ok, #{group:=Group, resource:=Res, namespace:=Namespace}=Req2} ->
+            nkserver_ot:log(SpanId, <<"find service">>),
             case nkactor_namespace:get_namespace(Namespace) of
                 {ok, SrvId, _NamespacePid} ->
+                    nkserver_ot:log(SpanId, <<"request parsed">>),
+                    ParentSpan = case SpanId of
+                        undefined ->
+                            maps:get(parent_span, Req, undefined);
+                        _ ->
+                            SpanId
+                    end,
+                    nkserver_ot:new(?REQ_SPAN, SrvId, <<"Actor::Request">>, ParentSpan),
+                    nkserver_ot:tags(?REQ_SPAN, #{
+                        <<"req.group">> => Group,
+                        <<"req.resource">> => Res,
+                        <<"req.namespace">> => Namespace,
+                        <<"req.name">> => maps:get(name, Req2, <<>>),
+                        <<"req.srv">> => SrvId
+                    }),
+                    % Add uid later
                     set_debug(SrvId),
                     ?REQ_DEBUG("incoming request for ~s", [Namespace]),
                     Req3 = Req2#{
                         srv => SrvId,
-                        start_time => nklib_date:epoch(usecs),
-                        trace => []
+                        start_time => nklib_date:epoch(usecs)
                     },
-                    Req4 = add_trace(req_start, none, Req3),
-                    case ?CALL_SRV(SrvId, actor_authorize, [Req4]) of
+                    nkserver_ot:log(?REQ_SPAN, <<"calling authorize">>),
+                    case ?CALL_SRV(SrvId, actor_authorize, [Req3]) of
                         {true, Req5} ->
+                            nkserver_ot:log(?REQ_SPAN, <<"request is authorized">>),
                             ?REQ_DEBUG("request is authorized", []),
                             Reply = do_request(Req5),
                             case reply(Reply, Req5) of
-                                {raw, {CT, Bin}} ->
-                                    ?REQ_DEBUG("reply raw: ~p", [CT], Req5),
-                                    {raw, {CT, Bin}, add_trace(api_reply, raw, Req5)};
+                                {raw, {CT, Bin}, Req6} ->
+                                    nkserver_ot:log(?REQ_SPAN, "reply raw: ~s", [CT]),
+                                    ?REQ_DEBUG("reply raw: ~p", [CT], Req6),
+                                    nkserver_ot:finish(?REQ_SPAN),
+                                    {raw, {CT, Bin}, Req6};
                                 {Status, Data, Req6} ->
+                                    nkserver_ot:log(?REQ_SPAN, "reply: ~p", [Reply]),
                                     ?REQ_DEBUG("reply: ~p", [Reply], Req6),
-                                    {Status, Data, add_trace(api_reply, {Status, Data}, Req6)}
+                                    nkserver_ot:finish(?REQ_SPAN),
+                                    {Status, Data, Req6}
                             end;
                         false ->
-                            {error, unauthorized, add_trace(api_reply, {error, unauthorized}, Req4)}
+                            nkserver_ot:log(?REQ_SPAN, <<"request is NOT authorized">>),
+                            nkserver_ot:finish(?REQ_SPAN),
+                            {error, unauthorized, Req3}
                     end;
                 {error, Error} ->
+                    nkserver_ot:log(SpanId, <<"error processing request: ~p">>, [Error]),
                     {error, Error, Req}
             end;
         {error, Error} ->
+            nkserver_ot:log(SpanId, <<"error parsing request: ~p">>, [Error]),
             {error, Error, Req}
     end.
 
 
 %% @doc
-reply(Term, Req) ->
-    case Term of
-        Op when Op==ok; Op==created; Op==error; Op==status ->
-            {Op, #{}, Req};
-        {Op, Reply} when Op==ok; Op==created; Op==error; Op==status ->
-            {Op, Reply, Req};
-        {raw, {CT, Body}} ->
-            {raw, {CT, Body}};
-        Other ->
-            ?REQ_LOG(error, "Invalid API response: ~p", [Other]),
-            {error, internal_error, Req}
-    end.
+reply(Op, Req) when Op==ok; Op==created; Op==error; Op==status ->
+    {Op, #{}, Req};
+
+reply({Op, Reply}, Req) when Op==ok; Op==created; Op==error; Op==status ->
+    {Op, Reply, Req};
+
+reply({raw, {CT, Bin}}, Req) ->
+    {raw, {CT, Bin}, Req};
+
+reply(Other, Req) ->
+    ?REQ_LOG(error, "Invalid API response: ~p", [Other]),
+    {error, internal_error, Req}.
 
 
 %% @private
@@ -108,9 +175,11 @@ do_request(Req) ->
             verb := Verb,
             group := Group,
             resource := Res,
-            namespace := Namespace
+            namespace := Namespace,
+            srv := SrvId
         } = Req,
         ?REQ_DEBUG("incoming '~p' ~s (~p)", [Verb, Res, Req]),
+        nkserver_ot:log(?REQ_SPAN, <<"starting request processing">>),
         ActorId = #actor_id{
             group = Group,
             resource = Res,
@@ -123,7 +192,7 @@ do_request(Req) ->
             {error, ConfigError} ->
                 throw({error, ConfigError})
         end,
-        #{verbs:=Verbs, module:=Module} = Config,
+        #{verbs:=Verbs} = Config,
         case lists:member(Verb, Verbs) of
             true ->
                 ok;
@@ -138,22 +207,29 @@ do_request(Req) ->
                 throw({error, ParseError})
         end,
         SubRes = maps:get(subresource, Req2, []),
-        case nkactor_actor:request(Module, ActorId, Req2) of
+        nkserver_ot:log(?REQ_SPAN, <<"calling specific processing">>),
+        case nkactor_actor:request(SrvId, ActorId, Req2) of
             continue when SubRes == [] ->
+                nkserver_ot:log(?REQ_SPAN, <<"processing default">>),
                 ?REQ_DEBUG("processing default", [], Req2),
                 default_request(Verb, ActorId, Config, Req2);
             continue ->
-                ?REQ_LOG(warning, "Invalid resource.0 (~p)", [{Verb, SubRes, ActorId}]),
+                nkserver_ot:log(?REQ_SPAN, <<"invalid subresource: ~s">>, [SubRes]),
+                ?REQ_LOG(warning, "Invalid subresource (~p)", [{Verb, SubRes, ActorId}]),
                 {error, resource_invalid};
             {continue, #{resource:=Res2}=Req3} when Res2 /= Res ->
+                nkserver_ot:log(?REQ_SPAN, <<"request updated. New resource: ~p">>, [Res2]),
                 ?REQ_DEBUG("updated request", [], Req3),
                 do_request(Req2);
             Other ->
+                nkserver_ot:log(?REQ_SPAN, <<"processed specific">>),
                 ?REQ_DEBUG("specific processing", [], Req2),
                 Other
         end
     catch
         throw:Throw ->
+            nkserver_ot:log(?REQ_SPAN, <<"processing error: ~p">>, [Throw]),
+            ?REQ_LOG(notice, "processing error: ~p", [Thow], Req2),
             Throw
     end.
 
@@ -196,8 +272,9 @@ default_request(Verb, ActorId, _Config, _Req) ->
 %% @doc Standard get
 get(ActorId, Config, Req) ->
     Opts = set_opts(Config, Req),
+    nkserver_ot:log(?REQ_SPAN, "processing standard read (~p)", [Opts]),
     ?REQ_DEBUG("processing read ~p (~p)", [ActorId, Opts]),
-    case nkactor:get_actor(ActorId, Opts) of
+    case nkactor:get_actor(ActorId, Opts#{request=>Req, span_id=>?REQ_SPAN}) of
         {ok, Actor} ->
             {ok, Actor};
         {error, ReadError} ->
@@ -222,7 +299,7 @@ create(ActorId, Config, Req) ->
         {ok, Actor1} ->
             case check_actor(Actor1, ActorId) of
                 {ok, Actor2} ->
-                    Opts = set_opts(Config, Req),
+                    Opts = set_opts(Config, Req#{request=>Req}),
                     ?REQ_DEBUG("creating actor ~p ~p", [Actor2, Opts]),
                     case nkactor:create(Actor2, Opts#{get_actor=>true}) of
                         {ok, Actor3} ->
@@ -245,7 +322,7 @@ update(ActorId, Config, Req) ->
         {ok, Actor1} ->
             case check_actor(Actor1, ActorId) of
                 {ok, Actor2} ->
-                    Opts = set_opts(Config, Req),
+                    Opts = set_opts(Config, Req#{request=>Req}),
                     ?REQ_DEBUG("Updating actor ~p", [Actor2]),
                     case nkactor:update(ActorId, Actor2, Opts) of
                         {ok, Actor3} ->
@@ -325,23 +402,6 @@ set_debug(SrvId) when is_atom(SrvId) ->
 
 
 %% @private
-add_trace(Op, Meta, Req) ->
-    #{trace:=Trace} = Req,
-    Now = nklib_date:epoch(usecs),
-    Trace2 = case Trace of
-        [] ->
-            [{undefined, Op, Meta, Now}];
-        [{undefined, LastOp, LastMeta, LastTime}|Rest] ->
-            [
-                {undefined, Op, Meta, Now},
-                {LastTime-Now, LastOp, LastMeta, LastTime} |
-                Rest
-            ]
-    end,
-    Req#{trace:=Trace2}.
-
-
-%% @private
 parse_body(#{body:=Body}) when is_map(Body) ->
     nkactor_syntax:parse_actor(Body, #{});
 
@@ -394,8 +454,8 @@ check_actor(Actor, ActorId) ->
 
 
 %% @private
-set_opts(#{activable:=false}, Req) ->
-    Req#{activate=>false, request=>Req};
+set_opts(#{activable:=false}, _Req) ->
+    #{activate=>false};
 
 set_opts(_Config, Req) ->
     Params = maps:get(params, Req, #{}),
@@ -412,7 +472,7 @@ set_opts(_Config, Req) ->
         error ->
             Opts1
     end,
-    Opts2#{request => Req}.
+    Opts2.
 
 
 %% @private

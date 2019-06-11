@@ -214,7 +214,7 @@ do_start(Op, Actor, StartConfig) ->
 
 %% @doc
 -spec sync_op(nkactor:id()|pid(), sync_op()) ->
-    term() | {error, timeout|process_not_found|object_not_found|term()}.
+    term() | {error, timeout|process_not_found|actor_not_found|term()}.
 
 sync_op(Id, Op) ->
     sync_op(Id, Op, ?DEF_SYNC_CALL).
@@ -222,7 +222,7 @@ sync_op(Id, Op) ->
 
 %% @doc
 -spec sync_op(nkactor:id()|pid(), sync_op(), timeout()) ->
-    term() | {error, timeout|process_not_found|object_not_found|term()}.
+    term() | {error, timeout|process_not_found|actor_not_found|term()}.
 
 sync_op(Pid, Op, Timeout) when is_pid(Pid) ->
     case nklib_util:call2(Pid, {nkactor_sync_op, Op}, Timeout) of
@@ -266,7 +266,7 @@ sync_op(Id, Op, Timeout, Tries) ->
 
 %% @doc
 -spec async_op(nkactor:id()|pid(), async_op()) ->
-    ok | {error, process_not_found|object_not_found|term()}.
+    ok | {error, process_not_found|actor_not_found|term()}.
 
 async_op(Pid, Op) when is_pid(Pid) ->
     gen_server:cast(Pid, {nkactor_async_op, Op});
@@ -298,7 +298,7 @@ live_async_op(Id, Op) ->
 
 %% @doc
 -spec delayed_async_op(nkactor:id()|pid(), async_op(), pos_integer()) ->
-    ok | {error, process_not_found|object_not_found|term()}.
+    ok | {error, process_not_found|actor_not_found|term()}.
 
 delayed_async_op(Pid, Op, Time) when is_pid(Pid), Time > 0 ->
     _ = spawn(
@@ -322,7 +322,7 @@ delayed_async_op(Id, Op, Time) ->
 %% If the object is activated, it will be unloaded without saving
 %% before launching the deletion
 raw_stop(Id, Reason) ->
-    case nkactor_backend:find(Id) of
+    case nkactor_backend:find(Id, #{}) of
         {ok, _SrvId, #actor_id{pid=Pid}, _} when is_pid(Pid) ->
             async_op(Pid, {raw_stop, Reason});
         {error, Error} ->
@@ -958,7 +958,7 @@ do_sync_op({link, Link, Opts}, _From, State) ->
 do_sync_op({update, Actor, Opts}, _From, #actor_st{  is_enabled=IsEnabled, config=Config}=State) ->
     case {IsEnabled, Config} of
         {false, #{dont_update_on_disabled:=true}} ->
-            reply({error, object_is_disabled}, State);
+            reply({error, actor_is_disabled}, State);
         _ ->
             case do_update(Actor, Opts, State) of
                 {ok, State2} ->

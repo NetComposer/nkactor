@@ -50,23 +50,62 @@
 %% ===================================================================
 
 
+msg(actor_already_registered)       -> "Actor already registered";
+msg({actor_invalid, A})                 -> {"Invalid actor '~s'", [A]};
 msg(actor_deleted)                  -> "Actor has been deleted";
 msg({actors_deleted, N})            -> {"Actors (~p) have been deleted", [N]};
-msg(actor_already_registered)       -> "Actor already registered";
-msg(actor_not_found)                -> "Actor not found";
-msg({actor_invalid, _})             -> "Actor is invalid";
-msg(actor_id_invalid)               -> "Actor ID is invalid";
 msg(actor_expired)	                -> "Actor has expired";
-msg(actor_updated)                  -> "Actor updated";
 msg(actor_has_linked_actors)	    -> "Actor has linked actors";
+msg(actor_id_invalid)               -> "Actor ID is invalid";
 msg(actor_is_not_activable)	        -> "Actor is not activable";
+msg(actor_not_found)                -> "Actor not found";
+msg(actor_updated)                  -> "Actor updated";
+msg({api_group_unknown, G})             -> {"Unknown API Group '~s'", [G]};
+msg({api_incompatible, A})              -> {"Incompatible API '~s'", [A]};
+msg({api_unknown, A})                   -> {"Unknown API '~s'", [A]};
 msg(auth_invalid) 	                -> "Auth token is not valid";
+msg({body_too_large, Max})              -> {"Body too large (max is ~p)", [Max]};
 msg(cannot_consume)                 -> "Actor cannot be consumed";
+msg({could_not_load_parent, Id})        -> {"Object could not load parent '~s'", [Id]};
+msg({could_not_load_domain, Id})        -> {"Object could not load domain '~s'", [Id]};
+msg({could_not_load_user, Id})          -> {"Object could not load user '~s'", [Id]};
+msg(content_type_invalid)               -> "ContentType is invalid";
+msg(db_not_defined)                     -> "Object database not defined";
 msg(delete_too_deep)                -> "DELETE is too deep";
-msg({namespace_not_found, N})       -> {"Namespace '~s' not found", [N]};
+msg(download_server_error)              -> "Download server error";
+msg(element_action_unknown)             -> "Unknown element action";
+msg(group_unknown)                      -> "Invalid Group";
+msg(invalid_content_type)               -> "Invalid Content-Type";
+msg({invalid_name, N})                  -> {"Invalid name '~s'", [N]};
+msg(invalid_session)                   -> "Invalid session";
+msg(kind_unknown)                       -> "Invalid kind";
+msg({kind_unknown, K})                  -> {"Invalid kind '~s'", [K]};
+msg(multiple_ids)                       -> "Multiple matching ids";
+msg(missing_auth_header)                -> "Missing authentication header";
+msg({module_failed, Module})            -> {"Module '~s' failed", [Module]};
 msg({namespace_invalid, N})         -> {"Namespace '~s' is invalid", [N]};
-msg(_)   		                    -> continue.
-
+msg({namespace_not_found, N})       -> {"Namespace '~s' not found", [N]};
+msg(operation_invalid) 	                -> "Invalid operation";
+msg(operation_token_invalid) 	        -> "Operation token is invalid";
+msg({parameter_invalid, Txt})      	    -> {"Invalid parameter '~s'", [Txt]};
+msg({parameter_missing, Txt})      	    -> {"Missing parameter '~s'", [Txt]};
+msg(parse_error)   		                -> "Object parse error";
+msg(password_valid)                     -> "Password is valid";
+msg(password_invalid) 	                -> "Password is not valid";
+msg(request_body_invalid)               -> "The request body is invalid";
+msg(resource_invalid)                   -> "Invalid resource";
+msg({resource_invalid, R})              -> {"Invalid resource '~s'", [R]};
+msg({resource_invalid, G, R})           -> {"Invalid resource '~s' (~s)", [R, G]};
+msg(service_down)                       -> "Service is down";
+msg(session_already_present)            -> "Session is already present";
+msg(session_not_found)                  -> "Session not found";
+msg(session_is_disabled)                -> "Session is disabled";
+msg(uid_not_found)      		        -> "Unknown UID";
+msg(upload_server_error)                -> "Upload server error";
+msg(url_unknown)      		            -> "Unknown url";
+msg(verb_not_allowed)                   -> "Verb is not allowed";
+msg(watch_stop)                         -> "Watch stopped";
+msg(_) -> continue.
 
 
 
@@ -80,10 +119,9 @@ msg(_)   		                    -> continue.
 
 
 
-%% @doc Called when activating an actor to get it's config and module
-%% Config is the added config used when calling the function
--spec actor_authorize(nkactor:request()) ->
-    {true, nkactor:request()} | false | continue().
+%% @doc Called when processing a request to be authorized or not
+-spec actor_authorize(nkactor_request:request()) ->
+    {true, nkactor_request:request()} | false | continue().
 
 actor_authorize(_Req) ->
     false.
@@ -447,12 +485,18 @@ actor_do_expired(_Actor) ->
 %% Persistence callbacks
 %% ===================================================================
 
--type db_opts() :: map().
-
--type db_create_opts() ::
+-type db_opts() ::
     #{
-        parent_span => term(),
-        check_unique => boolean()       % Default true
+        % If span_id is defined, logs will be added, and it will be used
+        % as parent for new spans
+        span_id => nkserver_ot:span_id(),
+        % If span_id is not defined, parent parent_span is, it will be used
+        % as parent for new spans
+        parent_span => nkserver_ot:parent(),
+        % Default true
+        check_unique => boolean(),
+        % For deletions, default false
+        cascade => boolean()
     }.
 
 
@@ -468,7 +512,8 @@ actor_db_find(_SrvId, _ActorId, _Opts) ->
 
 
 %% @doc Must find and read a full actor on disk by UID (if available) or name
--spec actor_db_read(nkserver:id(), actor_id(), map()) ->
+%% It MUST call nkactor_syntax:parse_actor/1 to get a valid actor
+-spec actor_db_read(nkserver:id(), actor_id(), db_opts()) ->
     {ok, nkactor:actor(), Meta::map()} | {error, actor_not_found|term()}.
 
 actor_db_read(_SrvId, _ActorId, _Opts) ->
@@ -476,7 +521,7 @@ actor_db_read(_SrvId, _ActorId, _Opts) ->
 
 
 %% @doc Must create a new actor on disk. Should fail if already present
--spec actor_db_create(nkserver:id(), actor(), db_create_opts()) ->
+-spec actor_db_create(nkserver:id(), actor(), db_opts()) ->
     {ok, Meta::map()} | {error, uniqueness_violation|term()}.
 
 actor_db_create(_SrvId, _Actor, _Opts) ->
@@ -484,7 +529,7 @@ actor_db_create(_SrvId, _Actor, _Opts) ->
 
 
 %% @doc Must update a new actor on disk.
--spec actor_db_update(nkserver:id(), actor(), map()) ->
+-spec actor_db_update(nkserver:id(), actor(), db_opts()) ->
     {ok, Meta::map()} | {error, term()}.
 
 actor_db_update(_SrvId, _Actor, _Opts) ->
@@ -492,7 +537,7 @@ actor_db_update(_SrvId, _Actor, _Opts) ->
 
 
 %% @doc
--spec actor_db_delete(nkserver:id(), [nkactor:uid()], map()) ->
+-spec actor_db_delete(nkserver:id(), [nkactor:uid()], db_opts()) ->
     {ok, [actor_id()], Meta::map()} | {error, term()}.
 
 
@@ -501,7 +546,7 @@ actor_db_delete(_SrvId, _UIDs, _Opts) ->
 
 
 %% @doc
--spec actor_db_search(nkserver:id(), nkactor_backend:search_type(), map()) ->
+-spec actor_db_search(nkserver:id(), nkactor_backend:search_type(), db_opts()) ->
     term().
 
 actor_db_search(_SrvId, _Type, _Opts) ->
@@ -509,7 +554,7 @@ actor_db_search(_SrvId, _Type, _Opts) ->
 
 
 %% @doc
--spec actor_db_aggregate(nkserver:id(), nkactor_backend:agg_type(), map()) ->
+-spec actor_db_aggregate(nkserver:id(), nkactor_backend:agg_type(), db_opts()) ->
     term().
 
 actor_db_aggregate(_SrvId, _Type, _Opts) ->
@@ -517,7 +562,7 @@ actor_db_aggregate(_SrvId, _Type, _Opts) ->
 
 
 %% @doc
--spec actor_db_truncate(nkserver:id(), map()) ->
+-spec actor_db_truncate(nkserver:id(), db_opts()) ->
     term().
 
 actor_db_truncate(_SrvId, _Opts) ->

@@ -65,9 +65,6 @@ start(_Type, _Args) ->
         {ok, _} ->
             {ok, Pid} = nkactor_sup:start_link(),
             {ok, Vsn} = application:get_key(nkactor, vsn),
-            nkserver_util:register_package_class(?PACKAGE_CLASS_NKACTOR, nkactor,
-                                                 #{use_master => true}),
-
             lager:info("NkACTOR v~s has started.", [Vsn]),
             {ok, Pid};
         {error, Error} ->

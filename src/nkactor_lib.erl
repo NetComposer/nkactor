@@ -257,7 +257,7 @@ parse_actor_data(#{data:=Data}=Actor, Syntax) ->
 
 
 %% @private
--spec parse_request_params(nkactor:request(), nklib_syntax:syntax()) ->
+-spec parse_request_params(nkactor_request:request(), nklib_syntax:syntax()) ->
     {ok, map()} | nklib_syntax:error().
 
 parse_request_params(Req, Syntax) ->

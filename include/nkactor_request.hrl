@@ -3,6 +3,9 @@
 
 -include("nkactor.hrl").
 
+
+-define(REQ_SPAN, nkactor_request).
+
 -define(REQ_DEBUG(Txt, Args),
     case erlang:get(nkactor_debug) of
         true -> ?REQ_LOG(debug, Txt, Args);

@@ -34,7 +34,10 @@
 
 %% @doc
 parse_actor(Actor) ->
-    parse_actor(Actor, #{}).
+    Syntax = #{
+        '__mandatory' => [group, resource, name, namespace, uid]
+    },
+    parse_actor(Actor, Syntax).
 
 
 %% @doc
@@ -97,6 +100,10 @@ meta_syntax() ->
 
 
 %% @doc
+%% - If request has group, resource, namespace and name, ok
+%% - If not, but have uid, find it and fill all data
+%% - If not, but has group, resource and namespace, ok (no name)
+%% - If not, find id from body and merge
 parse_request(Req) ->
     Syntax = request_syntax(),
     case nklib_syntax:parse(Req, Syntax) of
@@ -173,6 +180,8 @@ request_syntax() ->
         params => map,
         body => [map, binary],
         auth => map,
+        span_id => any,
+
         external_url => binary,
         srv => atom,
         callback => atom,
@@ -214,7 +223,7 @@ parse_subresource(Term) ->
 parse_params(Verb, #{params:=Params}=Req) ->
     Syntax = params_syntax(Verb),
     case nklib_syntax:parse(Params, Syntax, #{allow_unknown=>true}) of
-        {ok, Parsed, _} ->
+        {ok, Parsed, []} ->
             {ok, Req#{params:=Parsed}};
         {error, {syntax_error, Field}} ->
             {error, {parameter_invalid, Field}};

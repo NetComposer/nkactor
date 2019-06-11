@@ -22,7 +22,7 @@
 -module(nkactor_backend).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([find/1, activate/2, read/2]).
+-export([find/2, activate/2, read/2]).
 -export([create/2, update/3, delete/2, delete_multi/2]).
 -export([search/3, aggregation/3, truncate/2]).
 %% -export([check_service/4]).
@@ -66,52 +66,64 @@
 %% - If not, and we have a persistence module, it will be loaded from disk
 %% - We then check if it is activated, once we have the namespace
 %%
--spec find(nkactor:id()) ->
+%% If 'span_id' is defined, logs will be added and it will be used as parent
+
+-spec find(nkactor:id(), map()) ->
     {ok, nkserver:id(), #actor_id{}, Meta::map()} | {error, actor_not_found|term()}.
 
-find(Id) ->
+find(Id, Opts) ->
+    SpanId = maps:get(span_id, Opts, undefined),
+    nkserver_ot:log(SpanId, <<"calling find actor">>),
     ActorId = nkactor_lib:id_to_actor_id(Id),
     case nkactor_namespace:find_actor(ActorId) of
         {true, SrvId, #actor_id{pid=Pid}=ActorId2} when is_pid(Pid) ->
             % It is registered or cached
+            nkserver_ot:log(SpanId, <<"actor is registered or cached">>),
             {ok, SrvId, ActorId2, #{}};
         {false, SrvId} ->
-            do_find([SrvId], ActorId);
+            do_find([SrvId], ActorId, SpanId);
         false ->
             SrvIds = nkactor_util:get_services(),
-            do_find(SrvIds, ActorId)
+            do_find(SrvIds, ActorId, SpanId)
     end.
 
 
 %% @private
-do_find([], _ActorId) ->
+do_find([], _ActorId, _SpanId) ->
     {error, actor_not_found};
 
-do_find([SrvId|Rest], ActorId) ->
-    case ?CALL_SRV(SrvId, actor_db_find, [SrvId, ActorId, #{}]) of
+do_find([SrvId|Rest], ActorId, SpanId) ->
+    nkserver_ot:log(SpanId, <<"calling actor_db_find for ~s">>, [SrvId]),
+    case ?CALL_SRV(SrvId, actor_db_find, [SrvId, ActorId, #{span_id=>SpanId}]) of
         {ok, #actor_id{} = ActorId2, Meta} ->
             % If its was an UID, or a partial path, we must check now that
             % it could be registered, now that we have full data
             case nkactor_namespace:find_actor(ActorId2) of
                 {true, _SrvId, #actor_id{pid = Pid} = ActorId3} when is_pid(Pid) ->
+                    nkserver_ot:log(SpanId, <<"actor found in disk and memory: ~p">>, [ActorId3]),
                     {ok, SrvId, ActorId3, Meta};
                 _ ->
+                    nkserver_ot:log(SpanId, <<"actor found in disk: ~p">>, [ActorId2]),
                     {ok, SrvId, ActorId2, Meta}
             end;
         {error, actor_not_found} ->
-            do_find(Rest, ActorId);
+            nkserver_ot:log(SpanId, <<"actor not found in disk">>),
+            do_find(Rest, ActorId, SpanId);
         {error, Error} ->
+            nkserver_ot:log(SpanId, <<"error calling actor_db_find: ~p">>, [Error]),
             {error, Error}
     end.
 
 
 
 %% @doc Finds an actors's pid or loads it from storage and activates it
--spec activate(nkactor:id(), #{ttl=>integer()}) ->
+%% See description for get_opts()
+
+-spec activate(nkactor:id(), nkactor:get_opts()) ->
     {ok, nkserver:id(), #actor_id{}, Meta::map()} | {error, actor_not_found|term()}.
 
 activate(Id, Opts) ->
-    case find(Id) of
+    case find(Id, Opts) of
         {ok, SrvId, #actor_id{pid=Pid}=ActorId, Meta} when is_pid(Pid) ->
             {ok, SrvId, ActorId, Meta};
         {ok, SrvId, ActorId, _Meta} ->
@@ -146,6 +158,9 @@ activate(Id, Opts) ->
 %% It will first try to activate it (unless indicated)
 %% If consume is set, it will destroy the object on read
 %% SrvId is used for calling the DB
+%%
+%% See description for get_opts()
+
 -spec read(nkactor:id(), nkactor:get_opts()) ->
     {ok, nkactor:actor(),  Meta::map()} | {error, actor_not_found|term()}.
 
@@ -154,7 +169,7 @@ read(Id, #{activate:=false}=Opts) ->
         true ->
             {error, cannot_consume};
         false ->
-            case find(Id) of
+            case find(Id, Opts) of
                 {ok, SrvId, ActorId, _} ->
                     case do_read(SrvId, ActorId, Opts) of
                         {ok, Actor, DbMeta} ->
@@ -292,7 +307,7 @@ update(Id, Actor, Opts) ->
     {ok, [#actor_id{}], map()} | {error, actor_not_found|term()}.
 
 delete(Id, Opts) ->
-    case find(Id) of
+    case find(Id, Opts) of
         {ok, SrvId, #actor_id{uid=UID, pid=Pid}=ActorId2, _Meta} ->
             case maps:get(cascade, Opts, false) of
                 false when is_pid(Pid) ->
@@ -378,33 +393,21 @@ truncate(SrvId, Opts) ->
 %% ===================================================================
 
 do_read(SrvId, ActorId, Opts) ->
-    case ?CALL_SRV(SrvId, actor_db_read, [SrvId, ActorId, #{}]) of
+    case ?CALL_SRV(SrvId, actor_db_read, [SrvId, ActorId, Opts]) of
         {ok, Actor, Meta} ->
-            #actor_id{group = Group, resource = Res} = ActorId,
-            case nkactor_util:get_module(SrvId, Group, Res) of
-                undefined ->
-                    ?LLOG(warning, "actor resource unknown ~s:~s", [Group, Res]),
-                    {error, actor_invalid};
-                Module ->
-                    Syntax = #{
-                        '__mandatory' => [group, resource, name, namespace, uid]
-                    },
-                    case nkactor_syntax:parse_actor(Actor, Syntax) of
-                        {ok, Actor2} ->
-                            Req1 = maps:get(request, Opts, #{}),
-                            Req2 = Req1#{
-                                verb => get,
-                                srv => SrvId
-                            },
-                            case nkactor_actor:parse(Module, Actor2, Req2) of
-                                {ok, Actor3} ->
-                                    {ok, Actor3, Meta};
-                                {error, Error} ->
-                                    {error, Error}
-                            end;
-                        {error, Error} ->
-                            {error, Error}
-                    end
+            % Actor's generic syntax is already parsed
+            % Now we check specific syntax
+            % If request option is provided, it is used for parsing
+            Req1 = maps:get(request, Opts, #{}),
+            Req2 = Req1#{
+                verb => get,
+                srv => SrvId
+            },
+            case nkactor_actor:parse(SrvId, Actor, Req2) of
+                {ok, Actor2} ->
+                    {ok, Actor2, Meta};
+                {error, Error} ->
+                    {error, Error}
             end;
         {error, Error} ->
             {error, Error}

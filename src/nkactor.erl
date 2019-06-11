@@ -123,8 +123,6 @@
 -type alarm_body() :: map().
 
 
-
-
 -type config() ::
     #{
         module => module(),                             %% Used for callbacks
@@ -157,40 +155,30 @@
 -type verb() :: atom().
 
 
--type request() ::
-    #{
-        verb => verb(),
-        group => group(),
-        namespace => namespace(),
-        resource => resource(),
-        name => nkservice_actor:name(),
-        subresource => subresource(),
-        params => #{binary() => binary()},
-        body => term(),
-        auth => map(),
-        callback => module(),           % Implementing nkdomain_api behaviour
-        external_url => binary(),       % External url to use in callbacks
-        srv => nkservice:id(),          % Service that received the request
-        start_time => nklib_date:epoch(usecs),
-        trace => [{Time::integer(), Op::term(), Meta::map()}],
-        meta => map()
-    }.
-
--type response() ::
-    ok | {ok, map()} | {ok, map(), request()} |
-    created | {created, map()} | {created, map(), request()} |
-    {status, nkserver:msg()} |
-    {status, nkserver:msg(), map()} |  %% See status/2
-    {status, nkserver:msg(), map(), request()} |
-    {error, nkserver:msg()} |
-    {error, nkserver:msg(), request()}.
+%% @doc Actor Request
+%% There are several ways to identify the actor:
+%% a) Provide namespace, group, resource and name
+%% b) Provide an uid
+%% c) Provide a body as map that completes namespace, group, resource and name
+%%
+%% Name can be omitted in a) and c) if referring to a set of actors
+%%
+%% Auth field can be used in actor_authorize callback
 
 
 -type get_opts() ::
     #{
         activate => boolean(),
         consume => boolean(),
-        ttl => pos_integer()
+        ttl => pos_integer(),
+        % Request will be used if provided for parsing the actor
+        request => nkactor_request:request(),
+        % If span_id is defined, logs will be added, and it will be used
+        % as parent for new spans
+        span_id => nkserver_ot:span_id(),
+        % If span_id is not defined, parent parent_span is, it will be used
+        % as parent for new spans
+        parent_span => nkserver_ot:parent()
     }.
 
 
@@ -202,11 +190,11 @@
         activate => boolean(),
         get_actor => boolean(),
         ttl => pos_integer(),
-        request => request(),
-        span => nkserver_ot:span_id(),      % Use this span during create process
-        parent_span => nkserver_ot:id() | nkserver_ot:parent(),     % Pass to create actor
         check_unique => boolean(),          % Default true
-        forced_uid => binary()              % Use it only for non-persistent actors!
+        forced_uid => binary(),             % Use it only for non-persistent actors!
+        request => request(),               % See get_opts()
+        span => nkserver_ot:span_id(),      % See get_opts()
+        parent_span => nkserver_ot:parent() % See get_opts()
     }.
 
 
@@ -227,6 +215,10 @@
 %% Public
 %% ===================================================================
 
+%% These functions provide the direct Erlang API to work with actors
+%% Also, an RPC mechanism is provided in nkactor_request, that offers many of
+%% the same capabilities, along with a more elaborated security, tracing scheme
+
 
 %% @doc Finds and actor from UUID or Path, in memory or disk
 %% It also checks if it is currently activated, returning the pid
@@ -234,7 +226,7 @@
     {ok, actor_id()} | {error, actor_not_found|term()}.
 
 find(Id) ->
-    case nkactor_backend:find(Id) of
+    case nkactor_backend:find(Id, #{}) of
         {ok, _SrvId, ActorId, _Meta} ->
             {ok, ActorId};
         {error, Error} ->

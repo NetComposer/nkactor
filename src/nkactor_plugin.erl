@@ -22,7 +22,7 @@
 -module(nkactor_plugin).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -export([add_modules/3]).
--export([plugin_deps/0, plugin_config/3, plugin_cache/3]).
+-export([plugin_deps/0, plugin_meta/0, plugin_config/3, plugin_cache/3]).
 -export_type([continue/0]).
 
 -type continue() :: continue | {continue, list()}.
@@ -49,18 +49,24 @@ add_modules(Config, Group, Modules) ->
 
 %% @doc 
 plugin_deps() ->
-	[].
+	[nkserver_ot].
+
+
+%% @doc
+%% This service uses the 'master' facilities from nkserver,
+%% starting a master server (see nkactor_master)
+plugin_meta() ->
+    #{use_master => true}.
 
 
 %% @doc 
 plugin_config(SrvId, Config, #{class:=?PACKAGE_CLASS_NKACTOR}) ->
     Syntax = #{
-        modules => #{'__key_binary' => {list, module}},
         base_namespace => binary,
-        persistence_module => module,
         auto_activate_actors_period => {integer, 5000, none},
         debug => boolean,
         debug_actors => {list, binary},
+        modules => #{'__key_binary' => {list, module}}, % To be populated by plugins
         '__defaults' => #{
             base_namespace => nklib_util:to_binary(SrvId)
         }
@@ -80,7 +86,6 @@ plugin_config(SrvId, Config, #{class:=?PACKAGE_CLASS_NKACTOR}) ->
 plugin_cache(SrvId, Config, _Service) ->
     Cache1 = #{
         base_namespace => maps:get(base_namespace, Config),
-        persistence_module => maps:get(persistence_module, Config, undefined),
         debug => maps:get(debug, Config, false),
         debug_actors => maps:get(debug_actors, Config, [])
     },

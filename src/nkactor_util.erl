@@ -59,7 +59,7 @@ get_module(SrvId, Group, Key) ->
     nkserver:get_cached_config(SrvId, nkactor, {module, to_bin(Group), Key}).
 
 
-%% @doc Used to get modified configuration for the service responsible
+%% @doc Used to get run-time configuration for the service responsible
 get_actor_config(ActorId) ->
     #actor_id{group=Group, resource=Resource, namespace=Namespace} = ActorId,
     case nkactor_namespace:get_namespace(Namespace) of
@@ -87,6 +87,7 @@ get_actor_config(SrvId, Group, Resource) ->
 
 
 %% @doc Used to get modified configuration for the service responsible
+%% Config is cached in memory after first use
 get_actor_config(SrvId, Module) when is_atom(SrvId), is_atom(Module) ->
     case catch nklib_util:do_config_get({nkactor_config, SrvId, Module}, undefined) of
         undefined ->
