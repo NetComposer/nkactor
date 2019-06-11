@@ -1066,8 +1066,8 @@ do_pre_init(ActorId, Actor, Config, SrvId) ->
                     nkserver_ot:new(?INIT_SPAN, SrvId, <<"Actor::init">>, {TraceId, undefined}),
                     {TraceId, undefined};
                 _ ->
-                    Span = nkserver_ot:new(?INIT_SPAN, SrvId, <<"Actor::init">>),
-                    nkserver_ot:get_parent(Span)
+                    SpanId = nkserver_ot:new(?INIT_SPAN, SrvId, <<"Actor::init">>),
+                    nkserver_ot:get_parent(SpanId)
             end
     end,
     State = #actor_st{
