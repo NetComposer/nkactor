@@ -34,6 +34,8 @@
 
 -define(LLOG(Type, Txt, Args), lager:Type("NkACTOR DB "++Txt, Args)).
 
+-define(BACKEND_SPAN, nkactor_backend).
+
 %% ===================================================================
 %% Types
 %% ===================================================================
@@ -66,13 +68,13 @@
 %% - If not, and we have a persistence module, it will be loaded from disk
 %% - We then check if it is activated, once we have the namespace
 %%
-%% If 'span_id' is defined, logs will be added and it will be used as parent
+%% If 'ot_span_id' is defined, logs will be added and it will be used as parent
 
 -spec find(nkactor:id(), map()) ->
     {ok, nkserver:id(), #actor_id{}, Meta::map()} | {error, actor_not_found|term()}.
 
 find(Id, Opts) ->
-    SpanId = maps:get(span_id, Opts, undefined),
+    SpanId = maps:get(ot_span_id, Opts, undefined),
     nkserver_ot:log(SpanId, <<"calling find actor">>),
     ActorId = nkactor_lib:id_to_actor_id(Id),
     case nkactor_namespace:find_actor(ActorId) of
@@ -94,7 +96,7 @@ do_find([], _ActorId, _SpanId) ->
 
 do_find([SrvId|Rest], ActorId, SpanId) ->
     nkserver_ot:log(SpanId, <<"calling actor_db_find for ~s">>, [SrvId]),
-    case ?CALL_SRV(SrvId, actor_db_find, [SrvId, ActorId, #{span_id=>SpanId}]) of
+    case ?CALL_SRV(SrvId, actor_db_find, [SrvId, ActorId, #{ot_span_id=>SpanId}]) of
         {ok, #actor_id{} = ActorId2, Meta} ->
             % If its was an UID, or a partial path, we must check now that
             % it could be registered, now that we have full data
@@ -129,15 +131,10 @@ activate(Id, Opts) ->
         {ok, SrvId, ActorId, _Meta} ->
             case do_read(SrvId, ActorId, Opts) of
                 {ok, Actor, Meta2} ->
-                    Config = case Opts of
-                        #{ttl:=TTL} ->
-                            #{ttl => TTL};
-                        _ ->
-                            #{}
-                    end,
-                    case
-                        ?CALL_SRV(SrvId, actor_activate, [Actor, Config])
-                    of
+                    SpanId = maps:get(ot_span_id, Opts, undefined),
+                    nkserver_ot:log(SpanId, <<"calling actor_activate">>),
+                    Config = maps:with([ttl, ot_span_id], Opts),
+                    case ?CALL_SRV(SrvId, actor_activate, [Actor, Config]) of
                         {ok, ActorId3} ->
                             {ok, SrvId, ActorId3, Meta2};
                         {error, Error} ->
@@ -211,62 +208,122 @@ read(Id, Opts) ->
     {ok, nkserver:id(), nkactor:actor(),  Meta::map()} | {error, actor_not_found|term()}.
 
 create(Actor, #{activate:=false}=Opts) ->
+    SpanId = maps:get(ot_span_id, Opts, undefined),
+    nkserver_ot:new(?BACKEND_SPAN, <<"Actor::create">>, SpanId),
+    nkserver_ot:log(?BACKEND_SPAN, <<"starting actor create without activation">>),
     Syntax = #{'__mandatory' => [group, resource, namespace]},
-    SpanId = maps:get(span, Opts, undefined),
-    nkserver_ot:log(SpanId, starting_actor_create_without_activation),
     case nkactor_util:pre_create(Actor, Syntax, Opts) of
         {ok, SrvId, Actor2} ->
+            #{
+                namespace := Namespace,
+                group := Group,
+                resource := Res,
+                name := Name,
+                uid := UID
+            } = Actor2,
+            nkserver_ot:tags(?BACKEND_SPAN, #{
+                <<"namespace">> => Namespace,
+                <<"group">> => Group,
+                <<"resource">> => Res,
+                <<"name">> => Name,
+                <<"uid">> => UID
+            }),
             % Non recommended for non-relational databases, if name is not
             % randomly generated
-            Config = maps:with([parent_span, check_unique], Opts),
-            case ?CALL_SRV(SrvId, actor_db_create, [SrvId, Actor2, Config]) of
+            Config1 = maps:with([check_unique], Opts),
+            Config2 = Config1#{ot_span_id=>?BACKEND_SPAN},
+            nkserver_ot:log(?BACKEND_SPAN, <<"calling actor_db_create">>),
+            case ?CALL_SRV(SrvId, actor_db_create, [SrvId, Actor2, Config2]) of
                 {ok, Meta} ->
                     % Use the alternative method for sending the event
                     nkactor_lib:send_external_event(SrvId, created, Actor2),
                     case Opts of
                         #{get_actor:=true} ->
                             ActorId = nkactor_lib:actor_to_actor_id(Actor2),
+                            nkserver_ot:finish(?BACKEND_SPAN),
                             {ok, SrvId, ActorId, Meta};
                         _ ->
+                            nkserver_ot:finish(?BACKEND_SPAN),
                             {ok, SrvId, Actor2, Meta}
                     end;
                 {error, Error} ->
+                    nkserver_ot:log(?BACKEND_SPAN, <<"error creating actor: ~p">>, [Error]),
+                    nkserver_ot:tag_error(?BACKEND_SPAN, Error),
+                    nkserver_ot:finish(?BACKEND_SPAN),
                     {error, Error}
             end;
         {error, Error} ->
+            nkserver_ot:log(?BACKEND_SPAN, <<"error creating actor: ~p">>, [Error]),
+            nkserver_ot:tag_error(?BACKEND_SPAN, Error),
+            nkserver_ot:finish(?BACKEND_SPAN),
             {error, Error}
     end;
 
 create(Actor, Opts) ->
+    SpanId = maps:get(ot_span_id, Opts, undefined),
+    nkserver_ot:new(?BACKEND_SPAN, <<"Actor::create">>, SpanId),
+    nkserver_ot:log(?BACKEND_SPAN, <<"starting actor create">>),
     Syntax = #{'__mandatory' => [group, resource, namespace]},
-    SpanId = maps:get(span, Opts, undefined),
-    nkserver_ot:log(SpanId, <<"starting actor create">>),
-    case nkactor_util:pre_create(Actor, Syntax, Opts) of
+    case nkactor_util:pre_create(Actor, Syntax, Opts#{ot_span_id=>?BACKEND_SPAN}) of
         {ok, SrvId, Actor2} ->
+            #{
+                namespace := Namespace,
+                group := Group,
+                resource := Res,
+                name := Name,
+                uid := UID
+            } = Actor2,
+            nkserver_ot:tags(?BACKEND_SPAN, #{
+                <<"namespace">> => Namespace,
+                <<"group">> => Group,
+                <<"resource">> => Res,
+                <<"name">> => Name,
+                <<"uid">> => UID
+            }),
             % If we use the activate option, the object is first
             % registered with leader, so you cannot have two with same
             % name even on non-relational databases
             % The process will send the 'create' event in-server
-            Config = maps:with([ttl, parent_span, check_unique], Opts),
-            case ?CALL_SRV(SrvId, actor_create, [Actor2, Config]) of
-                {ok, #actor_id{pid=Pid}=ActorId} when is_pid(Pid) ->
+            Config1 = maps:with([ttl, check_unique], Opts),
+            Config2 = Config1#{ot_span_id=>?BACKEND_SPAN},
+            nkserver_ot:log(?BACKEND_SPAN, <<"calling actor_create">>),
+            case ?CALL_SRV(SrvId, actor_create, [Actor2, Config2]) of
+                {ok, #actor_id{pid=Pid, uid=UID}=ActorId} when is_pid(Pid) ->
+                    nkserver_ot:tags(?BACKEND_SPAN, #{
+                        <<"actor.uid">> => UID,
+                        <<"actor.pid">> => list_to_binary(pid_to_list(Pid))
+                    }),
                     case Opts of
                         #{get_actor:=true} ->
+                            nkserver_ot:log(?BACKEND_SPAN, <<"calling get_actor">>),
                             case nkactor_srv:sync_op(ActorId, get_actor, infinity) of
                                 {ok, Actor3} ->
+                                    nkserver_ot:finish(?BACKEND_SPAN),
                                     {ok, SrvId, Actor3, #{}};
                                 {error, Error} ->
+                                    nkserver_ot:log(?BACKEND_SPAN, <<"error getting actor: ~p">>, [Error]),
+                                    nkserver_ot:tag_error(?BACKEND_SPAN, Error),
+                                    nkserver_ot:finish(?BACKEND_SPAN),
                                     {error, Error}
                             end;
                         _ ->
+                            nkserver_ot:finish(?BACKEND_SPAN),
                             {ok, SrvId, ActorId, #{}}
                     end;
                 {error, actor_already_registered} ->
+                    nkserver_ot:log(?BACKEND_SPAN, <<"uniquess violation">>),
+                    nkserver_ot:finish(?BACKEND_SPAN),
                     {error, uniqueness_violation};
                 {error, Error} ->
+                    nkserver_ot:log(?BACKEND_SPAN, <<"error creating actor: ~p">>, [Error]),
+                    nkserver_ot:tag_error(?BACKEND_SPAN, Error),
+                    nkserver_ot:finish(?BACKEND_SPAN),
                     {error, Error}
             end;
         {error, Error} ->
+            nkserver_ot:log(?BACKEND_SPAN, <<"error creating actor: ~p">>, [Error]),
+            nkserver_ot:tag_error(?BACKEND_SPAN, Error),
+            nkserver_ot:finish(?BACKEND_SPAN),
             {error, Error}
     end.
 
@@ -393,6 +450,8 @@ truncate(SrvId, Opts) ->
 %% ===================================================================
 
 do_read(SrvId, ActorId, Opts) ->
+    SpanId = maps:get(ot_span_id, Opts, undefined),
+    nkserver_ot:log(SpanId, <<"calling actor_db_read">>),
     case ?CALL_SRV(SrvId, actor_db_read, [SrvId, ActorId, Opts]) of
         {ok, Actor, Meta} ->
             % Actor's generic syntax is already parsed
@@ -403,7 +462,8 @@ do_read(SrvId, ActorId, Opts) ->
                 verb => get,
                 srv => SrvId
             },
-            case nkactor_actor:parse(SrvId, Actor, Req2) of
+            Req3 = maps:merge(#{ot_span_id=>SpanId}, Req2),
+            case nkactor_actor:parse(SrvId, Actor, Req3) of
                 {ok, Actor2} ->
                     {ok, Actor2, Meta};
                 {error, Error} ->

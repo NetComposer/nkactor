@@ -171,20 +171,15 @@
         activate => boolean(),
         consume => boolean(),
         ttl => pos_integer(),
-        % Request will be used if provided for parsing the actor
+        % If provided, request will be used if provided for parsing the actor
+        % calling nkactor_actor:parse()
         request => nkactor_request:request(),
-        % If span_id is defined, logs will be added, and it will be used
-        % as parent for new spans
-        span_id => nkserver_ot:span_id(),
-        % If span_id is not defined, parent parent_span is, it will be used
-        % as parent for new spans
-        parent_span => nkserver_ot:parent()
+        % If ot_span_is defined, logs will be added, and it will be used
+        % as parent for new spans that could be created
+        ot_span_id => nkserver_ot:span_id() | nkserver_ot:parent()
     }.
 
 
-% 'span' would be used during the create process by this same process
-% 'parent_span' would be used as parent to newly created spans
-% (for example the actor process creates several spans)
 -type create_opts() ::
     #{
         activate => boolean(),
@@ -193,8 +188,7 @@
         check_unique => boolean(),          % Default true
         forced_uid => binary(),             % Use it only for non-persistent actors!
         request => request(),               % See get_opts()
-        span => nkserver_ot:span_id(),      % See get_opts()
-        parent_span => nkserver_ot:parent() % See get_opts()
+        ot_span_id => nkserver_ot:span_id() | nkserver_ot:parent()
     }.
 
 

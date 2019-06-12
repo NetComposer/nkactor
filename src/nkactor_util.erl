@@ -103,8 +103,10 @@ get_actor_config(SrvId, Module) when is_atom(SrvId), is_atom(Module) ->
 
 %% @private
 pre_create(Actor, Syntax, Opts) ->
+    SpanId = maps:get(ot_span_id, Opts, undefined),
     case nkactor_syntax:parse_actor(Actor, Syntax) of
         {ok, Actor2} ->
+            nkserver_ot:log(SpanId, <<"actor parsed">>),
             Actor3 = nkactor_lib:add_creation_fields(Actor2),
             Actor4 = case Opts of
                 #{forced_uid:=UID} ->
@@ -112,30 +114,35 @@ pre_create(Actor, Syntax, Opts) ->
                 _ ->
                     Actor3
             end,
-            #{group:=Group, resource:=Res, namespace:=Namespace} = Actor4,
+            #{namespace:=Namespace} = Actor4,
             case nkactor_namespace:get_namespace(Namespace) of
                 {ok, SrvId, _Pid} ->
+                    nkserver_ot:log(SpanId, <<"actor namespace found: ~s">>, [SrvId]),
                     Req1 = maps:get(request, Opts, #{}),
                     Req2 = Req1#{
                         verb => create,
                         srv => SrvId
                     },
-                    Module = nkactor_util:get_module(SrvId, Group, Res),
-                    case nkactor_actor:parse(Module, Actor4, Req2) of
+                    case nkactor_actor:parse(SrvId, Actor4, Req2) of
                         {ok, Actor5} ->
                             case nkactor_lib:check_links(Actor5) of
                                 {ok, Actor6} ->
+                                    nkserver_ot:log(SpanId, <<"actor parsed">>),
                                     {ok, SrvId, Actor6};
                                 {error, Error} ->
+                                    nkserver_ot:log(SpanId, <<"error checking links: ~p">>, [Error]),
                                     {error, Error}
                             end;
                         {error, Error} ->
+                            nkserver_ot:log(SpanId, <<"error parsing specific actor: ~p">>, [Error]),
                             {error, Error}
                     end;
                 {error, Error} ->
+                    nkserver_ot:log(SpanId, <<"error getting namespace: ~p">>, [Error]),
                     {error, Error}
             end;
         {error, Error} ->
+            nkserver_ot:log(SpanId, <<"error parsing generic actor: ~p">>, [Error]),
             {error, Error}
     end.
 
@@ -143,32 +150,39 @@ pre_create(Actor, Syntax, Opts) ->
 
 %% @private
 pre_update(ActorId, Syntax, Actor, Opts) ->
-    #actor_id{group=Group, resource=Res, namespace=Namespace} = ActorId,
+    SpanId = maps:get(ot_span_id, Opts, undefined),
     case nkactor_syntax:parse_actor(Actor, Syntax) of
         {ok, Actor2} ->
+            nkserver_ot:log(SpanId, <<"actor parsed">>),
+            #actor_id{namespace=Namespace} = ActorId,
             case nkactor_namespace:get_namespace(Namespace) of
                 {ok, SrvId, _Pid} ->
+                    nkserver_ot:log(SpanId, <<"actor namespace found: ~s">>, [SrvId]),
                     Req1 = maps:get(request, Opts, #{}),
                     Req2 = Req1#{
                         verb => update,
                         srv => SrvId
                     },
-                    Module = nkactor_util:get_module(SrvId, Group, Res),
-                    case nkactor_actor:parse(Module, Actor2, Req2) of
+                    case nkactor_actor:parse(SrvId, Actor2, Req2) of
                         {ok, Actor3} ->
                             case nkactor_lib:check_links(Actor3) of
                                 {ok, Actor4} ->
+                                    nkserver_ot:log(SpanId, <<"actor parsed">>),
                                     {ok, SrvId, Actor4};
                                 {error, Error} ->
+                                    nkserver_ot:log(SpanId, <<"error checking links: ~p">>, [Error]),
                                     {error, Error}
                             end;
                         {error, Error} ->
+                            nkserver_ot:log(SpanId, <<"error parsing specific actor: ~p">>, [Error]),
                             {error, Error}
                     end;
                 {error, Error} ->
+                    nkserver_ot:log(SpanId, <<"error getting namespace: ~p">>, [Error]),
                     {error, Error}
             end;
         {error, Error} ->
+            nkserver_ot:log(SpanId, <<"error parsing generic actor: ~p">>, [Error]),
             {error, Error}
     end.
 
@@ -186,7 +200,7 @@ activate_actors(SrvId) ->
 activate_actors(SrvId, StartCursor) ->
     nkserver_ot:log(?ACTIVATE_SPAN, {"starting cursor: ~s", [StartCursor]}),
     ParentSpan = nkserver_ot:get_parent(?ACTIVATE_SPAN),
-    case nkactor:search_active(SrvId, #{last_cursor=>StartCursor, parent_span=>ParentSpan, size=>2}) of
+    case nkactor:search_active(SrvId, #{last_cursor=>StartCursor, ot_span_id=>ParentSpan, size=>2}) of
         {ok, [], _} ->
             nkserver_ot:log(?ACTIVATE_SPAN, <<"no more actors">>),
             ok;

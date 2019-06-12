@@ -146,15 +146,14 @@ actor_create(Actor, Config) ->
     nkactor_srv:create(Actor, Config).
 
 
-%% @doc Called from nkactor_db:load() when an actor has been read and must be activated
-%% Can be used to select a different node, etc()
+%% @doc Called from nkactor_backend:activate() when an actor has been read and must
+%% be activated. Can be used to select a different node, etc.
 %% By default we start it at this node
 -spec actor_activate(nkactor:actor(), nkactor:config()) ->
     {ok, actor_id()} | {error, term()}.
 
 actor_activate(Actor, Config) ->
     nkactor_srv:start(Actor, Config).
-
 
 
 %% @doc Called from nkactor_lib:send_external_event/3 to send
@@ -487,12 +486,8 @@ actor_do_expired(_Actor) ->
 
 -type db_opts() ::
     #{
-        % If span_id is defined, logs will be added, and it will be used
-        % as parent for new spans
-        span_id => nkserver_ot:span_id(),
-        % If span_id is not defined, parent parent_span is, it will be used
-        % as parent for new spans
-        parent_span => nkserver_ot:parent(),
+        % If ot_span_id is defined, it will be used as parent for new created spans
+        ot_span_id => nkserver_ot:span_id() | nkserver_ot:parent(),
         % Default true
         check_unique => boolean(),
         % For deletions, default false

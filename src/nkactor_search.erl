@@ -150,7 +150,7 @@ search_spec_syntax() ->
         only_uid => boolean,
         get_data => boolean,
         get_metadata => boolean,
-        parent_span => any,
+        ot_span_id => any,
         meta => ignore,
         '__defaults' => #{namespace => <<>>}
     }.

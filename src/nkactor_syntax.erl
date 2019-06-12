@@ -180,7 +180,7 @@ request_syntax() ->
         params => map,
         body => [map, binary],
         auth => map,
-        span_id => any,
+        ot_span_id => any,
 
         external_url => binary,
         srv => atom,

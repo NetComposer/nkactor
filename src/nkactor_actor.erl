@@ -231,25 +231,32 @@ config(Module) ->
 
 
 
-%% @doc Used to parse an actor, trying the module callback first
-%% Actor should come with vsn
+%% @doc Used to parse an actor, for an specific request
+%% If ot_span_id is used, logs will be added
 -spec parse(nkserver:id(), actor(), nkactor_request:request()) ->
     {ok, actor()} | {error, nkserver:msg()}.
 
 parse(SrvId, Actor, Request) ->
     #{group:=Group, resource:=Res} = Actor,
-    Args = [parse, Group, Res, [Actor, Request]],
     % See nkactor_callback in nkactor_plugin
+    SpanId = maps:get(ot_span_id, Request, undefined),
+    nkserver_ot:log(SpanId, <<"calling actor parse">>),
+    Args = [parse, Group, Res, [Actor, Request]],
     case ?CALL_SRV(SrvId, nkactor_callback, Args) of
         continue ->
+            nkserver_ot:log(SpanId, <<"default syntax">>),
             {syntax, #{}};
         {ok, Actor2} ->
+            nkserver_ot:log(SpanId, <<"actor is custom parsed">>),
             {ok, Actor2};
         {syntax, Syntax} when is_map(Syntax) ->
+            nkserver_ot:log(SpanId, <<"actor has custom syntax">>),
             nkactor_lib:parse_actor_data(Actor, Syntax);
         {syntax, Syntax, Actor2} when is_map(Syntax) ->
+            nkserver_ot:log(SpanId, <<"actor has custom syntax and actor">>),
             nkactor_lib:parse_actor_data(Actor2, Syntax);
         {error, Error} ->
+            nkserver_ot:log(SpanId, <<"error parsing actor: ~p">>, Error),
             {error, Error}
     end.
 
@@ -257,6 +264,7 @@ parse(SrvId, Actor, Request) ->
 
 %% @doc Used to call the 'request' callback on an actor's module, in case
 %% it has implemented it (to support specific requests)
+%% If parse_id is used, logs will be added
 -spec request(nkserver:id(), #actor_id{}, any()) ->
     response() | continue.
 
@@ -266,13 +274,16 @@ request(SrvId, ActorId, Request) ->
     #actor_id{group = Group, resource = Res} = ActorId,
     Args = [request, Group, Res, [Verb, SubRes, ActorId, Request]],
     % See nkactor_callback in nkactor_plugin
+    SpanId = maps:get(ot_span_id, Request, undefined),
+    nkserver_ot:log(SpanId, <<"calling actor request">>),
     case ?CALL_SRV(SrvId, nkactor_callback, Args) of
         continue ->
+            nkserver_ot:log(SpanId, <<"no specific action">>),
             continue;
         Other ->
+            nkserver_ot:log(SpanId, <<"specific action return">>),
             Other
     end.
-
 
 
 

@@ -47,9 +47,12 @@
         params => #{binary() => binary()},
         body => term(),
         auth => map(),
-        span_id => nkserver_ot:span_id(),
-        callback => module(),           % Implementing nkdomain_api behaviour
-        external_url => binary(),       % External url to use in callbacks
+        % If defined, will be used as parent of created span
+        ot_span_id => nkserver_ot:span_id() | nkserver_ot:parent(),
+        % Implementing nkdomain_api behaviour:
+        callback => module(),
+        % External url to use in callbacks:
+        external_url => binary(),
         meta => map(),
         %% added by system:
         start_time => nklib_date:epoch(usecs),
@@ -76,8 +79,7 @@
 
 
 %% @doc Launches an Request
-%% - If span_id is defined, it will add tags and will be used as father span
-%% - If not, parent_span will be used as father (if defined)
+%% - A new span will be created. If ot_span_id is defined, it will be used as parent
 %% - Calls actor_authorize/1 for authorization of the request
 %% - Finds service managing namespace, and adds srv and start_time
 
@@ -88,21 +90,16 @@
     {status|error, nkserver:msg(), request()}.
 
 request(Req) ->
-    SpanId = maps:get(span_id, Req, undefined),
+    ParentSpan = maps:get(ot_span_id, Req, undefined),
+    nkserver_ot:new(?REQ_SPAN, undefined, <<"Actor::Request">>, ParentSpan),
     % Gets group and vsn from request or body
     case nkactor_syntax:parse_request(Req) of
         {ok, #{group:=Group, resource:=Res, namespace:=Namespace}=Req2} ->
-            nkserver_ot:log(SpanId, <<"find service">>),
+            nkserver_ot:log(?REQ_SPAN, <<"request parsed">>),
             case nkactor_namespace:get_namespace(Namespace) of
                 {ok, SrvId, _NamespacePid} ->
-                    nkserver_ot:log(SpanId, <<"request parsed">>),
-                    ParentSpan = case SpanId of
-                        undefined ->
-                            maps:get(parent_span, Req, undefined);
-                        _ ->
-                            SpanId
-                    end,
-                    nkserver_ot:new(?REQ_SPAN, SrvId, <<"Actor::Request">>, ParentSpan),
+                    nkserver_ot:log(?REQ_SPAN, <<"service found: ~s">>, [SrvId]),
+                    nkserver_ot:update_srv_id(?REQ_SPAN, SrvId),
                     nkserver_ot:tags(?REQ_SPAN, #{
                         <<"req.group">> => Group,
                         <<"req.resource">> => Res,
@@ -115,7 +112,8 @@ request(Req) ->
                     ?REQ_DEBUG("incoming request for ~s", [Namespace]),
                     Req3 = Req2#{
                         srv => SrvId,
-                        start_time => nklib_date:epoch(usecs)
+                        start_time => nklib_date:epoch(usecs),
+                        ot_span_id => ?REQ_SPAN
                     },
                     nkserver_ot:log(?REQ_SPAN, <<"calling authorize">>),
                     case ?CALL_SRV(SrvId, actor_authorize, [Req3]) of
@@ -141,11 +139,11 @@ request(Req) ->
                             {error, unauthorized, Req3}
                     end;
                 {error, Error} ->
-                    nkserver_ot:log(SpanId, <<"error processing request: ~p">>, [Error]),
+                    nkserver_ot:delete(?REQ_SPAN),
                     {error, Error, Req}
             end;
         {error, Error} ->
-            nkserver_ot:log(SpanId, <<"error parsing request: ~p">>, [Error]),
+            nkserver_ot:delete(?REQ_SPAN),
             {error, Error, Req}
     end.
 
@@ -271,13 +269,16 @@ default_request(Verb, ActorId, _Config, _Req) ->
 
 %% @doc Standard get
 get(ActorId, Config, Req) ->
-    Opts = set_opts(Config, Req),
+    Opts = set_activate_opts(Config, Req),
     nkserver_ot:log(?REQ_SPAN, "processing standard read (~p)", [Opts]),
     ?REQ_DEBUG("processing read ~p (~p)", [ActorId, Opts]),
-    case nkactor:get_actor(ActorId, Opts#{request=>Req, span_id=>?REQ_SPAN}) of
+    % request is included in case it could be used for specific parsing
+    % when calling nkactor_actor:parse()
+    case nkactor:get_actor(ActorId, Opts#{request=>Req}) of
         {ok, Actor} ->
             {ok, Actor};
         {error, ReadError} ->
+            nkserver_ot:log(?REQ_SPAN, "error getting actor: ~p", [Error]),
             {error, ReadError}
     end.
 
@@ -297,20 +298,27 @@ list(ActorId, Config, Req) ->
 create(ActorId, Config, Req) ->
     case parse_body(Req) of
         {ok, Actor1} ->
+            nkserver_ot:log(?REQ_SPAN, <<"body parsed">>),
             case check_actor(Actor1, ActorId) of
                 {ok, Actor2} ->
-                    Opts = set_opts(Config, Req#{request=>Req}),
+                    Opts = set_activate_opts(Config, Req),
+                    nkserver_ot:log(?REQ_SPAN, "processing standard create (~p)", [Opts]),
                     ?REQ_DEBUG("creating actor ~p ~p", [Actor2, Opts]),
-                    case nkactor:create(Actor2, Opts#{get_actor=>true}) of
+                    % request is included in case it could be used for specific parsing
+                    % when calling nkactor_actor:parse()
+                    case nkactor:create(Actor2, Opts#{get_actor=>true, request=>Req}) of
                         {ok, Actor3} ->
                             {created, Actor3};
                         {error, Error} ->
+                            nkserver_ot:log(?REQ_SPAN, "error creating actor: ~p", [Error]),
                             {error, Error}
                     end;
                 {error, Error} ->
+                    nkserver_ot:log(?REQ_SPAN, <<"error checking actor: ~p">>, [Error]),
                     {error, Error}
             end;
         {error, Error} ->
+            nkserver_ot:log(?REQ_SPAN, <<"error parsing body: ~p">>, [Error]),
             {error, Error}
     end.
 
@@ -322,7 +330,7 @@ update(ActorId, Config, Req) ->
         {ok, Actor1} ->
             case check_actor(Actor1, ActorId) of
                 {ok, Actor2} ->
-                    Opts = set_opts(Config, Req#{request=>Req}),
+                    Opts = set_activate_opts(Config, Req#{request=>Req}),
                     ?REQ_DEBUG("Updating actor ~p", [Actor2]),
                     case nkactor:update(ActorId, Actor2, Opts) of
                         {ok, Actor3} ->
@@ -454,10 +462,10 @@ check_actor(Actor, ActorId) ->
 
 
 %% @private
-set_opts(#{activable:=false}, _Req) ->
-    #{activate=>false};
+set_activate_opts(#{activable:=false}, _Req) ->
+    #{activate=>false, ot_span_id=>?REQ_SPAN};
 
-set_opts(_Config, Req) ->
+set_activate_opts(_Config, Req) ->
     Params = maps:get(params, Req, #{}),
     Activate = maps:get(activate, Params, true),
     Opts1 = case Activate of
@@ -472,7 +480,7 @@ set_opts(_Config, Req) ->
         error ->
             Opts1
     end,
-    Opts2.
+    Opts2#{ot_span_id=>?REQ_SPAN}.
 
 
 %% @private

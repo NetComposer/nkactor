@@ -5,11 +5,10 @@
 %% Defines
 %% ===================================================================
 
--define(PACKAGE_CLASS_NKACTOR, nkactor).
+%-define(PACKAGE_CLASS_NKACTOR, nkactor).
 
 -define(TRACE(Id), nklib_trace:insert(Id, #{})).
 -define(TRACE(Id, Meta), nklib_trace:insert(Id, Meta)).
-
 
 %% ===================================================================
 %% Records
@@ -44,7 +43,7 @@
     unload_policy :: permanent | {expires, nklib_util:m_timestamp()} | {ttl, integer()},
     ttl_timer :: reference() | undefined,
     status_timer :: reference() | undefined,
-    parent_span :: nkserver_ot:parent() | undefined
+    op_span_ids :: [nkserver_ot:span_id()]         % Temporary store
 }).
 
 
