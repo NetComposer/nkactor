@@ -30,7 +30,7 @@
 -export([get_services/0]).
 -export([get_module/3]).
 -export([get_actor_config/1, get_actor_config/2, get_actor_config/3]).
--export([pre_create/3, pre_update/4]).
+-export([pre_create/2, pre_update/3]).
 -export([activate_actors/1]).
 
 -type group() :: nkactor:group().
@@ -102,8 +102,9 @@ get_actor_config(SrvId, Module) when is_atom(SrvId), is_atom(Module) ->
 
 
 %% @private
-pre_create(Actor, Syntax, Opts) ->
+pre_create(Actor, Opts) ->
     SpanId = maps:get(ot_span_id, Opts, undefined),
+    Syntax = #{'__mandatory' => [group, resource, namespace]},
     case nkactor_syntax:parse_actor(Actor, Syntax) of
         {ok, Actor2} ->
             nkserver_ot:log(SpanId, <<"actor parsed">>),
@@ -149,8 +150,9 @@ pre_create(Actor, Syntax, Opts) ->
 
 
 %% @private
-pre_update(ActorId, Syntax, Actor, Opts) ->
+pre_update(ActorId, Actor, Opts) ->
     SpanId = maps:get(ot_span_id, Opts, undefined),
+    Syntax = #{'__mandatory' => [group, resource, namespace]},
     case nkactor_syntax:parse_actor(Actor, Syntax) of
         {ok, Actor2} ->
             nkserver_ot:log(SpanId, <<"actor parsed">>),

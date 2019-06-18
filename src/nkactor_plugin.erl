@@ -60,7 +60,7 @@ plugin_meta() ->
 
 
 %% @doc 
-plugin_config(SrvId, Config, #{class:=?PACKAGE_CLASS_NKACTOR}) ->
+plugin_config(SrvId, Config, #{class:=nkactor}) ->
     Syntax = #{
         base_namespace => binary,
         auto_activate_actors_period => {integer, 5000, none},
@@ -133,8 +133,6 @@ expand_modules(Group, Modules, Config) ->
         fun({Key, Mod}, Acc2) -> Acc2#{{module, Group, Key} => Mod} end,
         Config,
         KeyList).
-
-
 
 
 

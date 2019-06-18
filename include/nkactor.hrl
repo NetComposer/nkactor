@@ -5,10 +5,6 @@
 %% Defines
 %% ===================================================================
 
-%-define(PACKAGE_CLASS_NKACTOR, nkactor).
-
--define(TRACE(Id), nklib_trace:insert(Id, #{})).
--define(TRACE(Id, Meta), nklib_trace:insert(Id, Meta)).
 
 %% ===================================================================
 %% Records
@@ -17,7 +13,6 @@
 -record(actor_id, {
     group :: nkactor:group() | undefined,
     resource :: nkactor:resource() | undefined,
-    %vsn :: nkactor:vsn() | undefined,
     name :: nkactor:name() | undefined,
     namespace :: nkactor:namespace() | undefined,
     uid :: nkactor:uid() | undefined,
@@ -43,7 +38,7 @@
     unload_policy :: permanent | {expires, nklib_util:m_timestamp()} | {ttl, integer()},
     ttl_timer :: reference() | undefined,
     status_timer :: reference() | undefined,
-    op_span_ids :: [nkserver_ot:span_id()]         % Temporary store
+    op_span_ids :: [nkserver_ot:span_id()]
 }).
 
 

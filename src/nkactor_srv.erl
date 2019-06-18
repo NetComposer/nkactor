@@ -52,11 +52,10 @@
 %%
 %% Opentracing
 %%
-%% - The actor will start a new top-level span "Actor::start"
-%% - It will start more spans as childs of it, "Actor::initialize" and "Actor::save"
-%% - If we use the option 'ot_span_id' when activating the actor, a new operation span
-%%   "ActorOp::create" or "ActorOp::load" will be created, child of parent
-%% - Logs will be added for all current "operation" spans, defined in field 'op_span_ids'
+%% - Some operations (like init and update) accept a parameter 'ot_span_id', and,
+%%   if provided, will create a new span based on it
+%% - Other operations (save) always generate a new span, based on previous defined
+%%   operation span (from init or update) or top-level if none defined
 
 
 -module(nkactor_srv).
@@ -81,9 +80,10 @@
 -define(HEARTBEAT_TIME, 5000).
 -define(DEFAULT_SAVE_TIME, 5000).
 -define(MAX_STATUS_TIME, 24 * 60 * 60 * 1000).
--define(SPAN_MAIN, nkactor_span).
--define(SPAN_INIT, nkactor_span_init).
--define(SPAN_SAVE, nkactor_span_save).
+%%-define(SPAN_MAIN, nkactor_span).
+%%-define(SPAN_INIT, nkactor_span_init).
+%%-define(SPAN_UPDATE, nkactor_span_update).
+%%-define(SPAN_SAVE, nkactor_span_save).
 
 
 %% ===================================================================
@@ -448,6 +448,7 @@ do_remove_link(Link, #actor_st{links = Links} = State) ->
 
 
 %% @private
+%% It will create an 'operation span' if ot_span_id option is used
 do_update(UpdActor, Opts, #actor_st{srv = SrvId, actor_id = ActorId, actor = Actor} = State) ->
     UpdActorId = nkactor_lib:actor_to_actor_id(UpdActor),
     #actor_id{uid = UID, namespace = Namespace, group = Class, resource = Res, name = Name} = ActorId,
@@ -526,6 +527,8 @@ do_update(UpdActor, Opts, #actor_st{srv = SrvId, actor_id = ActorId, actor = Act
         IsMetaUpdated = (Meta /= NewMeta) orelse (Enabled /= UpdEnabled),
         case IsDataUpdated orelse IsMetaUpdated of
             true ->
+                % At this point, we create main span and operation span
+                State2 = op_span_check_create(update, Opts, State),
                 %lager:error("NKLOG UPDATE Data:~p, Meta:~p", [IsDataUpdated, IsMetaUpdated]),
                 NewMeta2 = case UpdEnabled of
                     true ->
@@ -535,24 +538,38 @@ do_update(UpdActor, Opts, #actor_st{srv = SrvId, actor_id = ActorId, actor = Act
                 end,
                 Data2 = maps:merge(Data, UpdDataFields),
                 NewActor = Actor#{data=>Data2, metadata:=NewMeta2},
-                case nkactor_lib:update_check_fields(NewActor, State) of
+                case nkactor_lib:update_check_fields(NewActor, State2) of
                     ok ->
-                        case handle(actor_srv_update, [NewActor], State) of
-                            {ok, NewActor2, State2} ->
-                                State3 = State2#actor_st{actor = NewActor2, is_dirty = true},
-                                State4 = do_enabled(UpdEnabled, State3),
-                                State5 = set_unload_policy(State4),
-                                case do_save(update, #{}, State5) of
-                                    {ok, State6} ->
-                                        {ok, do_event({updated, UpdActor}, State6)};
-                                    {{error, SaveError}, State6} ->
-                                        {error, SaveError, State6}
+                        op_span_log(<<"calling actor_srv_update">>, State2),
+                        case handle(actor_srv_update, [NewActor], State2) of
+                            {ok, NewActor2, State3} ->
+                                State4 = State3#actor_st{actor = NewActor2, is_dirty = true},
+                                State5 = do_enabled(UpdEnabled, State4),
+                                State6 = set_unload_policy(State5),
+                                op_span_log(<<"calling do_save">>, State6),
+                                case do_save(update, #{}, State6) of
+                                    {ok, State7} ->
+                                        nkserver_ot:log(<<"actor updated">>, State7),
+                                        op_span_log(<<"actor updated">>, State7),
+                                        State8 = op_span_finish(State7),
+                                        {ok, do_event({updated, UpdActor}, State8)};
+                                    {{error, SaveError}, State7} ->
+                                        op_span_log(<<"save error: ~p">>, [SaveError], State7),
+                                        op_span_error(SaveError, State7),
+                                        State8 = op_span_finish(State7),
+                                        {error, SaveError, State8}
                                 end;
-                            {error, UpdError, State2} ->
-                                {error, UpdError, State2}
+                            {error, UpdError, State3} ->
+                                op_span_log(<<"update error: ~p">>, [UpdError], State3),
+                                op_span_error(UpdError, State3),
+                                State4 = op_span_finish(State3),
+                                {error, UpdError, State4}
                         end;
                     {error, StaticFieldError} ->
-                        {error, StaticFieldError, State}
+                        op_span_log(<<"update error: ~p">>, [StaticFieldError], State2),
+                        op_span_error(StaticFieldError, State2),
+                        State4 = op_span_finish(State2),
+                        {error, StaticFieldError, State4}
                 end;
             false ->
                 % lager:error("NKLOG NO UPDATE"),
@@ -600,77 +617,75 @@ do_save(Reason, SaveOpts, #actor_st{is_dirty = true} = State) ->
         config = Config
     } = State,
     nklib_util:cancel_timer(Timer),
-    nkserver_ot:new(?SPAN_SAVE, <<"ActorSrv::save">>, ?SPAN_MAIN),
-    nkserver_ot:tag(?SPAN_SAVE, <<"reason">>, Reason),
     Actor2 = nkactor_lib:update(Actor, nklib_date:now_3339(usecs)),
     State2 = State#actor_st{actor = Actor2, save_timer = undefined},
+    State3 = op_span_force_create(save, State2),
+    #actor_st{op_span_ids=[SpanId|_]} = State3,
     {SaveFun, SaveOpts2} = case Reason of
         create ->
             CheckUnique = maps:get(create_check_unique, Config, true),
             {
                 actor_db_create,
-                SaveOpts#{check_unique=>CheckUnique, ot_span_id=>?SPAN_SAVE}
+                SaveOpts#{check_unique=>CheckUnique, ot_span_id=>SpanId}
             };
         _ ->
             {
                 actor_db_update,
-                SaveOpts#{last_metadata=>SavedMeta, ot_span_id=>?SPAN_SAVE}}
+                SaveOpts#{last_metadata=>SavedMeta, ot_span_id=>SpanId}}
     end,
-    op_span_log(<<"starting save">>, State2),
+    op_span_log(<<"calling actor_srv_save">>, State3),
     case handle(actor_srv_save, [Actor2], State2) of
         {ok, SaveActor, #actor_st{config = Config} = State3} ->
             case Config of
                 #{async_save:=true} when Reason /= create ->
                     Self = self(),
-                    spawn_link(
+                    Pid = spawn_link(
                         fun() ->
+                            Span1 = nkserver_ot:span(SrvId, <<"ActorSrc::async_save">>, SpanId),
+                            Span2 = nkserver_ot:log(Span1, <<"calling ~s">>, [SaveFun]),
                             case ?CALL_SRV(SrvId, SaveFun, [SrvId, SaveActor, SaveOpts2]) of
-                                {ok, DbMeta} ->
-                                    nkserver_ot:log(?SPAN_SAVE, <<"actor saved">>),
-                                    nkserver_ot:finish(?SPAN_SAVE),
-                                    ?ACTOR_DEBUG("save (~p) (~p)", [Reason, DbMeta], State3),
+                                {ok, _DbMeta} ->
+                                    Span3 = nkserver_ot:log(Span2, <<"actor saved">>),
+                                    nkserver_ot:finish(Span3),
                                     async_op(Self, {send_event, saved});
                                 {error, Error} ->
-                                    nkserver_ot:log(?SPAN_SAVE, {"save error: ~p", [Error]}),
-                                    nkserver_ot:tag_error(?SPAN_SAVE, Error),
-                                    nkserver_ot:finish(?SPAN_SAVE),
-                                    ?ACTOR_LOG(warning, "save error: ~p", [Error], State3)
+                                    Span3 = nkserver_ot:log(Span2, "save error: ~p", [Error]),
+                                    Span4 = nkserver_ot:tag_error(Span3, Error),
+                                    nkserver_ot:finish(Span4)
                             end
                         end),
+                    op_span_log(<<"launched asynchronous save: ~p">>, [Pid], State3),
                     % We must guess that the save is successful
                     #{metadata:=NewMeta} = Actor2,
-                    {ok, State3#actor_st{saved_metadata = NewMeta, is_dirty = false}};
+                    State4 = op_span_finish(State3),
+                    {ok, State4#actor_st{saved_metadata = NewMeta, is_dirty = false}};
                 _ ->
                     case ?CALL_SRV(SrvId, SaveFun, [SrvId, SaveActor, SaveOpts2]) of
                         {ok, DbMeta} ->
-                            nkserver_ot:log(?SPAN_SAVE, <<"actor saved">>),
-                            nkserver_ot:finish(?SPAN_SAVE),
-                            op_span_log(<<"actor saved">>, State2),
-                            ?ACTOR_DEBUG("save (~p) (~p)", [Reason, DbMeta], State3),
+                            op_span_log(<<"actor saved">>, State3),
+                            State4 = op_span_finish(State3),
+                            ?ACTOR_DEBUG("save (~p) (~p)", [Reason, DbMeta], State4),
                             % The metadata of the updated actor is the new old metadata
                             % to check differences
                             #{metadata:=NewMeta} = Actor2,
-                            State4 = State3#actor_st{saved_metadata = NewMeta, is_dirty = false},
-                            {ok, do_event(saved, State4)};
+                            State5 = State4#actor_st{saved_metadata = NewMeta, is_dirty = false},
+                            {ok, do_event(saved, State5)};
                         {error, not_implemented} ->
-                            nkserver_ot:log(?SPAN_SAVE, <<"save not implemented">>),
-                            nkserver_ot:finish(?SPAN_SAVE),
-                            op_span_log(<<"save not implemented">>, State2),
-                            {{error, not_implemented}, State3};
+                            op_span_log(<<"save not implemented">>, State3),
+                            State4 = op_span_finish(State3),
+                            {{error, not_implemented}, State4};
                         {error, Error} ->
-                            nkserver_ot:log(?SPAN_SAVE, {"save error: ~p", [Error]}),
-                            nkserver_ot:tag_error(?SPAN_SAVE, Error),
-                            nkserver_ot:finish(?SPAN_SAVE),
-                            op_span_log(<<"save error: ~p">>, Error, State2),
-                            ?ACTOR_LOG(warning, "save error: ~p", [Error], State3),
-                            {{error, Error}, State3}
+                            op_span_log(<<"save error: ~p">>, Error, State3),
+                            op_span_error(Error, State3),
+                            State4 = op_span_finish(State3),
+                            ?ACTOR_LOG(warning, "save error: ~p", [Error], State4),
+                            {{error, Error}, State4}
                     end
             end;
         {ignore, State3} ->
-            nkserver_ot:log(?SPAN_SAVE, <<"save ignored">>),
-            nkserver_ot:finish(?SPAN_SAVE),
             op_span_log(<<"save ignored">>, State3),
-            {ok, State3}
+            State4 = op_span_finish(State3),
+            {ok, State4}
     end;
 
 do_save(_Reason, _SaveOpts, State) ->
@@ -690,11 +705,9 @@ init({Op, ActorId, Actor, Config, SrvId, Caller, Ref}) ->
     % We create a top-level span for generic actor operations
     % Also, if Config has option 'ot_span_id' a specific operation span will be created
     % in do_pre_init
-    nkserver_ot:new(?SPAN_MAIN, SrvId, <<"ActorSrv::start">>),
-    nkserver_ot:new(?SPAN_INIT, SrvId, <<"ActorSrv::initialize">>, ?SPAN_MAIN),
     State1 = do_pre_init(ActorId, Actor, Config, SrvId),
-    State2 = create_operation_span(Op, Config, State1),
-    op_span_log(<<"starting initialization: ~p">>, Op, State2),
+    State2 = op_span_check_create(Op, Config, State1),
+    op_span_log(<<"starting initialization: ~p">>, [Op], State2),
     #actor_id{
         group = Group,
         resource = Res,
@@ -710,38 +723,37 @@ init({Op, ActorId, Actor, Config, SrvId, Caller, Ref}) ->
         <<"actor.uid">> => UID,
         <<"actor.pid">> => list_to_binary(pid_to_list(self()))
     },
-    nkserver_ot:tags(?SPAN_MAIN, Tags),
     op_span_tags(Tags, State2),
     case do_check_expired(State2) of
         {false, State3} ->
-            nkserver_ot:log(?SPAN_INIT, <<"registering with namespace">>),
+            op_span_log(<<"registering with namespace">>, State3),
             case do_register(1, State3) of
                 {ok, #actor_st{srv = SrvId} = State4} ->
-                    nkserver_ot:update_srv_id(?SPAN_MAIN, SrvId),
-                    nkserver_ot:log(?SPAN_INIT, <<"registered with namespace">>),
+                    op_span_update_srv_id(SrvId, State4),
+                    op_span_log(<<"registered with namespace">>, State4),
                     case handle(actor_srv_init, [Op], State4) of
                         {ok, State5} ->
                             case do_post_init(Op, State5) of
                                 {ok, State6} ->
                                     {ok, State6};
                                 {error, Error} ->
-                                    do_init_stop(Error, Caller, Ref)
+                                    do_init_stop(Error, Caller, Ref, State5)
                             end;
                         {error, Error} ->
-                            do_init_stop(Error, Caller, Ref);
+                            do_init_stop(Error, Caller, Ref, State4);
                         {delete, Error} ->
                             _ = do_delete(State4),
-                            do_init_stop(Error, Caller, Ref)
+                            do_init_stop(Error, Caller, Ref, State4)
                     end;
                 {error, Error} ->
-                    do_init_stop(Error, Caller, Ref)
+                    do_init_stop(Error, Caller, Ref, State3)
             end;
         true ->
-            nkserver_ot:log(?SPAN_INIT, <<"actor is expired on load">>),
+            op_span_log(<<"actor is expired on load">>, State2),
             ?ACTOR_LOG(warning, "actor is expired on load", [], State2),
             % Call stop functions, probably will delete the actor
             _ = do_stop(actor_expired, State2),
-            do_init_stop(actor_not_found, Caller, Ref)
+            do_init_stop(actor_not_found, Caller, Ref, State2)
     end.
 
 
@@ -890,14 +902,15 @@ code_change(OldVsn, #actor_st{srv = SrvId} = State, Extra) ->
 %%terminate(_Reason, #actor{moved_to=Pid}) when is_pid(Pid) ->
 %%    ok;
 
-terminate(Reason, #actor_st{op_span_ids = SpanIds}=State) ->
+terminate(Reason, #actor_st{op_span_ids=SpanIds}=State) ->
     State2 = do_stop2({terminate, Reason}, State),
     {ok, _State3} = handle(actor_srv_terminate, [Reason], State2),
-    nkserver_ot:log(?SPAN_MAIN, <<"actor terminate: ~p">>, [Reason]),
-    lists:foreach(fun(SpanId) -> finish_operation_span(SpanId, State) end, SpanIds),
-    nkserver_ot:finish(?SPAN_INIT),
-    nkserver_ot:finish(?SPAN_SAVE),
-    nkserver_ot:finish(?SPAN_MAIN),
+    lists:foreach(
+        fun(SpanId) ->
+            nkserver_ot:log(SpanId, <<"actor terminated: ~p">>, [Reason]),
+            nkserver_ot:finish(SpanId)
+        end,
+        SpanIds),
     ok.
 
 
@@ -982,14 +995,21 @@ do_sync_op({link, Link, Opts}, _From, State) ->
     State2 = do_add_link(Link, Opts, State),
     reply(ok, do_refresh_ttl(State2));
 
-do_sync_op({update, Actor, Opts}, _From, #actor_st{  is_enabled=IsEnabled, config=Config}=State) ->
+do_sync_op({update, Actor, Opts}, _From, State) ->
+    #actor_st{is_enabled=IsEnabled, config=Config, actor=Actor} = State,
     case {IsEnabled, Config} of
         {false, #{dont_update_on_disabled:=true}} ->
             reply({error, actor_is_disabled}, State);
         _ ->
             case do_update(Actor, Opts, State) of
                 {ok, State2} ->
-                    reply(ok, do_refresh_ttl(State2));
+                    ReplyActor = case Opts of
+                        #{get_actor:=true} ->
+                            Actor;
+                        _ ->
+                            #{}
+                    end,
+                    reply({ok, ReplyActor}, do_refresh_ttl(State2));
                 {error, Error, State2} ->
                     reply({error, Error}, State2)
             end
@@ -1114,8 +1134,7 @@ do_post_init(Op, State) ->
     ?ACTOR_DEBUG("started (~p)", [self()], State),
     State2 = case Op of
         create ->
-            nkserver_ot:log(?SPAN_INIT, <<"creating actor in db">>),
-            op_span_log(<<"starting save">>, State),
+            op_span_log(<<"starting creation save">>, State),
             State#actor_st{is_dirty=true};
         _ ->
             State
@@ -1124,11 +1143,9 @@ do_post_init(Op, State) ->
         {ok, State3} ->
             State4 = case Op of
                 create ->
-                    nkserver_ot:log(?SPAN_INIT, <<"actor created on db">>),
                     op_span_log(<<"actor saved">>, State),
                     do_event(created, State3);
                 _ ->
-                    nkserver_ot:log(?SPAN_INIT, <<"actor activated">>),
                     op_span_log(<<"actor activated">>, State),
                     do_event(activated, State3)
             end,
@@ -1140,21 +1157,20 @@ do_post_init(Op, State) ->
                     ok
             end,
             nklib_counters:async([?MODULE]),
-            nkserver_ot:log(?SPAN_INIT, <<"actor init completed">>),
             op_span_log(<<"actor init completed">>, State5),
-            finish_operation_span(Op, State5),
-            {ok, do_refresh_ttl(State5)};
-        {{error, Error}, _State3} ->
-            nkserver_ot:log(?SPAN_INIT, "actor save error: ~p", [Error]),
+            State6 = op_span_finish(State5),
+            {ok, do_refresh_ttl(State6)};
+        {{error, Error}, State3} ->
+            op_span_log("actor save error: ~p", [Error], State3),
             {error, Error}
     end.
 
 
 %% @private
-do_init_stop(Error, Caller, Ref) ->
-    nkserver_ot:log(?SPAN_INIT, "actor init error: ~p", [Error]),
-    nkserver_ot:tag_error(?SPAN_INIT, Error),
-    nkserver_ot:finish(?SPAN_INIT),
+do_init_stop(Error, Caller, Ref, State) ->
+    op_span_log("actor init error: ~p", [Error], State),
+    op_span_error(Error, State),
+    _State2 = op_span_finish(State),
     Caller ! {do_start_ignore, Ref, {error, Error}},
     ignore.
 
@@ -1457,42 +1473,78 @@ link_down(Mon, #actor_st{links=Links}=State) ->
 
 
 %% @private
-create_operation_span(Op, Config, #actor_st{srv=SrvId, op_span_ids=Ids}=ActorSt) ->
+op_span_check_create(Op, Config, #actor_st{srv=SrvId, op_span_ids=SpanIds}=ActorSt) ->
     case Config of
         #{ot_span_id:=ParentSpan} when ParentSpan /= undefined ->
-            Name = <<"ActorSrvOp::", (nklib_util:to_binary(Op))/binary>>,
+            Name = <<"ActorSrv::", (nklib_util:to_binary(Op))/binary>>,
             SpanId = nkserver_ot:new(Op, SrvId, Name, ParentSpan),
-            ActorSt#actor_st{op_span_ids = [SpanId|Ids]};
+            ActorSt#actor_st{op_span_ids=[SpanId|SpanIds]};
         _ ->
             ActorSt
-    end .
+    end.
 
 
 %% @private
-finish_operation_span(SpanId, #actor_st{op_span_ids = Ids}=ActorSt) ->
+op_span_force_create(Op, #actor_st{op_span_ids=SpanIds}=ActorSt) ->
+    ParentSpan = case SpanIds of
+        [SpanId|_] ->
+            SpanId;
+        [] ->
+            {undefined, undefined}
+    end,
+    op_span_check_create(Op, #{ot_span_id=>ParentSpan}, ActorSt).
+
+
+
+
+%% @private
+op_span_finish(#actor_st{op_span_ids=[]}=ActorSt) ->
+    ActorSt;
+
+op_span_finish(#actor_st{op_span_ids=[SpanId|Rest]}=ActorSt) ->
     nkserver_ot:finish(SpanId),
-    ActorSt#actor_st{op_span_ids = Ids -- [SpanId]}.
+    ActorSt#actor_st{op_span_ids=Rest}.
 
-
-%% @private
-op_span_log(Log, #actor_st{op_span_ids = Ids}) ->
-    lists:foreach(fun(SpanId) -> nkserver_ot:log(SpanId, Log) end, Ids).
 
 
 %% @private
-op_span_log(Txt, Data, #actor_st{op_span_ids = Ids}) ->
-    lists:foreach(fun(SpanId) -> nkserver_ot:log(SpanId, Txt, Data) end, Ids).
+op_span_log(Log, #actor_st{op_span_ids=[SpanId|_]}) ->
+    nkserver_ot:log(SpanId, Log);
+
+op_span_log(_Log, #actor_st{op_span_ids=[]}) ->
+    ok.
 
 
 %% @private
-op_span_tags(Tags, #actor_st{op_span_ids = Ids}) ->
-    lists:foreach(fun(SpanId) -> nkserver_ot:tags(SpanId, Tags) end, Ids).
+op_span_log(Txt, Data, #actor_st{op_span_ids=[SpanId|_]}) ->
+    nkserver_ot:log(SpanId, Txt, Data);
+
+op_span_log(_Txt, _Data, #actor_st{op_span_ids=[]}) ->
+    ok.
 
 
-%%%% @private
-%%op_span_error(Error, #actor_st{op_span_ids = Ids}) ->
-%%    lists:foreach(fun(SpanId) -> nkserver_ot:tag_error(SpanId, Error) end, Ids).
 
+%% @private
+op_span_tags(Tags, #actor_st{op_span_ids=[SpanId|_]}) ->
+    nkserver_ot:tags(SpanId, Tags);
+
+op_span_tags(_Tags, #actor_st{op_span_ids=[]}) ->
+    ok.
+
+
+%% @private
+op_span_error(Error, #actor_st{op_span_ids=[SpanId|_]}) ->
+    nkserver_ot:tag_error(SpanId, Error);
+
+op_span_error(_Error, #actor_st{op_span_ids=[]}) ->
+    ok.
+
+%% @private
+op_span_update_srv_id(SrvId, #actor_st{op_span_ids=[SpanId|_]}) ->
+    nkserver_ot:update_srv_id(SpanId, SrvId);
+
+op_span_update_srv_id(_SrvId, #actor_st{op_span_ids=[]}) ->
+    ok.
 
 
 %%%% @private

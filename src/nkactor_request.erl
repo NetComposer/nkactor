@@ -37,7 +37,7 @@
 
 -type request() ::
     #{
-        verb => verb(),
+        verb => nkactor:verb(),
         group => group(),
         namespace => namespace(),
         resource => resource(),

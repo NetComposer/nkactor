@@ -31,10 +31,9 @@
 -export([base_namespace/1]).
 -export([sync_op/2, sync_op/3, async_op/2]).
 -export_type([actor/0, id/0, uid/0, namespace/0, resource/0, path/0, name/0,
-              vsn/0, group/0,hash/0,
+              vsn/0, group/0,hash/0, subresource/0,
               data/0, alarm_class/0, alarm_body/0]).
 -export_type([config/0]).
--export_type([request/0, response/0]).
 
 -include("nkactor.hrl").
 -include("nkactor.hrl").
@@ -187,7 +186,7 @@
         ttl => pos_integer(),
         check_unique => boolean(),          % Default true
         forced_uid => binary(),             % Use it only for non-persistent actors!
-        request => request(),               % See get_opts()
+        request => nkactor_request:request(),               % See get_opts()
         ot_span_id => nkserver_ot:span_id() | nkserver_ot:parent()
     }.
 
@@ -195,7 +194,8 @@
 -type update_opts() ::
     #{
         data_fields => [binary()],          % If used, fields not defined here will not be updated
-        request => request()
+        request => nkactor_request:request(),
+        get_actor => boolean
     }.
 
 
@@ -331,7 +331,7 @@ delete(Id) ->
 
 delete(Id, Opts) ->
     case nkactor_backend:delete(Id, Opts) of
-        {ok, _ActorIds, _Meta} ->
+        {ok, _ActorId, _Meta} ->
             ok;
         {error, Error} ->
             {error, Error}
