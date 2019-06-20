@@ -140,7 +140,7 @@ actor_config(Config) ->
 %% Can be used to select a different node, etc()
 %% By default we start it at this node
 -spec actor_create(nkactor:actor(), nkactor:config()) ->
-    {ok, actor_id()} | {error, term()}.
+    {ok, pid()} | {error, term()}.
 
 actor_create(Actor, Config) ->
     nkactor_srv:create(Actor, Config).
@@ -150,7 +150,7 @@ actor_create(Actor, Config) ->
 %% be activated. Can be used to select a different node, etc.
 %% By default we start it at this node
 -spec actor_activate(nkactor:actor(), nkactor:config()) ->
-    {ok, actor_id()} | {error, term()}.
+    {ok, pid()} | {error, term()}.
 
 actor_activate(Actor, Config) ->
     nkactor_srv:start(Actor, Config).
@@ -532,11 +532,11 @@ actor_db_update(_SrvId, _Actor, _Opts) ->
 
 
 %% @doc
--spec actor_db_delete(nkserver:id(), [nkactor:uid()], db_opts()) ->
-    {ok, [actor_id()], Meta::map()} | {error, term()}.
+-spec actor_db_delete(nkserver:id(), actor_id(), db_opts()) ->
+    {ok, Meta::map()} | {error, term()}.
 
 
-actor_db_delete(_SrvId, _UIDs, _Opts) ->
+actor_db_delete(_SrvId, _UID, _Opts) ->
     {error, persistence_not_defined}.
 
 

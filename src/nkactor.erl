@@ -28,10 +28,10 @@
 -export([search_groups/2, search_resources/3]).
 -export([search_label/3, search_linked_to/3, search_fts/3, search_actors/2, search_delete/2, delete_old/5]).
 -export([search_active/2, search_expired/2, truncate/1]).
--export([base_namespace/1]).
+-export([base_namespace/1, get_services/0]).
 -export([sync_op/2, sync_op/3, async_op/2]).
 -export_type([actor/0, id/0, uid/0, namespace/0, resource/0, path/0, name/0,
-              vsn/0, group/0,hash/0, subresource/0,
+              vsn/0, group/0,hash/0, subresource/0, verb/0,
               data/0, alarm_class/0, alarm_body/0]).
 -export_type([config/0]).
 
@@ -331,7 +331,7 @@ delete(Id) ->
 
 delete(Id, Opts) ->
     case nkactor_backend:delete(Id, Opts) of
-        {ok, _ActorId, _Meta} ->
+        {ok, _Meta} ->
             ok;
         {error, Error} ->
             {error, Error}
@@ -584,4 +584,11 @@ sync_op(Id, Op, Timeout) ->
 async_op(Id, Op) ->
     nkactor_srv:async_op(Id, Op).
 
+
+%% @doc
+get_services() ->
+    [
+        SrvId ||
+        {SrvId, _Hash, _Pid} <- nkserver_srv:get_all_local(nkactor)
+    ].
 

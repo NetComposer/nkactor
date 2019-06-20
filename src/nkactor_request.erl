@@ -24,6 +24,7 @@
 -export([request/1]).
 -export([get_watches/0]).
 -export([create/3]).
+-export_type([request/0, response/0]).
 
 -include("nkactor_request.hrl").
 -include_lib("nkserver/include/nkserver.hrl").
@@ -38,12 +39,12 @@
 -type request() ::
     #{
         verb => nkactor:verb(),
-        group => group(),
-        namespace => namespace(),
-        resource => resource(),
-        name => nkservice_actor:name(),
-        uid => uid(),
-        subresource => subresource(),
+        group => nkactor:group(),
+        namespace => nkactor:namespace(),
+        resource => nkactor:resource(),
+        name => nkactor:name(),
+        uid => nkactor:uid(),
+        subresource => nkactor:subresource(),
         params => #{binary() => binary()},
         body => term(),
         auth => map(),
@@ -96,10 +97,10 @@ request(Req) ->
     case nkactor_syntax:parse_request(Req) of
         {ok, #{group:=Group, resource:=Res, namespace:=Namespace}=Req2} ->
             nkserver_ot:log(?REQ_SPAN, <<"request parsed">>),
-            case nkactor_namespace:get_namespace(Namespace) of
-                {ok, SrvId, _NamespacePid} ->
-                    nkserver_ot:log(?REQ_SPAN, <<"service found: ~s">>, [SrvId]),
+            case nkactor_namespace:find_service(Namespace) of
+                {ok, SrvId} ->
                     nkserver_ot:update_srv_id(?REQ_SPAN, SrvId),
+                    nkserver_ot:log(?REQ_SPAN, <<"service found: ~s">>, [SrvId]),
                     nkserver_ot:tags(?REQ_SPAN, #{
                         <<"req.group">> => Group,
                         <<"req.resource">> => Res,
@@ -112,8 +113,7 @@ request(Req) ->
                     ?REQ_DEBUG("incoming request for ~s", [Namespace]),
                     Req3 = Req2#{
                         srv => SrvId,
-                        start_time => nklib_date:epoch(usecs),
-                        ot_span_id => ?REQ_SPAN
+                        start_time => nklib_date:epoch(usecs)
                     },
                     nkserver_ot:log(?REQ_SPAN, <<"calling authorize">>),
                     case ?CALL_SRV(SrvId, actor_authorize, [Req3]) of
@@ -184,8 +184,8 @@ do_request(Req) ->
             name = maps:get(name, Req, <<>>),
             namespace = Namespace
         },
-        Config = case catch nkactor_util:get_actor_config(ActorId) of
-            {ok, _SrvId, Config0} ->
+        Config = case catch nkactor_actor:get_config(ActorId) of
+            {ok, SrvId, Config0} ->
                 Config0;
             {error, ConfigError} ->
                 throw({error, ConfigError})
@@ -227,7 +227,7 @@ do_request(Req) ->
     catch
         throw:Throw ->
             nkserver_ot:log(?REQ_SPAN, <<"processing error: ~p">>, [Throw]),
-            ?REQ_LOG(notice, "processing error: ~p", [Thow], Req2),
+            ?REQ_LOG(notice, "processing error: ~p", [Throw], Req),
             Throw
     end.
 
@@ -278,7 +278,7 @@ get(ActorId, Config, Req) ->
         {ok, Actor} ->
             {ok, Actor};
         {error, ReadError} ->
-            nkserver_ot:log(?REQ_SPAN, "error getting actor: ~p", [Error]),
+            nkserver_ot:log(?REQ_SPAN, "error getting actor: ~p", [ReadError]),
             {error, ReadError}
     end.
 

@@ -22,7 +22,8 @@
 -module(nkactor_actor).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([config/1, parse/3, request/3]).
+-export([get_module/3, get_config/1, get_config/2]).
+-export([make_actor_config/1, parse/3, request/3]).
 
 -include("nkactor.hrl").
 -include("nkactor_debug.hrl").
@@ -169,13 +170,82 @@
 
 
 %% ===================================================================
-%% Actor Proxy
+%% Public
 %% ===================================================================
+
+%% @doc Gets the callback module for an actor resource or type
+-spec get_module(nkserver:id(), nkactor:group(),
+                 nkactor:resource()|{singular, binary()}|{camel, binary()}|{short, binary()}) ->
+    module() | undefined.
+
+get_module(SrvId, Group, Key) when is_atom(SrvId) ->
+    nkserver:get_cached_config(SrvId, nkactor, {module, to_bin(Group), Key}).
+
+
+%% @doc Used to get modified configuration for the service responsible
+%% Config is cached in memory after first use
+%% @doc Used to get run-time configuration for an actor type
+-spec get_config(nkserver:id(),  module()) ->
+    map().
+
+get_config(SrvId, Module) when is_atom(SrvId), is_atom(Module) ->
+    case catch nklib_util:do_config_get({nkactor_config, SrvId, Module}, undefined) of
+        undefined ->
+            Config1 = make_actor_config(Module),
+            Config2 = ?CALL_SRV(SrvId, actor_config, [Config1]),
+            Config3 = Config2#{module=>Module},
+            nklib_util:do_config_put({nkactor_config, SrvId, Module}, Config2),
+            Config3;
+        Config when is_map(Config) ->
+            Config
+    end.
+
+
+%% @doc Used to get run-time configuration for an actor type
+-spec get_config(#actor_id{}) ->
+    {ok, nkserver:id(), map()} | {error, term()}.
+
+get_config(#actor_id{group=Group, resource=Resource, namespace=Namespace}) ->
+    case nkactor_namespace:find_service(Namespace) of
+        {ok, SrvId} ->
+            case get_module(SrvId, Group, Resource) of
+                undefined ->
+                    {error, resource_invalid};
+                Module ->
+                    {ok, SrvId, get_config(SrvId, Module)}
+            end;
+        {error, Error} ->
+            {error, Error}
+    end.
+
+
+%% @doc Used to call the 'request' callback on an actor's module, in case
+%% it has implemented it (to support specific requests)
+%% If parse_id is used, logs will be added
+-spec request(nkserver:id(), #actor_id{}, any()) ->
+    response() | continue.
+
+request(SrvId, ActorId, Request) ->
+    Verb = maps:get(verb, Request),
+    SubRes = maps:get(subresource, Request, []),
+    #actor_id{group = Group, resource = Res} = ActorId,
+    Args = [request, Group, Res, [Verb, SubRes, ActorId, Request]],
+    % See nkactor_callback in nkactor_plugin
+    SpanId = maps:get(ot_span_id, Request, undefined),
+    nkserver_ot:log(SpanId, <<"calling actor request">>),
+    case ?CALL_SRV(SrvId, nkactor_callback, Args) of
+        continue ->
+            nkserver_ot:log(SpanId, <<"no specific action">>),
+            continue;
+        Other ->
+            nkserver_ot:log(SpanId, <<"specific action return">>),
+            Other
+    end.
 
 
 %% @doc Used to call the 'config' callback on an actor's module
 %% You normally will use nkdomain_util:get_config/2, as its has a complete set of fields
-config(Module) ->
+make_actor_config(Module) ->
     #{resource:=Res1} = Config = Module:config(),
     Res2 = to_bin(Res1),
     Singular = case Config of
@@ -258,31 +328,6 @@ parse(SrvId, Actor, Request) ->
         {error, Error} ->
             nkserver_ot:log(SpanId, <<"error parsing actor: ~p">>, Error),
             {error, Error}
-    end.
-
-
-
-%% @doc Used to call the 'request' callback on an actor's module, in case
-%% it has implemented it (to support specific requests)
-%% If parse_id is used, logs will be added
--spec request(nkserver:id(), #actor_id{}, any()) ->
-    response() | continue.
-
-request(SrvId, ActorId, Request) ->
-    Verb = maps:get(verb, Request),
-    SubRes = maps:get(subresource, Request, []),
-    #actor_id{group = Group, resource = Res} = ActorId,
-    Args = [request, Group, Res, [Verb, SubRes, ActorId, Request]],
-    % See nkactor_callback in nkactor_plugin
-    SpanId = maps:get(ot_span_id, Request, undefined),
-    nkserver_ot:log(SpanId, <<"calling actor request">>),
-    case ?CALL_SRV(SrvId, nkactor_callback, Args) of
-        continue ->
-            nkserver_ot:log(SpanId, <<"no specific action">>),
-            continue;
-        Other ->
-            nkserver_ot:log(SpanId, <<"specific action return">>),
-            Other
     end.
 
 

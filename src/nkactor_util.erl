@@ -27,14 +27,8 @@
 -include("nkactor_debug.hrl").
 -include_lib("nkserver/include/nkserver.hrl").
 
--export([get_services/0]).
--export([get_module/3]).
--export([get_actor_config/1, get_actor_config/2, get_actor_config/3]).
 -export([pre_create/2, pre_update/3]).
 -export([activate_actors/1]).
-
--type group() :: nkactor:group().
--type resource() :: nkactor:resource().
 
 -define(ACTIVATE_SPAN, auto_activate).
 
@@ -42,63 +36,6 @@
 %% ===================================================================
 %% Public
 %% ===================================================================
-
-%% @doc
-get_services() ->
-    [
-        SrvId ||
-        {SrvId, _Hash, _Pid} <- nkserver_srv:get_all_local(?PACKAGE_CLASS_NKACTOR)
-    ].
-
-
-%% @doc Gets the callback module for an actor resource or type
--spec get_module(nkserver:id(), group(), resource()|{singular, binary()}|{camel, binary()}|{short, binary()}) ->
-    module() | undefined.
-
-get_module(SrvId, Group, Key) ->
-    nkserver:get_cached_config(SrvId, nkactor, {module, to_bin(Group), Key}).
-
-
-%% @doc Used to get run-time configuration for the service responsible
-get_actor_config(ActorId) ->
-    #actor_id{group=Group, resource=Resource, namespace=Namespace} = ActorId,
-    case nkactor_namespace:get_namespace(Namespace) of
-        {ok, SrvId, _} ->
-            case get_module(SrvId, Group, Resource) of
-                undefined ->
-                    {error, resource_invalid};
-                Module ->
-                    {ok, Config} = get_actor_config(SrvId, Module),
-                    {ok, SrvId, Config}
-            end;
-        {error, Error} ->
-            {error, Error}
-    end.
-
-
-%% @doc Used to get modified configuration for the service responsible
-get_actor_config(SrvId, Group, Resource) ->
-    case get_module(SrvId, Group, Resource) of
-        undefined ->
-            {error, resource_invalid};
-        Module ->
-            get_actor_config(SrvId, Module)
-    end.
-
-
-%% @doc Used to get modified configuration for the service responsible
-%% Config is cached in memory after first use
-get_actor_config(SrvId, Module) when is_atom(SrvId), is_atom(Module) ->
-    case catch nklib_util:do_config_get({nkactor_config, SrvId, Module}, undefined) of
-        undefined ->
-            Config1 = nkactor_actor:config(Module),
-            Config2 = ?CALL_SRV(SrvId, actor_config, [Config1]),
-            Config3 = Config2#{module=>Module},
-            nklib_util:do_config_put({nkactor_config, SrvId, Module}, Config2),
-            {ok, Config3};
-        Config when is_map(Config) ->
-            {ok, Config}
-    end.
 
 
 %% @private
@@ -116,8 +53,8 @@ pre_create(Actor, Opts) ->
                     Actor3
             end,
             #{namespace:=Namespace} = Actor4,
-            case nkactor_namespace:get_namespace(Namespace) of
-                {ok, SrvId, _Pid} ->
+            case nkactor_namespace:find_service(Namespace) of
+                {ok, SrvId} ->
                     nkserver_ot:log(SpanId, <<"actor namespace found: ~s">>, [SrvId]),
                     Req1 = maps:get(request, Opts, #{}),
                     Req2 = Req1#{
@@ -157,8 +94,8 @@ pre_update(ActorId, Actor, Opts) ->
         {ok, Actor2} ->
             nkserver_ot:log(SpanId, <<"actor parsed">>),
             #actor_id{namespace=Namespace} = ActorId,
-            case nkactor_namespace:get_namespace(Namespace) of
-                {ok, SrvId, _Pid} ->
+            case nkactor_namespace:find_service(Namespace) of
+                {ok, SrvId} ->
                     nkserver_ot:log(SpanId, <<"actor namespace found: ~s">>, [SrvId]),
                     Req1 = maps:get(request, Opts, #{}),
                     Req2 = Req1#{
@@ -234,9 +171,9 @@ activate_actors(SrvId, StartCursor) ->
     end.
 
 
-%% @private
-to_bin(Term) when is_binary(Term) -> Term;
-to_bin(Term) -> nklib_util:to_binary(Term).
+%%%% @private
+%%to_bin(Term) when is_binary(Term) -> Term;
+%%to_bin(Term) -> nklib_util:to_binary(Term).
 
 
 

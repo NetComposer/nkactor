@@ -23,6 +23,7 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -export([add_modules/3]).
 -export([plugin_deps/0, plugin_meta/0, plugin_config/3, plugin_cache/3]).
+-export([plugin_start/3, plugin_stop/3, plugin_update/4]).
 -export_type([continue/0]).
 
 -type continue() :: continue | {continue, list()}.
@@ -77,12 +78,15 @@ plugin_config(SrvId, Config, #{class:=nkactor}) ->
 %% @doc
 %% Insert basic entries in cache
 %% Also, for each module, entries are added pointing to each module:
-%% - {module, Group::binary(), Resource::binary()}
-%% - {module, Group, {singular, Singular::binary()}
-%% - {module, Group, {camel, Camel::binary()}}
-%% - {module, Group, {short, Short::binary()} (can be several)
+%% - {module, Group::binary(), Resource::binary()} -> module()
+%% - {module, Group, {singular, Singular::binary()} -> module()
+%% - {module, Group, {camel, Camel::binary()}} -> module()
+%% - {module, Group, {short, Short::binary()} -> module() (can be several)
 %%
 %% It also generated the function 'nkactor_callback' after exported actors' functions
+%% -nkactor_callback(sync_op, Group, Res, Args) ->
+%%    apply(nkactor_core_..., sync_op, Args)
+
 plugin_cache(SrvId, Config, _Service) ->
     Cache1 = #{
         base_namespace => maps:get(base_namespace, Config),
@@ -98,6 +102,21 @@ plugin_cache(SrvId, Config, _Service) ->
     {ok, Cache2, [{nkactor_callback, 4, Callbacks}]}.
 
 
+plugin_start(SrvId, #{base_namespace:=Namespace}, _Service) ->
+    nklib_config:put(nkactor_namespace, Namespace, SrvId),
+    ok.
+
+
+plugin_stop(_SrvId, #{base_namespace:=Namespace}, _Service) ->
+    nklib_config:del(nkactor_namespace, Namespace),
+    ok.
+
+plugin_update(SrvId, #{base_namespace:=New}, #{base_namespace:=Old}, _Service) ->
+    nklib_config:del(nkactor_namespace, Old),
+    nklib_config:put(nkactor_namespace, New, SrvId),
+    ok.
+
+
 
 
 %% ===================================================================
@@ -109,7 +128,7 @@ plugin_cache(SrvId, Config, _Service) ->
 expand_modules(Group, Modules, Config) ->
     KeyList = lists:foldl(
         fun(Mod, Acc) ->
-            ModConfig = nkactor_actor:config(Mod),
+            ModConfig = nkactor_actor:make_actor_config(Mod),
             #{
                 resource := Res,
                 singular := Singular,

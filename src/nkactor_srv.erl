@@ -179,7 +179,7 @@ creation | user_op | user_order | unloaded | update | timer.
 %% @private
 %% Call nkactor:create/2 instead calling this directly!
 -spec create(nkactor:actor(), start_opts()) ->
-    {ok, #actor_id{}} | {error, term()}.
+    {ok, pid()} | {error, term()}.
 
 create(Actor, Config) ->
     do_start(create, Actor, Config).
@@ -188,7 +188,7 @@ create(Actor, Config) ->
 %% @private
 %% Call nkactor:activate/1 instead calling this directly!
 -spec start(nkactor:actor(), start_opts()) ->
-    {ok, #actor_id{}} | {error, term()}.
+    {ok, pid()} | {error, term()}.
 
 start(Actor, Config) ->
     do_start(start, Actor, Config).
@@ -196,27 +196,20 @@ start(Actor, Config) ->
 
 %% @private
 do_start(Op, Actor, StartConfig) ->
-    ActorId = nkactor_lib:actor_to_actor_id(Actor),
-    case nkactor_util:get_actor_config(ActorId) of
-        {ok, _SrvId, #{activable:=false}} ->
-            {error, actor_is_not_activable};
-        {ok, SrvId, BaseConfig} ->
-            Ref = make_ref(),
-            Config = maps:merge(BaseConfig, StartConfig),
-            Opts = {Op, ActorId, Actor, Config, SrvId, self(), Ref},
-            case gen_server:start(?MODULE, Opts, []) of
-                {ok, Pid} ->
-                    {ok, ActorId#actor_id{pid = Pid}};
-                ignore ->
-                    receive
-                        {do_start_ignore, Ref, Result} ->
-                            Result
-                    after 5000 ->
-                        error(do_start_ignore)
-                    end;
-                {error, Error} ->
-                    {error, Error}
-            end
+    Ref = make_ref(),
+    Opts = {Op, Actor, StartConfig, self(), Ref},
+    case gen_server:start(?MODULE, Opts, []) of
+        {ok, Pid} ->
+            {ok, Pid};
+        ignore ->
+            receive
+                {do_start_ignore, Ref, Result} ->
+                    Result
+            after 5000 ->
+                error(do_start_ignore)
+            end;
+        {error, Error} ->
+            {error, Error}
     end.
 
 
@@ -586,11 +579,10 @@ do_delete(#actor_st{is_dirty = deleted} = State) ->
     {ok, State};
 
 do_delete(#actor_st{srv = SrvId, actor_id = ActorId, actor = Actor} = State) ->
-    #actor_id{uid = UID} = ActorId,
     case handle(actor_srv_delete, [], State) of
         {ok, State2} ->
-            case ?CALL_SRV(SrvId, actor_db_delete, [SrvId, [UID], #{}]) of
-                {ok, _ActorIds, DbMeta} ->
+            case ?CALL_SRV(SrvId, actor_db_delete, [SrvId, ActorId, #{}]) of
+                {ok, DbMeta} ->
                     ?ACTOR_DEBUG("object deleted: ~p", [DbMeta], State),
                     {ok, do_event(deleted, State2#actor_st{is_dirty = deleted})};
                 {error, Error} ->
@@ -634,8 +626,8 @@ do_save(Reason, SaveOpts, #actor_st{is_dirty = true} = State) ->
                 SaveOpts#{last_metadata=>SavedMeta, ot_span_id=>SpanId}}
     end,
     op_span_log(<<"calling actor_srv_save">>, State3),
-    case handle(actor_srv_save, [Actor2], State2) of
-        {ok, SaveActor, #actor_st{config = Config} = State3} ->
+    case handle(actor_srv_save, [Actor2], State3) of
+        {ok, SaveActor, #actor_st{config = Config}=State4} ->
             case Config of
                 #{async_save:=true} when Reason /= create ->
                     Self = self(),
@@ -654,38 +646,38 @@ do_save(Reason, SaveOpts, #actor_st{is_dirty = true} = State) ->
                                     nkserver_ot:finish(Span4)
                             end
                         end),
-                    op_span_log(<<"launched asynchronous save: ~p">>, [Pid], State3),
+                    op_span_log(<<"launched asynchronous save: ~p">>, [Pid], State4),
                     % We must guess that the save is successful
                     #{metadata:=NewMeta} = Actor2,
-                    State4 = op_span_finish(State3),
-                    {ok, State4#actor_st{saved_metadata = NewMeta, is_dirty = false}};
+                    State5 = op_span_finish(State4),
+                    {ok, State5#actor_st{saved_metadata = NewMeta, is_dirty = false}};
                 _ ->
                     case ?CALL_SRV(SrvId, SaveFun, [SrvId, SaveActor, SaveOpts2]) of
                         {ok, DbMeta} ->
-                            op_span_log(<<"actor saved">>, State3),
-                            State4 = op_span_finish(State3),
-                            ?ACTOR_DEBUG("save (~p) (~p)", [Reason, DbMeta], State4),
+                            op_span_log(<<"actor saved">>, State4),
+                            State5 = op_span_finish(State4),
+                            ?ACTOR_DEBUG("save (~p) (~p)", [Reason, DbMeta], State5),
                             % The metadata of the updated actor is the new old metadata
                             % to check differences
                             #{metadata:=NewMeta} = Actor2,
-                            State5 = State4#actor_st{saved_metadata = NewMeta, is_dirty = false},
-                            {ok, do_event(saved, State5)};
+                            State6 = State5#actor_st{saved_metadata = NewMeta, is_dirty = false},
+                            {ok, do_event(saved, State6)};
                         {error, not_implemented} ->
-                            op_span_log(<<"save not implemented">>, State3),
-                            State4 = op_span_finish(State3),
-                            {{error, not_implemented}, State4};
+                            op_span_log(<<"save not implemented">>, State4),
+                            State5 = op_span_finish(State4),
+                            {{error, not_implemented}, State5};
                         {error, Error} ->
-                            op_span_log(<<"save error: ~p">>, Error, State3),
-                            op_span_error(Error, State3),
-                            State4 = op_span_finish(State3),
-                            ?ACTOR_LOG(warning, "save error: ~p", [Error], State4),
-                            {{error, Error}, State4}
+                            op_span_log(<<"save error: ~p">>, Error, State4),
+                            op_span_error(Error, State4),
+                            State5 = op_span_finish(State4),
+                            ?ACTOR_LOG(warning, "save error: ~p", [Error], State5),
+                            {{error, Error}, State5}
                     end
             end;
-        {ignore, State3} ->
-            op_span_log(<<"save ignored">>, State3),
-            State4 = op_span_finish(State3),
-            {ok, State4}
+        {ignore, State4} ->
+            op_span_log(<<"save ignored">>, State4),
+            State5 = op_span_finish(State4),
+            {ok, State5}
     end;
 
 do_save(_Reason, _SaveOpts, State) ->
@@ -701,59 +693,66 @@ do_save(_Reason, _SaveOpts, State) ->
 -spec init(term()) ->
     {ok, state()} | {stop, term()}.
 
-init({Op, ActorId, Actor, Config, SrvId, Caller, Ref}) ->
+init({Op, Actor, StartConfig, Caller, Ref}) ->
     % We create a top-level span for generic actor operations
     % Also, if Config has option 'ot_span_id' a specific operation span will be created
     % in do_pre_init
-    State1 = do_pre_init(ActorId, Actor, Config, SrvId),
-    State2 = op_span_check_create(Op, Config, State1),
-    op_span_log(<<"starting initialization: ~p">>, [Op], State2),
-    #actor_id{
-        group = Group,
-        resource = Res,
-        name = Name,
-        namespace = Namespace,
-        uid = UID
-    } = ActorId,
-    Tags = #{
-        <<"actor.group">> => Group,
-        <<"actor.resource">> => Res,
-        <<"actor.name">> => Name,
-        <<"actor.namespace">> => Namespace,
-        <<"actor.uid">> => UID,
-        <<"actor.pid">> => list_to_binary(pid_to_list(self()))
-    },
-    op_span_tags(Tags, State2),
-    case do_check_expired(State2) of
-        {false, State3} ->
-            op_span_log(<<"registering with namespace">>, State3),
-            case do_register(1, State3) of
-                {ok, #actor_st{srv = SrvId} = State4} ->
-                    op_span_update_srv_id(SrvId, State4),
-                    op_span_log(<<"registered with namespace">>, State4),
-                    case handle(actor_srv_init, [Op], State4) of
-                        {ok, State5} ->
-                            case do_post_init(Op, State5) of
-                                {ok, State6} ->
-                                    {ok, State6};
+    ActorId = nkactor_lib:actor_to_actor_id(Actor),
+    case nkactor_actor:get_config(ActorId) of
+        {ok, _SrvId, #{activable:=false}} ->
+            Caller ! {do_start_ignore, Ref, {error, actor_is_not_activable}},
+            ignore;
+        {ok, SrvId, BaseConfig} ->
+            Config = maps:merge(BaseConfig, StartConfig),
+            State1 = do_pre_init(ActorId, Actor, Config, SrvId),
+            State2 = op_span_check_create(Op, Config, State1),
+            op_span_log(<<"starting initialization: ~p">>, [Op], State2),
+            #actor_id{
+                group = Group,
+                resource = Res,
+                name = Name,
+                namespace = Namespace,
+                uid = UID
+            } = ActorId,
+            Tags = #{
+                <<"actor.group">> => Group,
+                <<"actor.resource">> => Res,
+                <<"actor.name">> => Name,
+                <<"actor.namespace">> => Namespace,
+                <<"actor.uid">> => UID,
+                <<"actor.pid">> => list_to_binary(pid_to_list(self()))
+            },
+            op_span_tags(Tags, State2),
+            case do_check_expired(State2) of
+                {false, State3} ->
+                    op_span_log(<<"registering with namespace">>, State3),
+                    case do_register(1, State3) of
+                        {ok, State4} ->
+                            op_span_log(<<"registered with namespace">>, State4),
+                            case handle(actor_srv_init, [Op], State4) of
+                                {ok, State5} ->
+                                    case do_post_init(Op, State5) of
+                                        {ok, State6} ->
+                                            {ok, State6};
+                                        {error, Error} ->
+                                            do_init_stop(Error, Caller, Ref, State5)
+                                    end;
                                 {error, Error} ->
-                                    do_init_stop(Error, Caller, Ref, State5)
+                                    do_init_stop(Error, Caller, Ref, State4);
+                                {delete, Error} ->
+                                    _ = do_delete(State4),
+                                    do_init_stop(Error, Caller, Ref, State4)
                             end;
                         {error, Error} ->
-                            do_init_stop(Error, Caller, Ref, State4);
-                        {delete, Error} ->
-                            _ = do_delete(State4),
-                            do_init_stop(Error, Caller, Ref, State4)
+                            do_init_stop(Error, Caller, Ref, State3)
                     end;
-                {error, Error} ->
-                    do_init_stop(Error, Caller, Ref, State3)
-            end;
-        true ->
-            op_span_log(<<"actor is expired on load">>, State2),
-            ?ACTOR_LOG(warning, "actor is expired on load", [], State2),
-            % Call stop functions, probably will delete the actor
-            _ = do_stop(actor_expired, State2),
-            do_init_stop(actor_not_found, Caller, Ref, State2)
+                true ->
+                    op_span_log(<<"actor is expired on load">>, State2),
+                    ?ACTOR_LOG(warning, "actor is expired on load", [], State2),
+                    % Call stop functions, probably will delete the actor
+                    _ = do_stop(actor_expired, State2),
+                    do_init_stop(actor_not_found, Caller, Ref, State2)
+                end
     end.
 
 
@@ -1104,7 +1103,7 @@ do_pre_init(ActorId, Actor, Config, SrvId) ->
     ActorId2 = ActorId#actor_id{pid=self()},
     true = is_binary(UID) andalso UID /= <<>>,
     State = #actor_st{
-        srv = SrvId,    % Provisional
+        srv = SrvId,
         module = maps:get(module, Config),
         config = Config,
         actor_id = ActorId2,
@@ -1214,10 +1213,10 @@ set_unload_policy(#actor_st{actor=Actor, config=Config}=State) ->
 
 
 %% @private
-do_register(Tries, #actor_st{actor_id=ActorId} = State) ->
+do_register(Tries, #actor_st{actor_id=ActorId, srv=SrvId} = State) ->
     case nkactor_namespace:register_actor(ActorId) of
         {ok, SrvId, Pid} ->
-            State2 = State#actor_st{srv=SrvId, namespace_pid=Pid},
+            State2 = State#actor_st{namespace_pid=Pid},
             monitor(process, Pid),
             set_debug(State2),
             ?ACTOR_DEBUG("registered with namespace (pid:~p)", [Pid]),
@@ -1539,12 +1538,12 @@ op_span_error(Error, #actor_st{op_span_ids=[SpanId|_]}) ->
 op_span_error(_Error, #actor_st{op_span_ids=[]}) ->
     ok.
 
-%% @private
-op_span_update_srv_id(SrvId, #actor_st{op_span_ids=[SpanId|_]}) ->
-    nkserver_ot:update_srv_id(SpanId, SrvId);
-
-op_span_update_srv_id(_SrvId, #actor_st{op_span_ids=[]}) ->
-    ok.
+%%%% @private
+%%op_span_update_srv_id(SrvId, #actor_st{op_span_ids=[SpanId|_]}) ->
+%%    nkserver_ot:update_srv_id(SpanId, SrvId);
+%%
+%%op_span_update_srv_id(_SrvId, #actor_st{op_span_ids=[]}) ->
+%%    ok.
 
 
 %%%% @private

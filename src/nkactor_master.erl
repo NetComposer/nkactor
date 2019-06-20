@@ -20,10 +20,15 @@
 %% -------------------------------------------------------------------
 
 %% @doc NkACTOR service master process
-%% - it bases itself on the standard nkserver master process
-%% - when a namespace starts, it registers with the leader of the master
-%%   process that belongs to the namespace's registered service,
+%% - it bases itself on the standard nkserver master process,
+%%   being called from nkactor_callbacks:srv_master_...()
+%% - it will check if the 'base_namespace' is started (at all master processes)
+%%   if it is the leader, it will start and monitor it, and restart if necessary
+%% - when a namespace starts, it registers with the leader of the service
+%%   that manages this namespace's registered service,
 %%   calling register_namespace/2
+%%   (see nkactor_namespace:init/1)
+
 %% - the leader registers and monitors the namespace's processes
 %% - every instance at each node (not only leaders) checks periodically
 %%   that the 'base' namespace for the service
@@ -99,7 +104,7 @@ get_all_namespaces() ->
 
 %% @doc Finds all namespaces for all services under a base
 get_all_namespaces(Namespace) ->
-    Services = nkactor_util:get_services(),
+    Services = nkactor:get_services(),
     NS1 = lists:foldl(
         fun(SrvId, Acc) ->
             case nkserver_master:call_leader(SrvId, {nkactor_get_namespaces, Namespace}) of
@@ -191,21 +196,21 @@ srv_master_handle_call(_Msg, _From, _SrvId, _State) ->
 
 
 %% @private
-srv_master_handle_cast(nkactor_check_base_namespace, SrvId, State) ->
-    {noreply, check_base_namespace(SrvId, false, State)};
+srv_master_handle_cast(nkactor_check_base_namespace, _SrvId, State) ->
+    {noreply, check_base_namespace(false, State)};
 
 srv_master_handle_cast(_Msg,  _SrvId, _State) ->
     continue.
 
 
 %% @private
-srv_master_handle_info({'DOWN', _Ref, process, Pid, _Reason}, SrvId, State) ->
+srv_master_handle_info({'DOWN', _Ref, process, Pid, _Reason}, _SrvId, State) ->
     case State of
         #{base_namespace_pid := Pid} ->
             ?LLOG(notice, "base namespace has failed!", [], State),
             State2 = State#{base_namespace_pid := undefined},
             % We may not be leaders any more
-            State3 = check_base_namespace(SrvId, false, State2),
+            State3 = check_base_namespace(false, State2),
             {noreply, State3};
         _ ->
             case do_remove_namespace(Pid, State) of
@@ -222,7 +227,7 @@ srv_master_handle_info(_Msg, _SrvId, _State) ->
 
 %% @private
 srv_master_timed_check(IsLeader, SrvId, State) ->
-    State2 = check_base_namespace(SrvId, IsLeader, State),
+    State2 = check_base_namespace(IsLeader, State),
     State3 = check_auto_activate(SrvId, State2),
     {continue, [IsLeader, SrvId, State3]}.
 
@@ -234,8 +239,8 @@ srv_master_timed_check(IsLeader, SrvId, State) ->
 %% @private
 %% All processes master (leader or not) check that base namespace is started
 %% The leader also monitors it, to restart it immediately
-check_base_namespace(SrvId, IsLeader, #{base_namespace:=Namespace}=State) ->
-    case nkactor_namespace:get_pid(Namespace) of
+check_base_namespace(IsLeader, #{base_namespace:=Namespace}=State) ->
+    case nkactor_namespace:get_global_pid(Namespace) of
         Pid when is_pid(Pid), IsLeader ->
             case State of
                 #{base_namespace_pid:=Pid} ->
@@ -247,7 +252,7 @@ check_base_namespace(SrvId, IsLeader, #{base_namespace:=Namespace}=State) ->
         Pid when is_pid(Pid) ->
             State;
         undefined ->
-            spawn_link(fun() -> nkactor_namespace:do_start(SrvId, Namespace, true) end),
+            spawn_link(fun() -> nkactor_namespace:start(Namespace) end),
             State
     end.
 
@@ -266,7 +271,6 @@ check_auto_activate(SrvId, #{next_auto_activate:=Next}=State) when Next > 0 ->
 
 check_auto_activate(_SrvId, State) ->
     State.
-
 
 
 %% @private

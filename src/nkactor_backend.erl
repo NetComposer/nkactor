@@ -23,7 +23,7 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([find/2, activate/2, read/2]).
--export([create/2, update/3, delete/2, delete_multi/3]).
+-export([create/2, update/3, delete/2]).
 -export([search/3, aggregation/3, truncate/2]).
 %% -export([check_service/4]).
 %%-export_type([search_obj/0, search_objs_opts/0]).
@@ -85,7 +85,7 @@ find(Id, Opts) ->
         {false, SrvId} ->
             do_find([SrvId], ActorId, SpanId);
         false ->
-            SrvIds = nkactor_util:get_services(),
+            SrvIds = nkactor:get_services(),
             do_find(SrvIds, ActorId, SpanId)
     end.
 
@@ -269,14 +269,14 @@ create(Actor, Opts) ->
             Config2 = Config1#{ot_span_id=>?BACKEND_SPAN},
             span_log(<<"calling actor_create">>),
             case ?CALL_SRV(SrvId, actor_create, [Actor2, Config2]) of
-                {ok, #actor_id{pid=Pid, uid=UID}=ActorId} when is_pid(Pid) ->
+                {ok, Pid} when is_pid(Pid) ->
+                    ActorId = nkactor_lib:actor_to_actor_id(Actor2),
                     #actor_id{
                         namespace = Namespace,
                         group = Group,
                         resource = Res,
                         name = Name,
-                        uid = UID,
-                        pid = Pid
+                        uid = UID
                     } = ActorId,
                     span_tags(#{
                         <<"actor.namespace">> => Namespace,
@@ -378,9 +378,10 @@ update(Id, Actor, Opts) ->
     end.
 
 
+
 %% @doc Deletes an actor
 -spec delete(nkactor:id(), #{cascade=>boolean()}) ->
-    {ok, #actor_id{}, map()} | {error, actor_not_found|term()}.
+    {ok, map()} | {error, actor_not_found|term()}.
 
 delete(Id, Opts) ->
     span_create(delete, undefined, Opts),
@@ -395,19 +396,23 @@ delete(Id, Opts) ->
                 uid = UID,
                 pid = Pid
             } = ActorId2,
+            PidBin = case is_pid(Pid) of
+                true ->
+                    list_to_binary(pid_to_list(Pid));
+                false ->
+                    <<>>
+            end,
             nkserver_ot:tags(?BACKEND_SPAN, #{
                 <<"actor.namespace">> => Namespace,
                 <<"actor.group">> => Group,
                 <<"actor.resource">> => Res,
                 <<"actor.name">> => Name,
                 <<"actor.uid">> => UID,
-                <<"actor.pid">> => list_to_binary(pid_to_list(Pid)),
-                <<"actor.opts.activate">> => true
+                <<"actor.pid">> => PidBin
             }),
-            case maps:get(cascade, Opts, false) of
-                false when is_pid(Pid) ->
-                    span_log(<<"cascade: false (active)">>),
-                    span_log(<<"calling actor_delete">>),
+            case is_pid(Pid) of
+                true ->
+                    span_log(<<"calling actor delete">>),
                     case nkactor_srv:sync_op(ActorId2, delete, infinity) of
                         ok ->
                             % The object is loaded, and it will perform the delete
@@ -417,27 +422,23 @@ delete(Id, Opts) ->
                             % reactivated in the middle, and would stop without saving
                             span_log(<<"successful">>),
                             span_finish(),
-                            {ok, [ActorId2], #{}};
+                            {ok, ActorId2, #{}};
                         {error, Error} ->
                             span_log(<<"error deleting active actor: ~p">>, [Error]),
                             span_error(Error),
                             span_finish(),
                             {error, Error}
                     end;
-                Cascade ->
-                    span_log(<<"cascade: ~p">>, [Cascade]),
-                    % The actor is not activated or we want cascade deletion
-                    Opts2 = #{cascade => Cascade},
-                    % Implementation must call nkactor_srv:raw_stop/1
+                false ->
                     span_log(<<"calling actor_db_delete">>),
-                    case ?CALL_SRV(SrvId, actor_db_delete, [SrvId, [UID], Opts2]) of
-                        {ok, [ActorId], DeleteMeta} ->
+                    case ?CALL_SRV(SrvId, actor_db_delete, [SrvId, ActorId2, Opts]) of
+                        {ok, DeleteMeta} ->
                             % In this case, we must send the deleted events
-                            FakeActor = make_fake_actor(ActorId),
+                            FakeActor = make_fake_actor(ActorId2),
                             nkactor_lib:send_external_event(SrvId, deleted, FakeActor),
                             span_log(<<"successful">>),
                             span_finish(),
-                            {ok, ActorId, DeleteMeta};
+                            {ok, DeleteMeta};
                         {error, Error} ->
                             span_log(<<"error deleting inactive actor: ~p">>, [Error]),
                             span_error(Error),
@@ -451,31 +452,113 @@ delete(Id, Opts) ->
     end.
 
 
-%% @doc
-%% Deletes a number of UIDs and send events
-%% Loaded objects wil be unloaded
-delete_multi(SrvId, UIDs, Opts) ->
-    % Implementation must call nkactor_srv:raw_stop/1
-    span_create(delete_multi, undefined, Opts),
-    span_log(<<"uids: ~p">>, [UIDs]),
-    span_log(<<"calling actor_db_delete">>),
-    case ?CALL_SRV(SrvId, actor_db_delete, [SrvId, UIDs, #{}]) of
-        {ok, ActorIds, DeleteMeta} ->
-            lists:foreach(
-                fun(AId) ->
-                    FakeActor = make_fake_actor(AId),
-                    nkactor_lib:send_external_event(SrvId, deleted, FakeActor)
-                end,
-                ActorIds),
-            span_log(<<"success">>),
-            span_finish(),
-            {ok, ActorIds, DeleteMeta};
-        {error, Error} ->
-            span_log(<<"error deleting multi actor: ~p">>, [Error]),
-            span_error(Error),
-            span_finish(),
-            {error, Error}
-    end.
+
+%%
+%%%% @doc Deletes an actor
+%%-spec delete(nkactor:id(), #{cascade=>boolean()}) ->
+%%    {ok, #actor_id{}, map()} | {error, actor_not_found|term()}.
+%%
+%%delete(Id, Opts) ->
+%%    span_create(delete, undefined, Opts),
+%%    case find(Id, Opts#{ot_span_id=>?BACKEND_SPAN}) of
+%%        {ok, SrvId, #actor_id{uid=UID, pid=Pid}=ActorId2, _Meta} ->
+%%            span_update_srv_id(SrvId),
+%%            #actor_id{
+%%                namespace = Namespace,
+%%                group = Group,
+%%                resource = Res,
+%%                name = Name,
+%%                uid = UID,
+%%                pid = Pid
+%%            } = ActorId2,
+%%            PidBin = case is_pid(Pid) of
+%%                true ->
+%%                    list_to_binary(pid_to_list(Pid));
+%%                false ->
+%%                    <<>>
+%%            end,
+%%            nkserver_ot:tags(?BACKEND_SPAN, #{
+%%                <<"actor.namespace">> => Namespace,
+%%                <<"actor.group">> => Group,
+%%                <<"actor.resource">> => Res,
+%%                <<"actor.name">> => Name,
+%%                <<"actor.uid">> => UID,
+%%                <<"actor.pid">> => PidBin,
+%%                <<"actor.opts.activate">> => true
+%%            }),
+%%            case maps:get(cascade, Opts, false) of
+%%                false when is_pid(Pid) ->
+%%                    span_log(<<"cascade: false (active)">>),
+%%                    span_log(<<"calling actor_delete">>),
+%%                    lager:error("NKLOG DELETE3"),
+%%                    case nkactor_srv:sync_op(ActorId2, delete, infinity) of
+%%                        ok ->
+%%                            % The object is loaded, and it will perform the delete
+%%                            % itself, including sending the event (a full event)
+%%                            % It will stop, and when the backend calls raw_stop/2
+%%                            % the actor would not be activated, unless it is
+%%                            % reactivated in the middle, and would stop without saving
+%%                            span_log(<<"successful">>),
+%%                            span_finish(),
+%%                            {ok, [ActorId2], #{}};
+%%                        {error, Error} ->
+%%                            span_log(<<"error deleting active actor: ~p">>, [Error]),
+%%                            span_error(Error),
+%%                            span_finish(),
+%%                            {error, Error}
+%%                    end;
+%%                Cascade ->
+%%                    span_log(<<"cascade: ~p">>, [Cascade]),
+%%                    % The actor is not activated or we want cascade deletion
+%%                    Opts2 = #{cascade => Cascade},
+%%                    % Implementation must call nkactor_srv:raw_stop/1
+%%                    span_log(<<"calling actor_db_delete">>),
+%%                    case ?CALL_SRV(SrvId, actor_db_delete, [SrvId, UID, Opts2]) of
+%%                        {ok, DeleteMeta} ->
+%%                            % In this case, we must send the deleted events
+%%                            FakeActor = make_fake_actor(ActorId),
+%%                            nkactor_lib:send_external_event(SrvId, deleted, FakeActor),
+%%                            span_log(<<"successful">>),
+%%                            span_finish(),
+%%                            {ok, ActorId, DeleteMeta};
+%%                        {error, Error} ->
+%%                            span_log(<<"error deleting inactive actor: ~p">>, [Error]),
+%%                            span_error(Error),
+%%                            span_finish(),
+%%                            {error, Error}
+%%                    end
+%%            end;
+%%        {error, Error} ->
+%%            span_delete(),
+%%            {error, Error}
+%%    end.
+%%
+%%
+%%%% @doc
+%%%% Deletes a number of UIDs and send events
+%%%% Loaded objects wil be unloaded
+%%delete_multi(SrvId, UIDs, Opts) ->
+%%    % Implementation must call nkactor_srv:raw_stop/1
+%%    span_create(delete_multi, undefined, Opts),
+%%    span_log(<<"uids: ~p">>, [UIDs]),
+%%    span_log(<<"calling actor_db_delete">>),
+%%    case ?CALL_SRV(SrvId, actor_db_delete, [SrvId, UIDs, #{}]) of
+%%        {ok, ActorIds, DeleteMeta} ->
+%%            lists:foreach(
+%%                fun(AId) ->
+%%                    FakeActor = make_fake_actor(AId),
+%%                    nkactor_lib:send_external_event(SrvId, deleted, FakeActor)
+%%                end,
+%%                ActorIds),
+%%            span_log(<<"success">>),
+%%            span_finish(),
+%%            {ok, ActorIds, DeleteMeta};
+%%        {error, Error} ->
+%%            span_log(<<"error deleting multi actor: ~p">>, [Error]),
+%%            span_error(Error),
+%%            span_finish(),
+%%            {error, Error}
+%%    end.
 
 
 %% @doc
@@ -591,9 +674,9 @@ do_activate(Id, Opts) ->
                     Config1 = maps:with([ttl], Opts),
                     Config2 = Config1#{ot_span_id=>?BACKEND_SPAN},
                     case ?CALL_SRV(SrvId, actor_activate, [Actor, Config2]) of
-                        {ok, ActorId3} ->
+                        {ok, Pid} ->
                             nkserver_ot:log(SpanId, <<"actor is activated">>),
-                            {ok, SrvId, ActorId3, Meta2};
+                            {ok, SrvId, ActorId#actor_id{pid=Pid}, Meta2};
                         {error, Error} ->
                             nkserver_ot:log(SpanId, <<"error activating actor: ~p">>, [Error]),
                             {error, Error}

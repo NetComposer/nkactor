@@ -27,9 +27,10 @@
 %%
 %% When an actor starts, it registers with its namespace, calling register_actor/1
 %% - The namespace is first located, we first try the local node cache
+%%   (local node is used to store 'srv_id' as metadata that is not in global registry)
 %% - If it is not found in cache or globally, it is started, first finding
 %%   the service it belongs to, asking to base namespaces, until eventually
-%%   reaching a 'base' namespace for a service, that will always be present
+%%   reaching a 'base' namespace that a service must have registered
 %%
 %% When someone asks for a registered actor
 %% - It is first tried in the local cache (valid for full name and UID)
@@ -71,9 +72,9 @@
 
 -export([register_actor/1, find_actor/1, find_registered_actor/1, get_registered_actors/1]).
 -export([get_counters/1, get_detailed_counters/1]).
--export([get_namespace/1, find_namespace/1, stop_namespace/2]).
+-export([find_service/1, start/1, stop/2]).
 -export([register_index/2, find_index/2]).
--export([get_pid/1, do_start/3]).
+-export([get_global_pid/1]).
 -export([init/1, terminate/2, code_change/3, handle_call/3, handle_cast/2,
          handle_info/2]).
 
@@ -107,8 +108,13 @@ register_actor(#actor_id{uid=UID, pid=Pid, namespace=Namespace}=ActorId) ->
         uid = UID,
         pid = Pid
     } = ActorId,
-    true = is_binary(Group) andalso is_binary(Res) andalso is_binary(Name) andalso
-        is_binary(Namespace) andalso is_binary(UID) andalso is_pid(Pid),
+    true =
+        is_binary(Group) andalso
+        is_binary(Res) andalso
+        is_binary(Name) andalso
+        is_binary(Namespace) andalso
+        is_binary(UID) andalso
+        is_pid(Pid),
     case start_and_call(Namespace, {nkactor_register_actor, ActorId}) of
         {ok, SrvId, NamespacePid} ->
             % This actor will probably we used now in this node
@@ -266,92 +272,25 @@ find_index(Namespace, Index) ->
 %% ===================================================================
 
 
-%% @doc Finds an existing namespace or starts a new one, storing it in local cache
--spec get_namespace(nkactor:namespace()) ->
-    {ok, nkserver:id(), pid()} | {error, nkserver:msg()}.
-
-get_namespace(Namespace) ->
-    Namespace2 = to_bin(Namespace),
-    case nklib_proc:values({nkactor_namespace, Namespace2}) of
-        [{SrvId, Pid}|_] ->
-            {ok, SrvId, Pid};
-        [] ->
-            case start_and_call(Namespace2, nkactor_get_namespace) of
-                {ok, SrvId, Pid} ->
-                    nklib_proc:put({nkactor_namespace, Namespace2}, SrvId, Pid),
-                    {ok, SrvId, Pid};
-                {error, Error} ->
-                    {error, Error}
-            end
-    end.
-
-
-%% @doc
-start_namespace(Namespace) ->
-    Namespace2 = to_bin(Namespace),
-    case find_namespace(Namespace2) of
-        Pid when is_pid(Pid) ->
-            {ok, Pid};
-        undefined ->
-            case find_service(Namespace2) of
-                {ok, SrvId} ->
-                    do_start(SrvId, Namespace2, false);
-                {error, Error} ->
-                    {error, Error}
-            end
-    end.
-
-
-%% @doc
-find_namespace(Namespace) ->
-    Namespace2 = to_bin(Namespace),
-    case nklib_proc:values({nkactor_namespace, Namespace2}) of
-        [{_SrvId, Pid}|_] ->
-            Pid;
-        [] ->
-            case get_pid(Namespace2) of
-                Pid when is_pid(Pid) ->
-                    Pid;
-                undefined ->
-                    undefined
-            end
-    end.
-
-
-%% @doc Stops a running namespace
-%% If reason is 'normal' all registered actors will stop, and they will not restart automatically
-%% For other reasons (or if it is killed) actors will re-register
-stop_namespace(Namespace, Reason) ->
-    Namespace2 = to_bin(Namespace),
-    case find_namespace(Namespace2) of
-        Pid when is_pid(Pid) ->
-            gen_server:cast(Pid, {nkactor_stop, Reason});
-        undefined ->
-            {error, namespace_not_started}
-    end.
-
-
-%% @doc Tries to find the service that manages a namespace
-%% If the called namespace does not exists, the "parent" namespace is tried
+%% @doc Gets the service that manages a namespace, start it if it was not started
 -spec find_service(nkactor:namespace()) ->
-    {ok, nkserver:id()} | {error, term()}.
+    {ok, nkserver:id()} | {error, nkserver:msg()}.
 
 find_service(Namespace) ->
-    case call(Namespace, nkactor_get_namespace) of
-        {ok, SrvId, _Pid} ->
+    Namespace2 = to_bin(Namespace),
+    case nklib_proc:values({nkactor_namespace, Namespace2}) of
+        [{SrvId, _Pid}|_] ->
             {ok, SrvId};
-        {error, _} ->
-            case binary:split(Namespace, <<".">>) of
-                [Base] ->
-                    % Namespace has no "." in it, is a base one
-                    case call(Base, nkactor_get_namespace) of
-                        {ok, SrvId, _Pid} ->
-                            {ok, SrvId};
-                        {error, Error} ->
-                            {error, Error}
-                    end;
-                [_Head, Base] ->
-                    find_service(Base)
+        [] ->
+            case start_and_call(Namespace2, nkactor_get_service) of
+                {ok, SrvId, Pid} ->
+                    % We store it associated to pid in case the namespace to srv
+                    % association changes in an update, we only need to
+                    % unload the namespace process
+                    nklib_proc:put({nkactor_namespace, Namespace2}, SrvId, Pid),
+                    {ok, SrvId};
+                {error, Error} ->
+                    {error, Error}
             end
     end.
 
@@ -359,26 +298,16 @@ find_service(Namespace) ->
 %% @private Starts a new namespace and registers it globally
 %% It will normally stop after a timeout if no actor is registered,
 %% unless IsMain is true
--spec do_start(nkserver:id(), nkactor:namespace(), boolean()) ->
+-spec start(nkactor:namespace()) ->
     {ok, pid()} | {error, term()}.
 
-do_start(SrvId, Namespace, IsMain) when is_binary(Namespace)->
+start(Namespace) when is_binary(Namespace)->
     case nkactor_lib:normalized_name(Namespace) of
         Namespace ->
             Global = get_global_name(Namespace),
-            gen_server:start({global, Global}, ?MODULE, [SrvId, Namespace, IsMain], []);
+            gen_server:start({global, Global}, ?MODULE, [Namespace], []);
         _ ->
             {error, {namespace_invalid, Namespace}}
-    end.
-
-
-%% @private
-call(Namespace, Msg) ->
-    case nklib_util:call2({global, get_global_name(Namespace)}, Msg) of
-        process_not_found ->
-            {error, {namespace_not_found, Namespace}};
-        Other ->
-            Other
     end.
 
 
@@ -389,7 +318,7 @@ start_and_call(Namespace, Msg) ->
 
 %% @private
 start_and_call(Namespace, Msg, Timeout, Tries) when Tries > 0 ->
-    case start_namespace(Namespace) of
+    case maybe_start(Namespace) of
         {ok, Pid} ->
             case nklib_util:call2(Pid, Msg, Timeout) of
                 process_not_found ->
@@ -408,8 +337,46 @@ start_and_call(Namespace, _Msg, _Timeout, _Tries) ->
     {error, {namespace_not_found, Namespace}}.
 
 
+%% @doc
+maybe_start(Namespace) ->
+    case get_global_pid(Namespace) of
+        Pid when is_pid(Pid) ->
+            {ok, Pid};
+        undefined ->
+            start(to_bin(Namespace))
+    end.
+
+
+%% @private Perform a sync call to the namespace process if it exists
+call(Namespace, Msg) ->
+    call(Namespace, Msg, 5000).
+
+
+%% @private Perform a sync call to the namespace process if it exists
+call(Namespace, Msg, Timeout) ->
+    case nklib_util:call2({global, get_global_name(Namespace)}, Msg, Timeout) of
+        process_not_found ->
+            {error, {namespace_not_found, Namespace}};
+        Other ->
+            Other
+    end.
+
+
+%% @doc Stops a running namespace
+%% If reason is 'normal' all registered actors will stop, and they will not restart automatically
+%% For other reasons (or if it is killed) actors will re-register
+stop(Namespace, Reason) ->
+    case get_global_pid(Namespace) of
+        Pid when is_pid(Pid) ->
+            gen_server:cast(Pid, {nkactor_stop, Reason});
+        undefined ->
+            {error, namespace_not_started}
+    end.
+
+
+
 %% @private
-get_pid(Namespace) ->
+get_global_pid(Namespace) ->
     global:whereis_name(get_global_name(Namespace)).
 
 
@@ -431,7 +398,7 @@ get_global_name(Namespace) ->
 -record(state, {
     id :: nkserver:id(),
     namespace :: nkactor:namespace(),
-    is_master :: boolean(),
+    permanent :: boolean(),
     master_pid :: pid() | undefined,
     register_ets :: term(),
     counters = #{} :: counters()
@@ -439,23 +406,28 @@ get_global_name(Namespace) ->
 
 
 %% @private
-init([SrvId, Namespace, IsMaster]) ->
-    case nkactor_master:register_namespace(SrvId, Namespace) of
-        {ok, MasterPid} ->
-            monitor(process, MasterPid),
-            State = #state{
-                id = SrvId,
-                is_master = IsMaster,
-                namespace = Namespace,
-                master_pid = MasterPid,
-                register_ets = ets:new(nkactor_register, [])
-            },
-            ?LLOG(notice, "started (~p)", [self()], State),
-            case IsMaster of
-                true ->
-                    {ok, State};
-                false ->
-                    {ok, State, ?TIMEOUT}
+init([Namespace]) ->
+    case do_find_service(Namespace) of
+        {ok, SrvId, Permanent} ->
+            case nkactor_master:register_namespace(SrvId, Namespace) of
+                {ok, MasterPid} ->
+                    monitor(process, MasterPid),
+                    State = #state{
+                        id = SrvId,
+                        permanent = Permanent,
+                        namespace = Namespace,
+                        master_pid = MasterPid,
+                        register_ets = ets:new(nkactor_register, [])
+                    },
+                    ?LLOG(notice, "started (~p)", [self()], State),
+                    case Permanent of
+                        true ->
+                            {ok, State};
+                        false ->
+                            {ok, State, ?TIMEOUT}
+                    end;
+                {error, Error} ->
+                    {stop, Error}
             end;
         {error, Error} ->
             {stop, Error}
@@ -467,7 +439,7 @@ init([SrvId, Namespace, IsMaster]) ->
     {noreply, #state{}} | {reply, term(), #state{}} |
     {stop, Reason::term(), #state{}} | {stop, Reason::term(), Reply::term(), #state{}}.
 
-handle_call(nkactor_get_namespace, _From, #state{id=SrvId}=State) ->
+handle_call(nkactor_get_service, _From, #state{id=SrvId}=State) ->
     reply({ok, SrvId, self()}, State);
 
 handle_call({nkactor_register_actor, ActorId}, _From, State) ->
@@ -585,6 +557,7 @@ terminate(_Reason, _State) ->
 %% Register & Counters
 %% ===================================================================
 
+%% @private
 do_register_actor(ActorId, #state{register_ets=Ets}=State) ->
     case do_find_actor_name(ActorId, State) of
         false ->
@@ -696,18 +669,41 @@ do_rm_actor_counters(#actor_id{group=Group, resource=Res}, #state{counters=Types
 %% ===================================================================
 
 %% @private
-reply(Reply, #state{is_master=true}=State) ->
+do_find_service(Namespace) ->
+    do_find_service(Namespace, true).
+
+
+%% @private
+do_find_service(Namespace, IsBase) ->
+    % Key stored for the base namespace for each service in plugin_start()
+    case nklib_config:get(nkactor_namespace, Namespace) of
+        undefined ->
+            case binary:split(Namespace, <<".">>) of
+                [Base] ->
+                    % It has no "." and it is not a base namespace, so
+                    % it no service provides it
+                    {error, {service_not_found, Base}};
+                [_Head, Base] ->
+                    do_find_service(Base, false)
+            end;
+        SrvId ->
+            {ok, SrvId, IsBase}
+    end.
+
+
+%% @private
+reply(Reply, #state{permanent=true}=State) ->
     {reply, Reply, State};
 
-reply(Reply, #state{is_master=false}=State) ->
+reply(Reply, #state{permanent=false}=State) ->
     {reply, Reply, State, ?TIMEOUT}.
 
 
 %% @private
-noreply(#state{is_master=true}=State) ->
+noreply(#state{permanent=true}=State) ->
     {noreply, State};
 
-noreply(#state{is_master=false}=State) ->
+noreply(#state{permanent=false}=State) ->
     {noreply, State, ?TIMEOUT}.
 
 
