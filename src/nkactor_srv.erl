@@ -196,8 +196,16 @@ start(Actor, Config) ->
 
 %% @private
 do_start(Op, Actor, StartConfig) ->
+    StartConfig2 = case StartConfig of
+        #{ot_span_id:=SpanId} ->
+            % We are going to a different process, if it is a
+            % process dictionary span is not going to pass
+            StartConfig#{ot_span_id:=nkserver_ot:make_parent(SpanId)};
+        _ ->
+            StartConfig
+    end,
     Ref = make_ref(),
-    Opts = {Op, Actor, StartConfig, self(), Ref},
+    Opts = {Op, Actor, StartConfig2, self(), Ref},
     case gen_server:start(?MODULE, Opts, []) of
         {ok, Pid} ->
             {ok, Pid};
@@ -386,7 +394,7 @@ do_set_next_status_time(NextTime, #actor_st{actor = Actor} = State) ->
     Meta2 = Meta#{next_status_time => NextTime2},
     Actor2 = Actor#{metadata:=Meta2},
     self() ! nkactor_check_next_status_time,
-    State#actor_st{actor = Actor2, is_dirty = true}.
+    do_set_dirty(State#actor_st{actor=Actor2}).
 
 
 %% @private
@@ -397,7 +405,7 @@ do_unset_next_status_time(#actor_st{actor = Actor, status_timer = Timer} = State
         true ->
             Meta2 = maps:remove(next_status_time, Meta),
             Actor2 = Actor#{metadata:=Meta2},
-            State#actor_st{actor = Actor2, is_dirty = true};
+            do_set_dirty(State#actor_st{actor=Actor2});
         false ->
             State
     end.
@@ -530,13 +538,13 @@ do_update(UpdActor, Opts, #actor_st{srv = SrvId, actor_id = ActorId, actor = Act
                         NewMeta#{is_enabled=>false}
                 end,
                 Data2 = maps:merge(Data, UpdDataFields),
-                NewActor = Actor#{data=>Data2, metadata:=NewMeta2},
-                case nkactor_lib:update_check_fields(NewActor, State2) of
+                NewActor1 = Actor#{data=>Data2, metadata:=NewMeta2},
+                case nkactor_lib:update_check_fields(NewActor1, State2) of
                     ok ->
                         op_span_log(<<"calling actor_srv_update">>, State2),
-                        case handle(actor_srv_update, [NewActor], State2) of
-                            {ok, NewActor2, State3} ->
-                                State4 = State3#actor_st{actor = NewActor2, is_dirty = true},
+                        case handle(actor_srv_update, [NewActor1], State2) of
+                            {ok, NewActor3, State3} ->
+                                State4 = do_set_dirty(State3#actor_st{actor=NewActor3}),
                                 State5 = do_enabled(UpdEnabled, State4),
                                 State6 = set_unload_policy(State5),
                                 op_span_log(<<"calling do_save">>, State6),
@@ -595,6 +603,12 @@ do_delete(#actor_st{srv = SrvId, actor_id = ActorId, actor = Actor} = State) ->
 
 
 %% @private
+do_set_dirty(#actor_st{actor=Actor}=ActorSt) ->
+    Actor2 = nkactor_lib:update(Actor, nklib_date:now_3339(usecs)),
+    ActorSt#actor_st{actor = Actor2, is_dirty = true}.
+
+
+%% @private
 do_save(Reason, State) ->
     do_save(Reason, #{}, State).
 
@@ -609,8 +623,7 @@ do_save(Reason, SaveOpts, #actor_st{is_dirty = true} = State) ->
         config = Config
     } = State,
     nklib_util:cancel_timer(Timer),
-    Actor2 = nkactor_lib:update(Actor, nklib_date:now_3339(usecs)),
-    State2 = State#actor_st{actor = Actor2, save_timer = undefined},
+    State2 = State#actor_st{save_timer = undefined},
     State3 = op_span_force_create(save, State2),
     #actor_st{op_span_ids=[SpanId|_]} = State3,
     {SaveFun, SaveOpts2} = case Reason of
@@ -626,7 +639,7 @@ do_save(Reason, SaveOpts, #actor_st{is_dirty = true} = State) ->
                 SaveOpts#{last_metadata=>SavedMeta, ot_span_id=>SpanId}}
     end,
     op_span_log(<<"calling actor_srv_save">>, State3),
-    case handle(actor_srv_save, [Actor2], State3) of
+    case handle(actor_srv_save, [Actor], State3) of
         {ok, SaveActor, #actor_st{config = Config}=State4} ->
             case Config of
                 #{async_save:=true} when Reason /= create ->
@@ -648,7 +661,7 @@ do_save(Reason, SaveOpts, #actor_st{is_dirty = true} = State) ->
                         end),
                     op_span_log(<<"launched asynchronous save: ~p">>, [Pid], State4),
                     % We must guess that the save is successful
-                    #{metadata:=NewMeta} = Actor2,
+                    #{metadata:=NewMeta} = Actor,
                     State5 = op_span_finish(State4),
                     {ok, State5#actor_st{saved_metadata = NewMeta, is_dirty = false}};
                 _ ->
@@ -659,7 +672,7 @@ do_save(Reason, SaveOpts, #actor_st{is_dirty = true} = State) ->
                             ?ACTOR_DEBUG("save (~p) (~p)", [Reason, DbMeta], State5),
                             % The metadata of the updated actor is the new old metadata
                             % to check differences
-                            #{metadata:=NewMeta} = Actor2,
+                            #{metadata:=NewMeta} = Actor,
                             State6 = State5#actor_st{saved_metadata = NewMeta, is_dirty = false},
                             {ok, do_event(saved, State6)};
                         {error, not_implemented} ->
@@ -766,12 +779,12 @@ handle_call({nkactor_sync_op, Op}, From, State) ->
         {reply, Reply, #actor_st{} = State2} ->
             reply(Reply, do_refresh_ttl(State2));
         {reply_and_save, Reply, #actor_st{} = State2} ->
-            {_, State3} = do_save(user_op, State2#actor_st{is_dirty = true}),
+            {_, State3} = do_save(user_op, do_set_dirty(State2)),
             reply(Reply, do_refresh_ttl(State3));
         {noreply, #actor_st{} = State2} ->
             noreply(do_refresh_ttl(State2));
         {noreply_and_save, #actor_st{} = State2} ->
-            {_, State3} = do_save(user_op, State2#actor_st{is_dirty = true}),
+            {_, State3} = do_save(user_op, do_set_dirty(State2)),
             noreply(do_refresh_ttl(State3));
         {stop, Reason, Reply, #actor_st{} = State2} ->
             gen_server:reply(From, Reply),
@@ -800,7 +813,7 @@ handle_cast({nkactor_async_op, Op}, State) ->
         {noreply, #actor_st{} = State2} ->
             noreply(do_refresh_ttl(State2));
         {noreply_and_save, #actor_st{} = State2} ->
-            {_, State3} = do_save(user_op, State2#actor_st{is_dirty = true}),
+            {_, State3} = do_save(user_op, do_set_dirty(State2)),
             noreply(do_refresh_ttl(State3));
         {stop, Reason, #actor_st{} = State2} ->
             do_stop(Reason, State2);
@@ -955,7 +968,7 @@ do_sync_op(save, _From, State) ->
     reply(Reply, do_refresh_ttl(State2));
 
 do_sync_op(force_save, _From, State) ->
-    {Reply, State2} = do_save(user_order, State#actor_st{is_dirty=true}),
+    {Reply, State2} = do_save(user_order, do_set_dirty(State)),
     reply(Reply, do_refresh_ttl(State2));
 
 do_sync_op(get_unload_policy, _From, #actor_st{unload_policy=Policy}=State) ->
@@ -1052,8 +1065,11 @@ do_async_op({send_event, Event}, State) ->
 do_async_op({set_next_status_time, Time}, State) ->
     noreply(do_set_next_status_time(Time, State));
 
-do_async_op({set_dirty, IsDirty}, State) when is_boolean(IsDirty)->
-    noreply(do_refresh_ttl(State#actor_st{is_dirty=IsDirty}));
+do_async_op({set_dirty, true}, State) ->
+    noreply(do_refresh_ttl(do_set_dirty(State)));
+
+do_async_op({set_dirty, false}, State) ->
+    noreply(do_refresh_ttl(State#actor_st{is_dirty = false}));
 
 do_async_op(save, State) ->
     do_async_op({save, user_order}, State);
@@ -1134,6 +1150,7 @@ do_post_init(Op, State) ->
     State2 = case Op of
         create ->
             op_span_log(<<"starting creation save">>, State),
+            % Do not update generation
             State#actor_st{is_dirty=true};
         _ ->
             State
@@ -1329,7 +1346,7 @@ do_add_alarm(Class, Body, #actor_st{actor=Actor}=State) when is_map(Body) ->
     Alarms2 = Alarms#{nklib_util:to_binary(Class) => Body2},
     Meta2 = Meta#{in_alarm => true, alarms => Alarms2},
     Actor2 = Actor#{metadata:=Meta2},
-    State2 = State#actor_st{actor=Actor2, is_dirty=true},
+    State2 = do_set_dirty(State#actor_st{actor=Actor2}),
     do_refresh_ttl(do_event({alarm_fired, Class, Body}, State2)).
 
 
@@ -1340,7 +1357,7 @@ do_clear_all_alarms(#actor_st{actor=Actor}=State) ->
         #{in_alarm:=true} ->
             Meta2 = maps:without([in_alarm, alarms], Meta),
             Actor2 = Actor#{metadata := Meta2},
-            State2 = State#actor_st{actor=Actor2, is_dirty=true},
+            State2 = do_set_dirty(State#actor_st{actor=Actor2}),
             do_refresh_ttl(do_event(alarms_all_cleared, State2));
         _ ->
             State
@@ -1394,10 +1411,9 @@ is_next_status_time(State) ->
                     Meta2 = maps:remove(next_status_time, Meta),
                     State2 = State#actor_st{
                         status_timer = undefined,
-                        actor = Actor#{metadata:=Meta2},
-                        is_dirty = true
+                        actor = Actor#{metadata:=Meta2}
                     },
-                    {true, State2};
+                    {true, do_set_dirty(State2)};
                 Step ->
                     Step2 = min(Step, ?MAX_STATUS_TIME),
                     Timer2 = erlang:send_after(Step2, self(), nkactor_check_next_status_time),

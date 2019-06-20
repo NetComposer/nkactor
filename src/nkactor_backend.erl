@@ -34,8 +34,6 @@
 
 -define(LLOG(Type, Txt, Args), lager:Type("NkACTOR DB "++Txt, Args)).
 
--define(BACKEND_SPAN, nkactor_backend).
-
 %% ===================================================================
 %% Types
 %% ===================================================================
@@ -68,7 +66,7 @@
 %% - If not, and we have a persistence module, it will be loaded from disk
 %% - We then check if it is activated, once we have the namespace
 %%
-%% If 'ot_span_id' is defined, logs will be added and it will be used as parent
+%% If 'ot_span_id' is defined, logs will be added
 
 -spec find(nkactor:id(), map()) ->
     {ok, nkserver:id(), #actor_id{}, Meta::map()} | {error, actor_not_found|term()}.
@@ -120,26 +118,21 @@ do_find([SrvId|Rest], ActorId, SpanId) ->
 
 %% @doc Finds an actors's pid or loads it from storage and activates it
 %% See description for get_opts()
-%% Except for already activated actors, it will generate a new span
+%% If 'ot_span_id' is defined, logs will be added
 -spec activate(nkactor:id(), nkactor:get_opts()) ->
     {ok, nkserver:id(), #actor_id{}, Meta::map()} | {error, actor_not_found|term()}.
 
 activate(Id, Opts) ->
-    span_create(activate, undefined, Opts),
-    case do_activate(Id, Opts#{ot_span_id=>?BACKEND_SPAN}) of
+    SpanId = maps:get(ot_span_id, Opts, undefined),
+    case do_activate(Id, Opts#{ot_span_id=>SpanId}) of
         {ok, SrvId, ActorId2, Meta2} ->
-            span_update_srv_id(SrvId),
-            span_log(<<"actor is activated">>),
-            span_finish(),
+            nkserver_ot:log(SpanId, <<"actor is activated">>),
             {ok, SrvId, ActorId2, Meta2};
         {error, actor_not_found} ->
-            span_delete(),
             {error, actor_not_found};
         {error, Error} ->
-            span_delete(),
             {error, Error}
     end.
-
 
 
 %% @doc Reads an actor from memory if loaded, or disk if not
@@ -153,13 +146,15 @@ activate(Id, Opts) ->
     {ok, nkactor:actor(),  Meta::map()} | {error, actor_not_found|term()}.
 
 read(Id, #{activate:=false}=Opts) ->
+    SpanId = maps:get(ot_span_id, Opts, undefined),
     case maps:get(consume, Opts, false) of
         true ->
             {error, cannot_consume};
         false ->
-            case find(Id, Opts) of
+            Opts2 = Opts#{ot_span_id=>SpanId},
+            case find(Id, Opts2) of
                 {ok, SrvId, ActorId, _} ->
-                    case do_read(SrvId, ActorId, Opts) of
+                    case do_read(SrvId, ActorId, Opts2) of
                         {ok, Actor, DbMeta} ->
                             {ok, SrvId, Actor, DbMeta};
                         {error, persistence_not_defined} ->
@@ -173,25 +168,19 @@ read(Id, #{activate:=false}=Opts) ->
     end;
 
 read(Id, Opts) ->
-    case find(Id, Opts) of
-        {ok, SrvId, #actor_id{pid=Pid}=ActorId, Meta} when is_pid(Pid) ->
-            {ok, SrvId, ActorId, Meta};
-        {ok, SrvId, ActorId, _Meta} ->
-            case do_activate(ActorId, Opts) of
-                {ok, ActorId2, Meta2} ->
-                    Consume = maps:get(consume, Opts, false),
-                    Op = case Consume of
-                        true ->
-                            consume_actor;
-                        false ->
-                            get_actor
-                    end,
-                    case nkactor_srv:sync_op(ActorId2, Op, infinity) of
-                        {ok, Actor} ->
-                            {ok, SrvId, Actor, Meta2};
-                        {error, Error} ->
-                            {error, Error}
-                    end;
+    SpanId = maps:get(ot_span_id, Opts, undefined),
+    case do_activate(Id, Opts#{ot_span_id=>SpanId}) of
+        {ok, SrvId, ActorId2, Meta2} ->
+            Consume = maps:get(consume, Opts, false),
+            Op = case Consume of
+                true ->
+                    consume_actor;
+                false ->
+                    get_actor
+            end,
+            case nkactor_srv:sync_op(ActorId2, Op, infinity) of
+                {ok, Actor} ->
+                    {ok, SrvId, Actor, Meta2};
                 {error, Error} ->
                     {error, Error}
             end;
@@ -218,8 +207,8 @@ create(Actor, #{activate:=false}=Opts) ->
                 name := Name,
                 uid := UID
             } = Actor2,
-            span_update_srv_id(SrvId),
-            span_tags(#{
+            span_update_srv_id(create, SrvId),
+            span_tags(create, #{
                 <<"actor.namespace">> => Namespace,
                 <<"actor.group">> => Group,
                 <<"actor.resource">> => Res,
@@ -230,44 +219,44 @@ create(Actor, #{activate:=false}=Opts) ->
             % Non recommended for non-relational databases, if name is not
             % randomly generated
             Config1 = maps:with([check_unique], Opts),
-            Config2 = Config1#{ot_span_id=>?BACKEND_SPAN},
-            span_log(<<"calling actor_db_create">>),
+            Config2 = Config1#{ot_span_id=>span_id(create)},
+            span_log(create, <<"calling actor_db_create">>),
             case ?CALL_SRV(SrvId, actor_db_create, [SrvId, Actor2, Config2]) of
                 {ok, Meta} ->
                     % Use the alternative method for sending the event
                     nkactor_lib:send_external_event(SrvId, created, Actor2),
                     case Opts of
                         #{get_actor:=true} ->
-                            ActorId = nkactor_lib:actor_to_actor_id(Actor2),
-                            span_finish(),
-                            {ok, SrvId, ActorId, Meta};
+                            span_finish(create),
+                            {ok, SrvId, Actor2, Meta};
                         _ ->
-                            span_finish(),
-                            {ok, SrvId, Actor2, Meta}
+                            ActorId = nkactor_lib:actor_to_actor_id(Actor2),
+                            span_finish(create),
+                            {ok, SrvId, ActorId, Meta}
                     end;
                 {error, Error} ->
-                    span_log(<<"error creating actor: ~p">>, [Error]),
-                    span_error(Error),
-                    span_finish(),
+                    span_log(create, <<"error creating actor: ~p">>, [Error]),
+                    span_error(create, Error),
+                    span_finish(create),
                     {error, Error}
             end;
         {error, Error} ->
-            span_delete(),
+            span_delete(create),
             {error, Error}
     end;
 
 create(Actor, Opts) ->
     span_create(create, undefined, Opts),
-    case nkactor_util:pre_create(Actor, Opts#{ot_span_id=>?BACKEND_SPAN}) of
+    case nkactor_util:pre_create(Actor, Opts#{ot_span_id=>span_id(create)}) of
         {ok, SrvId, Actor2} ->
-            span_update_srv_id(SrvId),
+            span_update_srv_id(create, SrvId),
             % If we use the activate option, the object is first
             % registered with leader, so you cannot have two with same
             % name even on non-relational databases
             % The process will send the 'create' event in-server
             Config1 = maps:with([ttl, check_unique], Opts),
-            Config2 = Config1#{ot_span_id=>?BACKEND_SPAN},
-            span_log(<<"calling actor_create">>),
+            Config2 = Config1#{ot_span_id=>span_id(create)},
+            span_log(create, <<"calling actor create">>),
             case ?CALL_SRV(SrvId, actor_create, [Actor2, Config2]) of
                 {ok, Pid} when is_pid(Pid) ->
                     ActorId = nkactor_lib:actor_to_actor_id(Actor2),
@@ -278,7 +267,7 @@ create(Actor, Opts) ->
                         name = Name,
                         uid = UID
                     } = ActorId,
-                    span_tags(#{
+                    span_tags(create, #{
                         <<"actor.namespace">> => Namespace,
                         <<"actor.group">> => Group,
                         <<"actor.resource">> => Res,
@@ -289,33 +278,33 @@ create(Actor, Opts) ->
                     }),
                     case Opts of
                         #{get_actor:=true} ->
-                            span_log(<<"calling get_actor">>),
+                            span_log(create, <<"calling get_actor">>),
                             case nkactor_srv:sync_op(ActorId, get_actor, infinity) of
                                 {ok, Actor3} ->
-                                    span_finish(),
+                                    span_finish(create),
                                     {ok, SrvId, Actor3, #{}};
                                 {error, Error} ->
-                                    span_log(<<"error getting actor: ~p">>, [Error]),
-                                    span_error(Error),
-                                    span_finish(),
+                                    span_log(create, <<"error getting actor: ~p">>, [Error]),
+                                    span_error(create, Error),
+                                    span_finish(create),
                                     {error, Error}
                             end;
                         _ ->
-                            span_finish(),
+                            span_finish(create),
                             {ok, SrvId, ActorId, #{}}
                     end;
                 {error, actor_already_registered} ->
-                    span_log(<<"uniquess violation">>),
-                    span_finish(),
+                    span_log(create, <<"uniquess violation">>),
+                    span_finish(create),
                     {error, uniqueness_violation};
                 {error, Error} ->
-                    span_log(<<"error creating actor: ~p">>, [Error]),
-                    span_error(Error),
-                    span_finish(),
+                    span_log(create, <<"error creating actor: ~p">>, [Error]),
+                    span_error(create, Error),
+                    span_finish(create),
                     {error, Error}
             end;
         {error, Error} ->
-            span_delete(),
+            span_delete(create),
             {error, Error}
     end.
 
@@ -331,10 +320,10 @@ update(_Id, _Actor, #{activate:=false}) ->
 update(Id, Actor, Opts) ->
     span_create(update, undefined, Opts),
     ActorId = nkactor_lib:id_to_actor_id(Id),
-    case nkactor_util:pre_update(ActorId, Actor, Opts#{ot_span_id=>?BACKEND_SPAN}) of
+    case nkactor_util:pre_update(ActorId, Actor, Opts#{ot_span_id=>span_id(update)}) of
         {ok, SrvId, Actor2} ->
-            span_update_srv_id(SrvId),
-            case do_activate(ActorId, Opts#{ot_span_id=>?BACKEND_SPAN}) of
+            span_update_srv_id(update, SrvId),
+            case do_activate(ActorId, Opts#{ot_span_id=>span_id(update)}) of
                 {ok, SrvId, ActorId2, _} ->
                     #actor_id{
                         namespace = Namespace,
@@ -344,7 +333,7 @@ update(Id, Actor, Opts) ->
                         uid = UID,
                         pid = Pid
                     } = ActorId2,
-                    nkserver_ot:tags(?BACKEND_SPAN, #{
+                    span_tags(update, #{
                         <<"actor.namespace">> => Namespace,
                         <<"actor.group">> => Group,
                         <<"actor.resource">> => Res,
@@ -354,26 +343,26 @@ update(Id, Actor, Opts) ->
                         <<"actor.opts.activate">> => true
                     }),
                     UpdOpts1 = maps:get(update_opts, Opts, #{}),
-                    UpdOpts2 = UpdOpts1#{ot_span_id=>?BACKEND_SPAN},
-                    span_log(<<"calling update actor">>),
+                    UpdOpts2 = UpdOpts1#{ot_span_id=>span_id(update)},
+                    span_log(update, <<"calling update actor">>),
                     case nkactor_srv:sync_op(ActorId2, {update, Actor2, UpdOpts2}, infinity) of
                         {ok, Actor3} ->
-                            span_finish(),
+                            span_finish(update),
                             {ok, SrvId, Actor3, #{}};
                         {error, Error} ->
-                            span_log(<<"error calling actor update actor: ~p">>, [Error]),
-                            span_error(Error),
-                            span_finish(),
+                            span_log(update, <<"error calling actor update actor: ~p">>, [Error]),
+                            span_error(update, Error),
+                            span_finish(update),
                             {error, Error}
                     end;
                 {error, Error} ->
-                    span_log(<<"error updating actor: ~p">>, [Error]),
-                    span_error(Error),
-                    span_finish(),
+                    span_log(update, <<"error updating actor: ~p">>, [Error]),
+                    span_error(update, Error),
+                    span_finish(update),
                     {error, Error}
             end;
         {error, Error} ->
-            span_delete(),
+            span_delete(update),
             {error, Error}
     end.
 
@@ -385,9 +374,9 @@ update(Id, Actor, Opts) ->
 
 delete(Id, Opts) ->
     span_create(delete, undefined, Opts),
-    case find(Id, Opts#{ot_span_id=>?BACKEND_SPAN}) of
+    case find(Id, Opts#{ot_span_id=>span_id(delete)}) of
         {ok, SrvId, #actor_id{uid=UID, pid=Pid}=ActorId2, _Meta} ->
-            span_update_srv_id(SrvId),
+            span_update_srv_id(delete, SrvId),
             #actor_id{
                 namespace = Namespace,
                 group = Group,
@@ -402,7 +391,7 @@ delete(Id, Opts) ->
                 false ->
                     <<>>
             end,
-            nkserver_ot:tags(?BACKEND_SPAN, #{
+            span_tags(delete, #{
                 <<"actor.namespace">> => Namespace,
                 <<"actor.group">> => Group,
                 <<"actor.resource">> => Res,
@@ -412,7 +401,7 @@ delete(Id, Opts) ->
             }),
             case is_pid(Pid) of
                 true ->
-                    span_log(<<"calling actor delete">>),
+                    span_log(delete, <<"calling actor delete">>),
                     case nkactor_srv:sync_op(ActorId2, delete, infinity) of
                         ok ->
                             % The object is loaded, and it will perform the delete
@@ -420,34 +409,35 @@ delete(Id, Opts) ->
                             % It will stop, and when the backend calls raw_stop/2
                             % the actor would not be activated, unless it is
                             % reactivated in the middle, and would stop without saving
-                            span_log(<<"successful">>),
-                            span_finish(),
-                            {ok, ActorId2, #{}};
+                            span_log(delete, <<"successful">>),
+                            span_finish(delete),
+                            {ok, #{}};
                         {error, Error} ->
-                            span_log(<<"error deleting active actor: ~p">>, [Error]),
-                            span_error(Error),
-                            span_finish(),
+                            span_log(delete, <<"error deleting active actor: ~p">>, [Error]),
+                            span_error(delete, Error),
+                            span_finish(delete),
                             {error, Error}
                     end;
                 false ->
-                    span_log(<<"calling actor_db_delete">>),
+                    span_log(delete, <<"calling actor_db_delete">>),
                     case ?CALL_SRV(SrvId, actor_db_delete, [SrvId, ActorId2, Opts]) of
                         {ok, DeleteMeta} ->
                             % In this case, we must send the deleted events
                             FakeActor = make_fake_actor(ActorId2),
                             nkactor_lib:send_external_event(SrvId, deleted, FakeActor),
-                            span_log(<<"successful">>),
-                            span_finish(),
+                            span_log(delete, <<"successful">>),
+                            span_finish(delete),
                             {ok, DeleteMeta};
                         {error, Error} ->
-                            span_log(<<"error deleting inactive actor: ~p">>, [Error]),
-                            span_error(Error),
-                            span_finish(),
+                            span_log(delete, <<"error deleting inactive actor: ~p">>, [Error]),
+                            span_error(delete, Error),
+                            span_finish(delete),
                             {error, Error}
                     end
             end;
         {error, Error} ->
-            span_delete(),
+            % We didn't identify any service
+            span_delete(delete),
             {error, Error}
     end.
 
@@ -567,18 +557,18 @@ delete(Id, Opts) ->
 
 search(SrvId, SearchType, Opts) ->
     span_create(search, SrvId, Opts),
-    span_log("search type: ~p (~p)", [SearchType, Opts]),
-    span_log("calling actor_db_search"),
-    Opts2 = Opts#{ot_span_id=>?BACKEND_SPAN},
+    span_log(search, "search type: ~p (~p)", [SearchType, Opts]),
+    span_log(search, "calling actor_db_search"),
+    Opts2 = Opts#{ot_span_id=>span_id(search)},
     case ?CALL_SRV(SrvId, actor_db_search, [SrvId, SearchType, Opts2]) of
         {ok, Result, Meta} ->
-            span_log("success: ~p", [Meta]),
-            span_finish(),
+            span_log(search, "success: ~p", [Meta]),
+            span_finish(search),
             {ok, Result, Meta};
         {error, Error} ->
-            span_log(<<"error in search: ~p">>, [Error]),
-            span_error(Error),
-            span_finish(),
+            span_log(search, <<"error in search: ~p">>, [Error]),
+            span_error(search, Error),
+            span_finish(search),
             {error, Error}
     end.
 
@@ -588,19 +578,19 @@ search(SrvId, SearchType, Opts) ->
     {ok, [{binary(), integer()}], Meta::map()} | {error, term()}.
 
 aggregation(SrvId, AggType, Opts) ->
-    span_create(search, SrvId, Opts),
-    span_log("aggregation type: ~p (~p)", [AggType, Opts]),
-    span_log("calling actor_db_aggregate"),
-    Opts2 = Opts#{ot_span_id=>?BACKEND_SPAN},
+    span_create(agg, SrvId, Opts),
+    span_log(agg, "agg type: ~p (~p)", [AggType, Opts]),
+    span_log(agg, "calling actor_db_aggregate"),
+    Opts2 = Opts#{ot_span_id=>span_id(agg)},
     case ?CALL_SRV(SrvId, actor_db_aggregate, [SrvId, AggType, Opts2]) of
         {ok, Result, Meta} ->
-            span_log("success: ~p", [Meta]),
-            span_finish(),
+            span_log(agg, "success: ~p", [Meta]),
+            span_finish(agg),
             {ok, Result, Meta};
         {error, Error} ->
-            span_log(<<"error in aggregation: ~p">>, [Error]),
-            span_error(Error),
-            span_finish(),
+            span_log(agg, <<"error in agg: ~p">>, [Error]),
+            span_error(agg, Error),
+            span_finish(agg),
             {error, Error}
     end.
 
@@ -610,19 +600,19 @@ aggregation(SrvId, AggType, Opts) ->
     ok | {error, term()}.
 
 truncate(SrvId, Opts) ->
-    span_create(search, SrvId, Opts),
-    span_log("truncate (~p)", [Opts]),
-    span_log("calling actor_db_truncate"),
-    Opts2 = Opts#{ot_span_id=>?BACKEND_SPAN},
+    span_create(truncate, SrvId, Opts),
+    span_log(truncate, "truncate (~p)", [Opts]),
+    span_log(truncate, "calling actor_db_truncate"),
+    Opts2 = Opts#{ot_span_id=>span_id(truncate)},
     case ?CALL_SRV(SrvId, actor_db_truncate, [SrvId, Opts2]) of
         ok ->
-            span_log("success"),
-            span_finish(),
+            span_log(truncate, "success"),
+            span_finish(truncate),
             ok;
         {error, Error} ->
-            span_log(<<"error in trunctae: ~p">>, [Error]),
-            span_error(Error),
-            span_finish(),
+            span_log(truncate, <<"error in trunctae: ~p">>, [Error]),
+            span_error(truncate, Error),
+            span_finish(truncate),
             {error, Error}
     end.
 
@@ -672,7 +662,7 @@ do_activate(Id, Opts) ->
                 {ok, Actor, Meta2} ->
                     nkserver_ot:log(SpanId, <<"calling actor_activate">>),
                     Config1 = maps:with([ttl], Opts),
-                    Config2 = Config1#{ot_span_id=>?BACKEND_SPAN},
+                    Config2 = Config1#{ot_span_id=>SpanId},
                     case ?CALL_SRV(SrvId, actor_activate, [Actor, Config2]) of
                         {ok, Pid} ->
                             nkserver_ot:log(SpanId, <<"actor is activated">>),
@@ -719,40 +709,45 @@ make_fake_actor(ActorId) ->
 %% @private
 span_create(Op, SrvId, Opts) ->
     Parent = maps:get(ot_span_id, Opts, undefined),
-    Name = <<"ActorStore::", (nklib_util:to_binary(Op))/binary>>,
-    nkserver_ot:new(?BACKEND_SPAN, SrvId, Name, Parent).
+    Name = <<"ActorBackend::", (nklib_util:to_binary(Op))/binary>>,
+    nkserver_ot:new(span_id(Op), SrvId, Name, Parent).
 
 
 %% @private
-span_finish() ->
-    nkserver_ot:finish(?BACKEND_SPAN).
+span_id(Op) ->
+    {?MODULE, Op}.
 
 
 %% @private
-span_log(Log) ->
-    nkserver_ot:log(?BACKEND_SPAN, Log).
+span_finish(Op) ->
+    nkserver_ot:finish(span_id(Op)).
 
 
 %% @private
-span_log(Txt, Data) ->
-    nkserver_ot:log(?BACKEND_SPAN, Txt, Data).
+span_log(Op, Log) ->
+    nkserver_ot:log(span_id(Op), Log).
 
 
 %% @private
-span_tags(Tags) ->
-    nkserver_ot:tags(?BACKEND_SPAN, Tags).
+span_log(Op, Txt, Data) ->
+    nkserver_ot:log(span_id(Op), Txt, Data).
 
 
 %% @private
-span_error(Error) ->
-    nkserver_ot:tag_error(?BACKEND_SPAN, Error).
+span_tags(Op, Tags) ->
+    nkserver_ot:tags(span_id(Op), Tags).
 
 
 %% @private
-span_update_srv_id(SrvId) ->
-    nkserver_ot:update_srv_id(?BACKEND_SPAN, SrvId).
+span_error(Op, Error) ->
+    nkserver_ot:tag_error(span_id(Op), Error).
 
 
 %% @private
-span_delete() ->
-    nkserver_ot:delete(?BACKEND_SPAN).
+span_update_srv_id(Op, SrvId) ->
+    nkserver_ot:update_srv_id(span_id(Op), SrvId).
+
+
+%% @private
+span_delete(Op) ->
+    nkserver_ot:delete(span_id(Op)).

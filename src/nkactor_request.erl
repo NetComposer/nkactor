@@ -84,7 +84,6 @@
 %% - Calls actor_authorize/1 for authorization of the request
 %% - Finds service managing namespace, and adds srv and start_time
 
-
 -spec request(request()) ->
     {ok|created, map(), request()} |
     {raw, {CT::binary(), Body::binary()}, request()} |
@@ -95,25 +94,41 @@ request(Req) ->
     nkserver_ot:new(?REQ_SPAN, undefined, <<"Actor::Request">>, ParentSpan),
     % Gets group and vsn from request or body
     case nkactor_syntax:parse_request(Req) of
-        {ok, #{group:=Group, resource:=Res, namespace:=Namespace}=Req2} ->
+        {ok, Req2} ->
+            #{
+                verb := Verb,
+                group := Group,
+                resource := Res,
+                namespace := Namespace,
+                subresource := SubRes
+            } = Req2,
+            SpanName = <<
+                "Actor::Request ",
+                " ", (nklib_util:to_upper(Verb))/binary, " ",
+                "(", SubRes/binary, ")"
+            >>,
+            nkserver_ot:update_name(?REQ_SPAN, SpanName),
             nkserver_ot:log(?REQ_SPAN, <<"request parsed">>),
             case nkactor_namespace:find_service(Namespace) of
                 {ok, SrvId} ->
                     nkserver_ot:update_srv_id(?REQ_SPAN, SrvId),
                     nkserver_ot:log(?REQ_SPAN, <<"service found: ~s">>, [SrvId]),
                     nkserver_ot:tags(?REQ_SPAN, #{
+                        <<"req.verb">> => Verb,
                         <<"req.group">> => Group,
                         <<"req.resource">> => Res,
                         <<"req.namespace">> => Namespace,
                         <<"req.name">> => maps:get(name, Req2, <<>>),
-                        <<"req.srv">> => SrvId
+                        <<"req.srv">> => SrvId,
+                        <<"req.subresource">> => SubRes
                     }),
                     % Add uid later
                     set_debug(SrvId),
                     ?REQ_DEBUG("incoming request for ~s", [Namespace]),
                     Req3 = Req2#{
                         srv => SrvId,
-                        start_time => nklib_date:epoch(usecs)
+                        start_time => nklib_date:epoch(usecs),
+                        ot_span_id => ?REQ_SPAN
                     },
                     nkserver_ot:log(?REQ_SPAN, <<"calling authorize">>),
                     case ?CALL_SRV(SrvId, actor_authorize, [Req3]) of
@@ -123,13 +138,13 @@ request(Req) ->
                             Reply = do_request(Req5),
                             case reply(Reply, Req5) of
                                 {raw, {CT, Bin}, Req6} ->
-                                    nkserver_ot:log(?REQ_SPAN, "reply raw: ~s", [CT]),
-                                    ?REQ_DEBUG("reply raw: ~p", [CT], Req6),
+                                    nkserver_ot:log(?REQ_SPAN, "replied 'raw': ~s", [CT]),
+                                    ?REQ_DEBUG("replied 'raw': ~s", [CT], Req6),
                                     nkserver_ot:finish(?REQ_SPAN),
                                     {raw, {CT, Bin}, Req6};
                                 {Status, Data, Req6} ->
-                                    nkserver_ot:log(?REQ_SPAN, "reply: ~p", [Reply]),
-                                    ?REQ_DEBUG("reply: ~p", [Reply], Req6),
+                                    nkserver_ot:log(?REQ_SPAN, "replied '~s': ~p", [Status, Data]),
+                                    ?REQ_DEBUG("replied '~s': ~p", [Status, Reply], Req6),
                                     nkserver_ot:finish(?REQ_SPAN),
                                     {Status, Data, Req6}
                             end;
@@ -204,16 +219,16 @@ do_request(Req) ->
             {error, ParseError} ->
                 throw({error, ParseError})
         end,
-        SubRes = maps:get(subresource, Req2, []),
+        SubRes = maps:get(subresource, Req2, <<>>),
         nkserver_ot:log(?REQ_SPAN, <<"calling specific processing">>),
         case nkactor_actor:request(SrvId, ActorId, Req2) of
-            continue when SubRes == [] ->
+            continue when SubRes == <<"/">> ->
                 nkserver_ot:log(?REQ_SPAN, <<"processing default">>),
                 ?REQ_DEBUG("processing default", [], Req2),
                 default_request(Verb, ActorId, Config, Req2);
             continue ->
                 nkserver_ot:log(?REQ_SPAN, <<"invalid subresource: ~s">>, [SubRes]),
-                ?REQ_LOG(warning, "Invalid subresource (~p)", [{Verb, SubRes, ActorId}]),
+                ?REQ_LOG(notice, "Invalid subresource (~p)", [{Verb, SubRes, ActorId}]),
                 {error, resource_invalid};
             {continue, #{resource:=Res2}=Req3} when Res2 /= Res ->
                 nkserver_ot:log(?REQ_SPAN, <<"request updated. New resource: ~p">>, [Res2]),
@@ -306,7 +321,8 @@ create(ActorId, Config, Req) ->
                     ?REQ_DEBUG("creating actor ~p ~p", [Actor2, Opts]),
                     % request is included in case it could be used for specific parsing
                     % when calling nkactor_actor:parse()
-                    case nkactor:create(Actor2, Opts#{get_actor=>true, request=>Req}) of
+                    CreateOpts = Opts#{get_actor=>true, request=>Req, ot_span_id=>?REQ_SPAN},
+                    case nkactor:create(Actor2, CreateOpts) of
                         {ok, Actor3} ->
                             {created, Actor3};
                         {error, Error} ->
@@ -355,7 +371,7 @@ delete(ActorId, _Config, Req) ->
     Params = maps:get(params, Req, #{}),
     Opts = #{cascade => maps:get(cascade, Params, false)},
     ?REQ_DEBUG("processing delete ~p (~p)", [ActorId, Opts]),
-    case nkactor:delete(ActorId, Opts) of
+    case nkactor:delete(ActorId, Opts#{ot_span_id=>?REQ_SPAN}) of
         ok ->
             {status, actor_deleted};
         {error, Error} ->

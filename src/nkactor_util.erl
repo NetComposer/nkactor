@@ -138,7 +138,7 @@ activate_actors(SrvId) ->
 %% @private
 activate_actors(SrvId, StartCursor) ->
     nkserver_ot:log(?ACTIVATE_SPAN, {"starting cursor: ~s", [StartCursor]}),
-    ParentSpan = nkserver_ot:get_parent(?ACTIVATE_SPAN),
+    ParentSpan = nkserver_ot:make_parent(?ACTIVATE_SPAN),
     case nkactor:search_active(SrvId, #{last_cursor=>StartCursor, ot_span_id=>ParentSpan, size=>2}) of
         {ok, [], _} ->
             nkserver_ot:log(?ACTIVATE_SPAN, <<"no more actors">>),

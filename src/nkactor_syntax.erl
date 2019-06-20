@@ -176,7 +176,7 @@ request_syntax() ->
         resource => binary,
         name => binary,
         uid => binary,
-        subresource => fun parse_subresource/1,
+        subresource => path,
         params => map,
         body => [map, binary],
         auth => map,
@@ -187,7 +187,8 @@ request_syntax() ->
         callback => atom,
         meta => map,
         '__defaults' => #{
-            verb => get
+            verb => get,
+            subresource => <<"/">>
         }
     }.
 
@@ -200,23 +201,6 @@ body_syntax() ->
         resource => binary,
         name => binary
     }.
-
-
-
-%% @private
-parse_subresource([]) ->
-    {ok, []};
-
-parse_subresource([Term|_]=List) when is_binary(Term) ->
-    {ok, List};
-
-parse_subresource(Term) when is_binary(Term) ->
-    {ok, binary:split(Term, <<"/">>, [global])};
-
-parse_subresource(Term) ->
-    parse_subresource(to_bin(Term)).
-
-
 
 
 %% @doc
@@ -293,6 +277,6 @@ params_syntax(_Veb) ->
 
 
 
-%% @private
-to_bin(Term) when is_binary(Term) -> Term;
-to_bin(Term) -> nklib_util:to_binary(Term).
+%%%% @private
+%%to_bin(Term) when is_binary(Term) -> Term;
+%%to_bin(Term) -> nklib_util:to_binary(Term).

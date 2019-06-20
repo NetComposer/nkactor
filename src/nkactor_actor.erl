@@ -36,7 +36,6 @@
 
 %-type id() :: nkactor:id().
 -type actor() :: nkactor:actor().
--type subresource() :: nkactor:subresource().
 -type actor_id() :: nkactor:actor_id().
 -type config() :: nkactor:config().
 -type request() :: nkactor_request:request().
@@ -62,7 +61,7 @@
 %% @doc Called to process an incoming API
 %% SrvId will be the service supporting the domain in ApiReq
 %% If not implemented, or 'continue' is returned, standard processing will apply
--callback request(verb(), subresource(), actor_id(), request()) ->
+-callback request(verb(), [binary()], actor_id(), request()) ->
     response() | continue.
 
 
@@ -226,10 +225,10 @@ get_config(#actor_id{group=Group, resource=Resource, namespace=Namespace}) ->
     response() | continue.
 
 request(SrvId, ActorId, Request) ->
-    Verb = maps:get(verb, Request),
-    SubRes = maps:get(subresource, Request, []),
+    #{verb:=Verb, subresource:=SubRes} = Request,
+    [<<>>|SubRes2] = binary:split(SubRes, <<"/">>, [global]),
     #actor_id{group = Group, resource = Res} = ActorId,
-    Args = [request, Group, Res, [Verb, SubRes, ActorId, Request]],
+    Args = [request, Group, Res, [Verb, SubRes2, ActorId, Request]],
     % See nkactor_callback in nkactor_plugin
     SpanId = maps:get(ot_span_id, Request, undefined),
     nkserver_ot:log(SpanId, <<"calling actor request">>),
