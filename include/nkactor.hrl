@@ -34,7 +34,7 @@
     is_enabled :: boolean(),
     activated_time :: nklib_util:m_timestamp(),
     links :: nklib_links:links(),
-    stop_reason = false :: false | nkserver:msg(),
+    stop_reason = false :: false | nkserver:status(),
     unload_policy :: permanent | {expires, nklib_util:m_timestamp()} | {ttl, integer()},
     ttl_timer :: reference() | undefined,
     status_timer :: reference() | undefined,

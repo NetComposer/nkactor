@@ -21,7 +21,7 @@
 %% @doc Default plugin callbacks
 -module(nkactor_callbacks).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
--export([msg/1]).
+-export([status/1]).
 -export([actor_authorize/1, actor_config/1, actor_create/2, actor_activate/2,
          actor_external_event/3]).
 -export([actor_srv_init/2, actor_srv_terminate/2,
@@ -46,66 +46,54 @@
 
 
 %% ===================================================================
-%% Errors Callbacks
+%% Status Callbacks
 %% ===================================================================
 
 
-msg(actor_already_registered)       -> "Actor already registered";
-msg({actor_invalid, A})                 -> {"Invalid actor '~s'", [A]};
-msg(actor_deleted)                  -> "Actor has been deleted";
-msg({actors_deleted, N})            -> {"Actors (~p) have been deleted", [N]};
-msg(actor_expired)	                -> "Actor has expired";
-msg(actor_has_linked_actors)	    -> "Actor has linked actors";
-msg(actor_id_invalid)               -> "Actor ID is invalid";
-msg(actor_is_not_activable)	        -> "Actor is not activable";
-msg(actor_not_found)                -> "Actor not found";
-msg(actor_updated)                  -> "Actor updated";
-msg({api_group_unknown, G})             -> {"Unknown API Group '~s'", [G]};
-msg({api_incompatible, A})              -> {"Incompatible API '~s'", [A]};
-msg({api_unknown, A})                   -> {"Unknown API '~s'", [A]};
-msg(auth_invalid) 	                -> "Auth token is not valid";
-msg({body_too_large, Max})              -> {"Body too large (max is ~p)", [Max]};
-msg(cannot_consume)                 -> "Actor cannot be consumed";
-msg({could_not_load_parent, Id})        -> {"Object could not load parent '~s'", [Id]};
-msg({could_not_load_domain, Id})        -> {"Object could not load domain '~s'", [Id]};
-msg({could_not_load_user, Id})          -> {"Object could not load user '~s'", [Id]};
-msg(content_type_invalid)               -> "ContentType is invalid";
-msg(db_not_defined)                     -> "Object database not defined";
-msg(delete_too_deep)                -> "DELETE is too deep";
-msg(download_server_error)              -> "Download server error";
-msg(element_action_unknown)             -> "Unknown element action";
-msg(group_unknown)                      -> "Invalid Group";
-msg(invalid_content_type)               -> "Invalid Content-Type";
-msg({invalid_name, N})                  -> {"Invalid name '~s'", [N]};
-msg(invalid_session)                   -> "Invalid session";
-msg(kind_unknown)                       -> "Invalid kind";
-msg({kind_unknown, K})                  -> {"Invalid kind '~s'", [K]};
-msg(multiple_ids)                       -> "Multiple matching ids";
-msg(missing_auth_header)                -> "Missing authentication header";
-msg({module_failed, Module})            -> {"Module '~s' failed", [Module]};
-msg({namespace_invalid, N})         -> {"Namespace '~s' is invalid", [N]};
-msg({namespace_not_found, N})       -> {"Namespace '~s' not found", [N]};
-msg(operation_invalid) 	                -> "Invalid operation";
-msg(operation_token_invalid) 	        -> "Operation token is invalid";
-msg({parameter_invalid, Txt})      	    -> {"Invalid parameter '~s'", [Txt]};
-msg({parameter_missing, Txt})      	    -> {"Missing parameter '~s'", [Txt]};
-msg(parse_error)   		                -> "Object parse error";
-msg(password_valid)                     -> "Password is valid";
-msg(password_invalid) 	                -> "Password is not valid";
-msg(request_body_invalid)               -> "The request body is invalid";
-msg(resource_invalid)                   -> "Invalid resource";
-msg({resource_invalid, R})              -> {"Invalid resource '~s'", [R]};
-msg({resource_invalid, G, R})           -> {"Invalid resource '~s' (~s)", [R, G]};
-msg(service_down)                       -> "Service is down";
-msg(session_already_present)            -> "Session is already present";
-msg(session_not_found)                  -> "Session not found";
-msg(session_is_disabled)                -> "Session is disabled";
-msg(uid_not_found)      		        -> "Unknown UID";
-msg(upload_server_error)                -> "Upload server error";
-msg(url_unknown)      		            -> "Unknown url";
-msg(verb_not_allowed)                   -> "Verb is not allowed";
-msg(watch_stop)                         -> "Watch stopped";
-msg(_) -> continue.
+status(actor_already_registered)    -> "Actor already registered";
+status({actor_invalid, A})          -> {"Invalid actor '~s'", [A], #{code=>400, data=>#{actor=>A}}};
+status(actor_deleted)               -> "Actor has been deleted";
+status({actors_deleted, N})         -> {"Actors (~p) have been deleted", [N]};
+status(actor_expired)	            -> "Actor has expired";
+status(actor_has_linked_actors)	    -> {"Actor has linked actors", #{code=>422}};
+status(actor_id_invalid)            -> "Actor ID is invalid";
+status(actor_is_not_activable)	    -> {"Actor is not activable", #{code=>422}};
+status(actor_not_found)             -> {"Actor not found", #{code=>404}};
+status(actor_updated)               -> "Actor updated";
+status({api_group_unknown, G})      -> {"Unknown API Group '~s'", [G], #{code=>404, data=>#{group=>G}}};
+status({api_incompatible, A})       -> {"Incompatible API '~s'", [A], #{code=>422, data=>#{api=>A}}};
+status({api_unknown, A})            -> {"Unknown API '~s'", [A], #{code=>404, data=>#{api=>A}}};
+status({body_too_large, Max})       -> {"Body too large (max is ~p)", [Max]};
+status(cannot_consume)              -> "Actor cannot be consumed";
+status(data_value_invalid)          -> {"Data value is invalid", #{code=>400}};
+status(db_not_defined)              -> "Object database not defined";
+status(delete_too_deep)             -> "DELETE is too deep";
+status(download_server_error)       -> "Download server error";
+status(element_action_unknown)      -> "Unknown element action";
+status(group_unknown)               -> "Invalid Group";
+status(invalid_content_type)        -> "Invalid Content-Type";
+status({invalid_name, N})           -> {"Invalid name '~s'", [N]};
+status(invalid_session)             -> "Invalid session";
+status(kind_unknown)                -> "Invalid kind";
+status({kind_unknown, K})           -> {"Invalid kind '~s'", [K], #{code=>400, data=>#{kind=>K}}};
+status(linked_actor_unknown)        -> {"Linked actor is unknown", #{code=>409}};
+status({linked_actor_unknown, Id})  -> {"Linked actor is unknown: ~s", [Id], #{code=>409, data=>#{link=>Id}}};
+status(multiple_ids)                -> "Multiple matching ids";
+status(missing_auth_header)         -> "Missing authentication header";
+status({provider_unknown, P})       -> {"Provider '~s' unknown", [P], #{code=>400, data=>#{provider=>P}}};
+status(session_already_present)     -> "Session is already present";
+status(session_not_found)           -> "Session not found";
+status(session_is_disabled)         -> "Session is disabled";
+status(ttl_missing)                 -> {"TTL is missing", #{code=>400}};
+status(uid_not_found)      		    -> "Unknown UID";
+status(uniqueness_violation)        -> {"Uniqueness violation", #{code=>409}};
+status(upload_server_error)         -> "Upload server error";
+status({updated_invalid_field, F})  -> {"Updated invalid field '~s'", [F], #{code=>422, data=>#{field=>F}}};
+status(user_unknown)                -> {"User unknown", #{code=>404}};
+status({user_unknown, U})           -> {"User '~s' unknown", [U], #{code=>404, data=>#{user=>U}}};
+status(url_unknown)      		    -> "Unknown url";
+status(watch_stop)                  -> "Watch stopped";
+status(_) -> continue.
 
 
 
@@ -182,7 +170,7 @@ actor_srv_init(Op, ActorSt) ->
 
 %% @doc Called on a periodic basis, if heartbeat_time is defined  (callback heartbeat/1 in actor)
 -spec actor_srv_heartbeat(actor_st()) ->
-    {ok, actor_st()} | {error, nkactor_msg:msg(), actor_st()} | continue().
+    {ok, actor_st()} | {error, nkserver:status(), actor_st()} | continue().
 
 actor_srv_heartbeat(ActorSt) ->
     #actor_st{srv=SrvId, actor_id=#actor_id{group=Group, resource=Res}} = ActorSt,
@@ -212,7 +200,7 @@ actor_srv_get(Actor, ActorSt) ->
 
 %%  @doc Called after approving an update, to change the updated actor  (callback update/2 in actor)
 -spec actor_srv_update(nkactor:actor(), actor_st()) ->
-    {ok, nkactor:actor(), actor_st()} | {error, nkserver:msg(), actor_st()} |continue().
+    {ok, nkactor:actor(), actor_st()} | {error, nkserver:status(), actor_st()} |continue().
 
 actor_srv_update(Actor, ActorSt) ->
     #actor_st{srv=SrvId, actor_id=#actor_id{group=Group, resource=Res}} = ActorSt,
@@ -226,7 +214,7 @@ actor_srv_update(Actor, ActorSt) ->
 
 %%  @doc Called before finishing a deletion
 -spec actor_srv_delete(actor_st()) ->
-    {ok, actor_st()} | {error, nkserver:msg(), actor_st()} |continue().
+    {ok, actor_st()} | {error, nkserver:status(), actor_st()} |continue().
 
 actor_srv_delete(ActorSt) ->
     #actor_st{srv=SrvId, actor_id=#actor_id{group=Group, resource=Res}} = ActorSt,
@@ -414,7 +402,7 @@ actor_srv_handle_info(Msg, ActorSt) ->
 
 
 %% @private Called on proper stop
--spec actor_srv_stop(nkserver:msg(), actor_st()) ->
+-spec actor_srv_stop(nkserver:status(), actor_st()) ->
     {ok, actor_st()} | {delete, actor_st()} | continue().
 
 actor_srv_stop(Reason, ActorSt) ->
