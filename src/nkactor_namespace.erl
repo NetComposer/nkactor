@@ -126,7 +126,7 @@ register_actor(#actor_id{uid=UID, pid=Pid, namespace=Namespace}=ActorId) ->
 
 
 %% @doc Checks if an actor is activated
-%% - checks if it is in the local  (full info or UID)
+%% - checks if it is in the local (full info or UID)
 %% - if not, asks to the namespace, only if we have full info (group, resource, name and namespace)
 
 -spec find_actor(nkactor:id()) ->
@@ -147,7 +147,7 @@ find_actor(Id) ->
 -spec find_registered_actor(#actor_id{}) ->
     {true, nkserver:id(), #actor_id{}}| {false, nkserver:id()} | false | {error, nkserver:msg()}.
 
-find_registered_actor(#actor_id{namespace=Namespace}=ActorId) ->
+find_registered_actor(ActorId) ->
     #actor_id{
         group = Group,
         resource = Res,

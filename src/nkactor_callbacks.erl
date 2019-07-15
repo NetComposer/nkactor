@@ -22,8 +22,10 @@
 -module(nkactor_callbacks).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -export([status/1]).
--export([actor_authorize/1, actor_config/1, actor_create/2, actor_activate/2,
-         actor_external_event/3]).
+-export([actor_authorize/1, actor_config/1, actor_fields_filter/1, actor_fields_sort/1,
+         actor_fields_trans/1, actor_fields_type/1, actor_fields_static/1,
+         actor_create/2, actor_activate/2, actor_external_event/3]).
+-export([actor_id/2, actor_to_external/5, actor_from_external/5]).
 -export([actor_srv_init/2, actor_srv_terminate/2,
          actor_srv_stop/2, actor_srv_get/2, actor_srv_update/2, actor_srv_delete/1,
          actor_srv_event/2,
@@ -34,7 +36,7 @@
          actor_srv_handle_call/3, actor_srv_handle_cast/2, actor_srv_handle_info/2]).
 -export([actor_do_active/1, actor_do_expired/1]).
 -export([actor_db_find/3, actor_db_read/3, actor_db_create/3, actor_db_update/3,
-         actor_db_delete/3, actor_db_search/3, actor_db_aggregate/3,
+         actor_db_delete/3, actor_db_delete_multi/3, actor_db_search/3, actor_db_aggregate/3,
          actor_db_truncate/2]).
 -export([srv_master_init/2, srv_master_handle_call/4, srv_master_handle_cast/3,
          srv_master_handle_info/3, srv_master_timed_check/3]).
@@ -51,9 +53,9 @@
 
 
 status(actor_already_registered)    -> "Actor already registered";
-status({actor_invalid, A})          -> {"Invalid actor '~s'", [A], #{code=>400, data=>#{actor=>A}}};
-status(actor_deleted)               -> "Actor has been deleted";
+status(actor_deleted)               -> {"Actor has been deleted", #{code=>200}};
 status({actors_deleted, N})         -> {"Actors (~p) have been deleted", [N]};
+status({actor_invalid, A})          -> {"Invalid actor '~s'", [A], #{code=>400, data=>#{actor=>A}}};
 status(actor_expired)	            -> "Actor has expired";
 status(actor_has_linked_actors)	    -> {"Actor has linked actors", #{code=>422}};
 status(actor_id_invalid)            -> "Actor ID is invalid";
@@ -70,6 +72,7 @@ status(db_not_defined)              -> "Object database not defined";
 status(delete_too_deep)             -> "DELETE is too deep";
 status(download_server_error)       -> "Download server error";
 status(element_action_unknown)      -> "Unknown element action";
+status({field_unknown, F})          -> {"Unknown field '~s", [F], #{code=>409, data=>#{field=>F}}};
 status(group_unknown)               -> "Invalid Group";
 status(invalid_content_type)        -> "Invalid Content-Type";
 status({invalid_name, N})           -> {"Invalid name '~s'", [N]};
@@ -80,7 +83,10 @@ status(linked_actor_unknown)        -> {"Linked actor is unknown", #{code=>409}}
 status({linked_actor_unknown, Id})  -> {"Linked actor is unknown: ~s", [Id], #{code=>409, data=>#{link=>Id}}};
 status(multiple_ids)                -> "Multiple matching ids";
 status(missing_auth_header)         -> "Missing authentication header";
+status(namespace_missing)           -> {"Namespace is missing", #{code=>409}};
 status({provider_unknown, P})       -> {"Provider '~s' unknown", [P], #{code=>400, data=>#{provider=>P}}};
+status({request_class_unknown, C})  -> {"Request class uknown: '~s'", [C]};
+status({resource_invalid, R})       -> {"Invalid resource (~s)", [R], #{code=>400}};
 status(session_already_present)     -> "Session is already present";
 status(session_not_found)           -> "Session not found";
 status(session_is_disabled)         -> "Session is disabled";
@@ -104,7 +110,7 @@ status(_) -> continue.
 -type actor() :: nkactor:actor().
 -type actor_id() :: #actor_id{}.
 -type actor_st() :: #actor_st{}.
-
+-type request() :: actor_request:request().
 
 
 %% @doc Called when processing a request to be authorized or not
@@ -115,13 +121,63 @@ actor_authorize(_Req) ->
     false.
 
 
-%% @doc Called when activating an actor to get it's config and module
-%% Config is the added config used when calling the function
+%% @doc Called when activating an actor to get it's config and module.
+%% Can be used to updated the config for an actor resource
 -spec actor_config(nkactor:config()) ->
     nkactor:config().
 
 actor_config(Config) ->
     Config.
+
+
+%% @doc Called by config to get common filter fields for all actors
+-spec actor_fields_filter([atom()]) ->
+    [atom()].
+
+actor_fields_filter(List) ->
+    List ++ nkactor_syntax:actor_fields_filter().
+
+
+%% @doc Called by config to get common sort fields for all actors
+-spec actor_fields_sort([atom()]) ->
+    [atom()].
+
+actor_fields_sort(List) ->
+    List ++ nkactor_syntax:actor_fields_sort().
+
+
+%% @doc Called by config to get fields that should be translated to another field for all actors
+-spec actor_fields_trans(#{atom() => atom()}) ->
+    #{atom() => atom()}.
+
+actor_fields_trans(Map) ->
+    maps:merge(Map, nkactor_syntax:actor_fields_trans()).
+
+
+%% @doc Called by config to get field's types for all actors
+-spec actor_fields_type(#{atom() => integer|boolean|string}) ->
+    #{atom() => integer|boolean|string}.
+
+actor_fields_type(Map) ->
+    maps:merge(Map, nkactor_syntax:actor_fields_type()).
+
+
+%% @doc Called by config to get common sort fields for all actors
+-spec actor_fields_static([atom()]) ->
+    [atom()].
+
+actor_fields_static(List) ->
+    List ++ nkactor_syntax:actor_fields_static().
+
+
+%% @doc Called when an external id must be decoded, starting with "/"
+%% Service will be detected is [..., <<"namespaces">>, Namespace, ...] is present
+%% Otherwise, first actor service will be called
+-spec actor_id(nkserver:id(), [binary()]) ->
+    #actor_id{} | continue.
+
+actor_id(_SrvId, _Parts) ->
+    continue.
 
 
 %% @doc Called from nkactor_db:create() when an actor is to be created
@@ -153,6 +209,24 @@ actor_external_event(_SrvId, _Event, _Actor) ->
     ok.
 
 
+%% @doc
+-spec actor_to_external(nkactor_request:class(), nkactor:group(), nkactor:resource(),
+                        actor(), request()) ->
+    map().
+
+actor_to_external(_Class, _Group, _Res, Actor, _Req) ->
+    Actor.
+
+
+%% @doc
+-spec actor_from_external(nkactor_request:class(), nkactor:group(), nkactor:resource(),
+                          actor(), request()) ->
+    {ok, actor()} | {error, term(), request()}.
+
+actor_from_external(_Class, _Group, _Res, Map, _Req) ->
+    {ok, Map}.
+
+
 %% @doc Called on successful registration (callback init/2 in actor)
 -spec actor_srv_init(create|start, actor_st()) ->
     {ok, actor_st()} | {error, Reason::term()}.
@@ -165,7 +239,6 @@ actor_srv_init(Op, ActorSt) ->
         Other ->
             Other
     end.
-
 
 
 %% @doc Called on a periodic basis, if heartbeat_time is defined  (callback heartbeat/1 in actor)
@@ -505,7 +578,7 @@ actor_db_read(_SrvId, _ActorId, _Opts) ->
 
 %% @doc Must create a new actor on disk. Should fail if already present
 -spec actor_db_create(nkserver:id(), actor(), db_opts()) ->
-    {ok, Meta::map()} | {error, uniqueness_violation|term()}.
+    {ok, Meta::map()} | {error, uniqueness_violation|field_invalid|term()}.
 
 actor_db_create(_SrvId, _Actor, _Opts) ->
     {error, persistence_not_defined}.
@@ -525,6 +598,14 @@ actor_db_update(_SrvId, _Actor, _Opts) ->
 
 
 actor_db_delete(_SrvId, _UID, _Opts) ->
+    {error, persistence_not_defined}.
+
+
+%% @doc
+-spec actor_db_delete_multi(nkserver:id(), [actor_id()], db_opts()) ->
+    {ok, #{deleted:=integer()}} | {error, term()}.
+
+actor_db_delete_multi(_SrvId, _UIDs, _Opts) ->
     {error, persistence_not_defined}.
 
 

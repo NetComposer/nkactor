@@ -21,10 +21,8 @@
 -module(nkactor_request).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([request/1]).
--export([get_watches/0]).
--export([create/3]).
--export_type([request/0, response/0]).
+-export([request/1, pre_request/1, do_request/1, post_request/2]).
+-export_type([request/0, response/0, reply/0]).
 
 -include("nkactor_request.hrl").
 -include_lib("nkserver/include/nkserver.hrl").
@@ -38,15 +36,26 @@
 
 -type request() ::
     #{
+        srv => nkserver:id(),            % Service managing namespace
         verb => nkactor:verb(),
-        group => nkactor:group(),
         namespace => nkactor:namespace(),
+        group => nkactor:group(),
+        % Version of the API request (not used currently by core)
+        % It can be used to indicate a specific version of the API should be used
+        % If the body has a metadata.vsn field, it must be the same
+        vsn => nkactor:vsn(),
         resource => nkactor:resource(),
         name => nkactor:name(),
         uid => nkactor:uid(),
         subresource => nkactor:subresource(),
         params => #{binary() => binary()},
-        body => term(),
+        % Class of the request, can be used for specific processing
+        class => class(),
+        % Used to decode the body
+        content_type => binary(),
+        % If the body has a group, resource, namespace, uid or metadata.vsn
+        % fields, they must be the same of the request
+        body => binary() | map(),
         auth => map(),
         % If defined, will be used as parent of created span
         ot_span_id => nkserver_ot:span_id() | nkserver_ot:parent(),
@@ -54,10 +63,11 @@
         callback => module(),
         % External url to use in callbacks:
         external_url => binary(),
+        % Supported keys in meta:
+        % - search_field_trans
         meta => map(),
         %% added by system:
-        start_time => nklib_date:epoch(usecs),
-        srv => nkserver:id()            % Service managing namespace
+        start_time => nklib_date:epoch(usecs)
     }.
 
 
@@ -71,7 +81,12 @@
     {error, nkserver:msg(), request()}.
 
 
+-type reply() ::
+    {ok|created, map(), request()} |
+    {raw, {CT::binary(), Body::binary()}, request()} |
+    {status|error, nkserver:msg(), request()}.
 
+-type class() :: term().
 
 
 %% ===================================================================
@@ -85,32 +100,36 @@
 %% - Finds service managing namespace, and adds srv and start_time
 
 -spec request(request()) ->
-    {ok|created, map(), request()} |
-    {raw, {CT::binary(), Body::binary()}, request()} |
-    {status|error, nkserver:msg(), request()}.
+    reply().
 
 request(Req) ->
+    case pre_request(Req) of
+        {ok, Req2} ->
+            Reply = do_request(Req2),
+            post_request(Reply, Req2);
+        {error, Error, Req2} ->
+            {error, Error, Req2}
+    end.
+
+
+%% @doc
+pre_request(Req) ->
     ParentSpan = maps:get(ot_span_id, Req, undefined),
     nkserver_ot:new(?REQ_SPAN, undefined, <<"Actor::Request">>, ParentSpan),
-    % Gets group and vsn from request or body
     case nkactor_syntax:parse_request(Req) of
         {ok, Req2} ->
-            #{
-                verb := Verb,
-                group := Group,
-                resource := Res,
-                namespace := Namespace,
-                subresource := SubRes
-            } = Req2,
-            SpanName = <<
-                "Actor::Request ",
-                " ", (nklib_util:to_upper(Verb))/binary, " ",
-                "(", SubRes/binary, ")"
-            >>,
-            nkserver_ot:update_name(?REQ_SPAN, SpanName),
-            nkserver_ot:log(?REQ_SPAN, <<"request parsed">>),
-            case nkactor_namespace:find_service(Namespace) of
-                {ok, SrvId} ->
+            case pre_request_namespace(Req2) of
+                {ok, Req3} ->
+                    #{group:=Group, resource:=Res, namespace:=Namespace, srv:=SrvId} = Req3,
+                    Verb = maps:get(verb, Req3, get),
+                    SubRes = maps:get(subresource, Req3, <<>>),
+                    SpanName = <<
+                        "Actor::Request ",
+                        " ", (nklib_util:to_upper(Verb))/binary, " ",
+                        "(", SubRes/binary, ")"
+                    >>,
+                    nkserver_ot:update_name(?REQ_SPAN, SpanName),
+                    nkserver_ot:log(?REQ_SPAN, <<"request parsed">>),
                     nkserver_ot:update_srv_id(?REQ_SPAN, SrvId),
                     nkserver_ot:log(?REQ_SPAN, <<"service found: ~s">>, [SrvId]),
                     nkserver_ot:tags(?REQ_SPAN, #{
@@ -118,48 +137,65 @@ request(Req) ->
                         <<"req.group">> => Group,
                         <<"req.resource">> => Res,
                         <<"req.namespace">> => Namespace,
-                        <<"req.name">> => maps:get(name, Req2, <<>>),
+                        <<"req.name">> => maps:get(name, Req3, <<>>),
                         <<"req.srv">> => SrvId,
                         <<"req.subresource">> => SubRes
                     }),
                     % Add uid later
                     set_debug(SrvId),
                     ?REQ_DEBUG("incoming request for ~s", [Namespace]),
-                    Req3 = Req2#{
+                    Req4 = Req3#{
                         srv => SrvId,
+                        verb => Verb,
+                        subresource => SubRes,
                         start_time => nklib_date:epoch(usecs),
                         ot_span_id => ?REQ_SPAN
                     },
-                    nkserver_ot:log(?REQ_SPAN, <<"calling authorize">>),
-                    case ?CALL_SRV(SrvId, actor_authorize, [Req3]) of
+                    case authorize(SrvId, Req4) of
                         {true, Req5} ->
-                            nkserver_ot:log(?REQ_SPAN, <<"request is authorized">>),
-                            ?REQ_DEBUG("request is authorized", []),
-                            Reply = do_request(Req5),
-                            case reply(Reply, Req5) of
-                                {raw, {CT, Bin}, Req6} ->
-                                    nkserver_ot:log(?REQ_SPAN, "replied 'raw': ~s", [CT]),
-                                    ?REQ_DEBUG("replied 'raw': ~s", [CT], Req6),
-                                    nkserver_ot:finish(?REQ_SPAN),
-                                    {raw, {CT, Bin}, Req6};
-                                {Status, Data, Req6} ->
-                                    nkserver_ot:log(?REQ_SPAN, "replied '~s': ~p", [Status, Data]),
-                                    ?REQ_DEBUG("replied '~s': ~p", [Status, Reply], Req6),
-                                    nkserver_ot:finish(?REQ_SPAN),
-                                    {Status, Data, Req6}
-                            end;
+                            {ok, Req5};
                         false ->
-                            nkserver_ot:log(?REQ_SPAN, <<"request is NOT authorized">>),
                             nkserver_ot:finish(?REQ_SPAN),
-                            {error, unauthorized, Req3}
+                            {error, unauthorized, Req4}
                     end;
                 {error, Error} ->
                     nkserver_ot:delete(?REQ_SPAN),
-                    {error, Error, Req}
+                    {error, Error, Req2}
             end;
         {error, Error} ->
             nkserver_ot:delete(?REQ_SPAN),
             {error, Error, Req}
+    end.
+
+
+pre_request_namespace(Req) ->
+    case Req of
+        #{namespace:=Namespace} ->
+            case nkactor_namespace:find_service(Namespace) of
+                {ok, SrvId} ->
+                    {ok, Req#{srv:=SrvId}};
+                {error, Error} ->
+                    {error, Error}
+            end;
+        _ ->
+            #{srv:=SrvId} = Req,
+            {ok, Req#{namespace => nkactor:base_namespace(SrvId)}}
+    end.
+
+
+%% @doc
+post_request(Reply, Req) ->
+    case reply(Reply, Req) of
+        {raw, {CT, Bin}, Req2} ->
+            nkserver_ot:log(?REQ_SPAN, "replied 'raw': ~s", [CT]),
+            ?REQ_DEBUG("replied 'raw': ~s", [CT], Req2),
+            nkserver_ot:finish(?REQ_SPAN),
+            {raw, {CT, Bin}, Req2};
+        {Status, Data, Req2} ->
+            nkserver_ot:log(?REQ_SPAN, "replied '~s': ~p", [Status, Data]),
+            ?REQ_DEBUG("replied '~s': ~p", [Status, Reply], Req2),
+            nkserver_ot:finish(?REQ_SPAN),
+            {Status, Data, Req2}
     end.
 
 
@@ -170,6 +206,9 @@ reply(Op, Req) when Op==ok; Op==created; Op==error; Op==status ->
 reply({Op, Reply}, Req) when Op==ok; Op==created; Op==error; Op==status ->
     {Op, Reply, Req};
 
+reply({Op, Reply, Req2}, _Req) when Op==ok; Op==created; Op==error; Op==status ->
+    {Op, Reply, Req2};
+
 reply({raw, {CT, Bin}}, Req) ->
     {raw, {CT, Bin}, Req};
 
@@ -179,24 +218,25 @@ reply(Other, Req) ->
 
 
 %% @private
--spec do_request(nkactor_api:request()) ->
-    nkactor_api:response().
+-spec do_request(request()) ->
+    response().
 
 do_request(Req) ->
     try
         #{
+            srv := SrvId,
             verb := Verb,
             group := Group,
             resource := Res,
-            namespace := Namespace,
-            srv := SrvId
+            subresource := SubRes,
+            namespace := Namespace
         } = Req,
         ?REQ_DEBUG("incoming '~p' ~s (~p)", [Verb, Res, Req]),
         nkserver_ot:log(?REQ_SPAN, <<"starting request processing">>),
         ActorId = #actor_id{
             group = Group,
             resource = Res,
-            name = maps:get(name, Req, <<>>),
+            name = maps:get(name, Req, undefined),
             namespace = Namespace
         },
         Config = case catch nkactor_actor:get_config(ActorId) of
@@ -212,20 +252,14 @@ do_request(Req) ->
             false ->
                 throw({error, verb_not_allowed})
         end,
-        % Parses the 'params' key in Req
-        Req2 = case nkactor_syntax:parse_params(Verb, Req) of
-            {ok, ParsedReq} ->
-                ParsedReq;
-            {error, ParseError} ->
-                throw({error, ParseError})
-        end,
-        SubRes = maps:get(subresource, Req2, <<>>),
         nkserver_ot:log(?REQ_SPAN, <<"calling specific processing">>),
-        case nkactor_actor:request(SrvId, ActorId, Req2) of
-            continue when SubRes == <<"/">> ->
+        %lager:error("NKLOG REQ ~p", [Req]),
+        lager:notice("NKLOG REQ ~p ~p ~p", [Verb, Res, SubRes]),
+        case nkactor_actor:request(SrvId, ActorId, Req) of
+            continue when SubRes == <<>> ->
                 nkserver_ot:log(?REQ_SPAN, <<"processing default">>),
-                ?REQ_DEBUG("processing default", [], Req2),
-                default_request(Verb, ActorId, Config, Req2);
+                ?REQ_DEBUG("processing default", [], Req),
+                    default_request(Verb, ActorId, Config, Req);
             continue ->
                 nkserver_ot:log(?REQ_SPAN, <<"invalid subresource: ~s">>, [SubRes]),
                 ?REQ_LOG(notice, "Invalid subresource (~p)", [{Verb, SubRes, ActorId}]),
@@ -233,10 +267,10 @@ do_request(Req) ->
             {continue, #{resource:=Res2}=Req3} when Res2 /= Res ->
                 nkserver_ot:log(?REQ_SPAN, <<"request updated. New resource: ~p">>, [Res2]),
                 ?REQ_DEBUG("updated request", [], Req3),
-                do_request(Req2);
+                do_request(Req);
             Other ->
                 nkserver_ot:log(?REQ_SPAN, <<"processed specific">>),
-                ?REQ_DEBUG("specific processing", [], Req2),
+                ?REQ_DEBUG("specific processing", [], Req),
                 Other
         end
     catch
@@ -284,26 +318,64 @@ default_request(Verb, ActorId, _Config, _Req) ->
 
 %% @doc Standard get
 get(ActorId, Config, Req) ->
-    Opts = set_activate_opts(Config, Req),
-    nkserver_ot:log(?REQ_SPAN, "processing standard read (~p)", [Opts]),
-    ?REQ_DEBUG("processing read ~p (~p)", [ActorId, Opts]),
-    % request is included in case it could be used for specific parsing
-    % when calling nkactor_actor:parse()
-    case nkactor:get_actor(ActorId, Opts#{request=>Req}) of
-        {ok, Actor} ->
-            {ok, Actor};
-        {error, ReadError} ->
-            nkserver_ot:log(?REQ_SPAN, "error getting actor: ~p", [ReadError]),
-            {error, ReadError}
+    ParamsSyntax = #{
+        activate => boolean,
+        consume => boolean,
+        ttl => {integer, 1, none}
+    },
+    case parse_params(Req, ParamsSyntax) of
+        {ok, Params} ->
+            Opts = set_activate_opts(Config, Params),
+            nkserver_ot:log(?REQ_SPAN, "processing standard read (~p)", [Opts]),
+            ?REQ_DEBUG("processing read ~p (~p)", [ActorId, Opts]),
+            % request is included in case it could be used for specific parsing
+            % when calling nkactor_actor:parse()
+            case nkactor:get_actor(ActorId, Opts#{request=>Req}) of
+                {ok, Actor} ->
+                    {ok, nkactor_actor:to_external(Actor, Req)};
+                {error, ReadError} ->
+                    nkserver_ot:log(?REQ_SPAN, "error getting actor: ~p", [ReadError]),
+                    {error, ReadError}
+            end;
+        {error, Error} ->
+            {error, Error}
     end.
 
 
 %% @doc
 list(ActorId, Config, Req) ->
-    #{params:=Params} = Req,
-    case nkdomain_core_search:type_search(ActorId, Config, Params) of
-        {ok, ActorList, _Meta} ->
-            {ok, ActorList};
+    #actor_id{namespace=Namespace, group=Group, resource=Res} = ActorId,
+    #{srv:=SrvId} = Req,
+    Base = case maps:get(body, Req, #{}) of
+        <<>> ->
+            #{};
+        Body ->
+            Body
+    end,
+    Opts1 = maps:with([fields_filter, fields_sort, fields_trans, fields_type], Config),
+    Opts2 = Opts1#{
+        forced_spec => #{
+            namespace => Namespace,
+            filter => #{
+                'and' => [
+                    #{field=>group, value=>Group},
+                    #{field=>resource, value=>Res}
+                ]
+            }
+        },
+        default_spec => #{
+            get_data => true,
+            get_metadata => true,
+            sort => [#{field=><<"metadata.update_time">>, order=>desc}]
+        },
+        params => maps:get(params, Req, #{})
+    },
+    %io:format("NKLOG SPEC ~s\n", [nklib_json:encode_pretty(Opts2)]),
+    case nkactor:search_actors(SrvId, Base, Opts2) of
+        {ok, ActorList, Meta} ->
+            #actor_id{group = Group, resource = Res} = ActorId,
+            ActorList2 = [nkactor_actor:to_external(Actor, Req) || Actor <- ActorList],
+            {ok, Meta#{items=>ActorList2}};
         {error, Error} ->
             {error, Error}
     end.
@@ -311,69 +383,89 @@ list(ActorId, Config, Req) ->
 
 %% @doc
 create(ActorId, Config, Req) ->
-    case parse_body(Req) of
-        {ok, Actor1} ->
-            nkserver_ot:log(?REQ_SPAN, <<"body parsed">>),
-            case check_actor(Actor1, ActorId) of
-                {ok, Actor2} ->
-                    Opts = set_activate_opts(Config, Req),
-                    nkserver_ot:log(?REQ_SPAN, "processing standard create (~p)", [Opts]),
-                    ?REQ_DEBUG("creating actor ~p ~p", [Actor2, Opts]),
-                    % request is included in case it could be used for specific parsing
-                    % when calling nkactor_actor:parse()
-                    CreateOpts = Opts#{get_actor=>true, request=>Req, ot_span_id=>?REQ_SPAN},
-                    case nkactor:create(Actor2, CreateOpts) of
-                        {ok, Actor3} ->
-                            {created, Actor3};
+    ParamsSyntax = #{
+        activate => boolean,
+        ttl => {integer, 1, none}
+    },
+    case parse_params(Req, ParamsSyntax) of
+        {ok, Params} ->
+            case parse_body(Req) of
+                {ok, Actor1} ->
+                    nkserver_ot:log(?REQ_SPAN, <<"body parsed">>),
+                    case check_actor(Actor1, ActorId, Req) of
+                        {ok, Actor2} ->
+                            Opts = set_activate_opts(Config, Params),
+                            nkserver_ot:log(?REQ_SPAN, "processing standard create (~p)", [Opts]),
+                            ?REQ_DEBUG("creating actor ~p ~p", [Actor2, Opts]),
+                            % request is included in case it could be used for specific parsing
+                            % when calling nkactor_actor:parse()
+                            CreateOpts = Opts#{get_actor=>true, request=>Req, ot_span_id=>?REQ_SPAN},
+                            case nkactor:create(Actor2, CreateOpts) of
+                                {ok, Actor3} ->
+                                    {created, nkactor_actor:to_external(Actor3, Req)};
+                                {error, Error} ->
+                                    nkserver_ot:log(?REQ_SPAN, "error creating actor: ~p", [Error]),
+                                    {error, Error}
+                            end;
                         {error, Error} ->
-                            nkserver_ot:log(?REQ_SPAN, "error creating actor: ~p", [Error]),
                             {error, Error}
                     end;
                 {error, Error} ->
-                    nkserver_ot:log(?REQ_SPAN, <<"error checking actor: ~p">>, [Error]),
+                    nkserver_ot:log(?REQ_SPAN, <<"error parsing body: ~p">>, [Error]),
                     {error, Error}
             end;
         {error, Error} ->
-            nkserver_ot:log(?REQ_SPAN, <<"error parsing body: ~p">>, [Error]),
             {error, Error}
     end.
 
 
-
 %% @doc
 update(ActorId, Config, Req) ->
-     case parse_body(Req) of
-        {ok, Actor1} ->
-            case check_actor(Actor1, ActorId) of
-                {ok, Actor2} ->
-                    Opts = set_activate_opts(Config, Req#{request=>Req}),
-                    ?REQ_DEBUG("Updating actor ~p", [Actor2]),
-                    case nkactor:update(ActorId, Actor2, Opts) of
-                        {ok, Actor3} ->
-                            {ok, Actor3};
-                        {error, actor_not_found} ->
-                            default_request(create, ActorId, Config, Req);
-                        {error, {field_missing, name}} ->
-                            default_request(create, ActorId, Config, Req);
-                        {error, UpdateError} ->
-                            {error, UpdateError}
+    ParamsSyntax = #{
+    },
+    case parse_params(Req, ParamsSyntax) of
+        {ok, Params} ->
+             case parse_body(Req) of
+                {ok, Actor1} ->
+                    case check_actor(Actor1, ActorId, Req) of
+                        {ok, Actor2} ->
+                            Opts1 = set_activate_opts(Config, Params),
+                            Opts2 = Opts1#{get_actor=>true},
+                            ?REQ_DEBUG("Updating actor ~p", [Actor2]),
+                            case nkactor:update(ActorId, Actor2, Opts2) of
+                                {ok, Actor3} ->
+                                    {ok, nkactor_actor:to_external(Actor3, Req)};
+                                {error, actor_not_found} ->
+                                    default_request(create, ActorId, Config, Req);
+                                {error, {field_missing, name}} ->
+                                    default_request(create, ActorId, Config, Req);
+                                {error, UpdateError} ->
+                                    {error, UpdateError}
+                            end;
+                        {error, Error} ->
+                            {error, Error}
                     end;
-                {error, Error} ->
-                    {error, Error}
-            end;
-         {error, Error} ->
-             {error, Error}
-     end.
+                 {error, Error} ->
+                     {error, Error}
+             end;
+        {error, Error} ->
+            {error, Error}
+    end.
 
 
 %% @doc
 delete(ActorId, _Config, Req) ->
-    Params = maps:get(params, Req, #{}),
-    Opts = #{cascade => maps:get(cascade, Params, false)},
-    ?REQ_DEBUG("processing delete ~p (~p)", [ActorId, Opts]),
-    case nkactor:delete(ActorId, Opts#{ot_span_id=>?REQ_SPAN}) of
-        ok ->
-            {status, actor_deleted};
+    ?REQ_DEBUG("processing delete ~p", [ActorId]),
+    ParamsSyntax = #{
+    },
+    case parse_params(Req, ParamsSyntax) of
+        {ok, _Params} ->
+            case nkactor:delete(ActorId, #{ot_span_id=>?REQ_SPAN}) of
+                ok ->
+                    {status, actor_deleted};
+                {error, Error} ->
+                    {error, Error}
+            end;
         {error, Error} ->
             {error, Error}
     end.
@@ -381,11 +473,24 @@ delete(ActorId, _Config, Req) ->
 
 %% @doc
 delete_collection(ActorId, Config, #{srv:=SrvId}=Req) ->
-    #{params:=Params} = Req,
-    Params2 = maps:merge(#{size=>?DELETE_COLLECTION_SIZE}, Params),
-    case nkdomain_core_search:search_params_id(SrvId, ActorId, Config, Params2) of
-        {ok, ActorIds, _Meta} ->
-            do_delete(SrvId, ActorIds, 0);
+    ParamsSyntax = #{
+        from => pos_integer,
+        size => pos_integer,
+        sort => #{'__key_binary' => {atom, [asc, desc]}},
+        labels => #{'__key_binary' => binary},
+        fields => #{'__key_binary' => binary},
+        links => #{'__key_binary' => binary},
+        fts => binary,
+        deep => boolean
+    },
+    case parse_params(Req, ParamsSyntax) of
+        {ok, Params} ->
+            case nkdomain_core_search:search_params_id(SrvId, ActorId, Config, Params) of
+                {ok, ActorIds, _Meta} ->
+                    do_delete(SrvId, ActorIds, 0);
+                {error, Error} ->
+                    {error, Error}
+            end;
         {error, Error} ->
             {error, Error}
     end.
@@ -412,6 +517,14 @@ do_delete(SrvId, ActorIds, Num) ->
     end.
 
 
+%%params_syntax(watch) ->
+%%    #{
+%%        deep => boolean,
+%%        kind => binary,
+%%        version => binary
+%%    };
+
+
 %% ===================================================================
 %% Utilities
 %% ===================================================================
@@ -426,8 +539,13 @@ set_debug(SrvId) when is_atom(SrvId) ->
 
 
 %% @private
-parse_body(#{body:=Body}) when is_map(Body) ->
-    nkactor_syntax:parse_actor(Body, #{});
+parse_body(#{body:=Actor}=Req) when is_map(Actor) ->
+    case nkactor_actor:from_external(Actor, Req) of
+        {ok, Actor2} ->
+            nkactor_syntax:parse_actor(Actor2, #{});
+        {error, Error} ->
+            {error, Error}
+    end;
 
 parse_body(#{body:=_}) ->
     {error, request_invalid};
@@ -437,7 +555,7 @@ parse_body(_) ->
 
 
 %% @doc Checks that fields in req are not different in body:
-check_actor(Actor, ActorId) ->
+check_actor(Actor, ActorId, Req) ->
     #actor_id{group=Group, resource=Res, name=Name, namespace=Namespace} = ActorId,
     try
         case Actor of
@@ -470,6 +588,17 @@ check_actor(Actor, ActorId) ->
             _ ->
                 ok
         end,
+        case Actor of
+            #{metadata:=#{vsn:=ObjVsn}} ->
+                case maps:get(vsn, Req, ObjVsn) of
+                    ObjVsn ->
+                        ok;
+                    _ ->
+                        throw({field_invalid, <<"metadata.vsn">>})
+                end;
+            _ ->
+                ok
+        end,
         {ok, Actor#{group=>Group, resource=>Res, name=>Name, namespace=>Namespace}}
     catch
         throw:Throw ->
@@ -478,11 +607,10 @@ check_actor(Actor, ActorId) ->
 
 
 %% @private
-set_activate_opts(#{activable:=false}, _Req) ->
+set_activate_opts(#{activable:=false}, _Params) ->
     #{activate=>false, ot_span_id=>?REQ_SPAN};
 
-set_activate_opts(_Config, Req) ->
-    Params = maps:get(params, Req, #{}),
+set_activate_opts(_Config, Params) ->
     Activate = maps:get(activate, Params, true),
     Opts1 = case Activate of
         true ->
@@ -499,9 +627,39 @@ set_activate_opts(_Config, Req) ->
     Opts2#{ot_span_id=>?REQ_SPAN}.
 
 
+
 %% @private
-get_watches() ->
-    nklib_proc:values(core_v1_watches).
+authorize(SrvId, Req) ->
+    nkserver_ot:log(?REQ_SPAN, <<"calling authorize">>),
+    case ?CALL_SRV(SrvId, actor_authorize, [Req]) of
+        true ->
+            nkserver_ot:log(?REQ_SPAN, <<"request is authorized">>),
+            ?REQ_DEBUG("request is authorized", []),
+            {true, Req};
+        {true, Req2} ->
+            nkserver_ot:log(?REQ_SPAN, <<"request is authorized">>),
+            ?REQ_DEBUG("request is authorized", []),
+            {true, Req2};
+        false ->
+            nkserver_ot:log(?REQ_SPAN, <<"request is NOT authorized">>),
+            false
+    end.
+
+
+%% @private
+parse_params(#{params:=Params}, Syntax) ->
+    case nklib_syntax:parse_all(Params, Syntax) of
+        {ok, Parsed} ->
+            {ok, Parsed};
+        {error, {syntax_error, Field}} ->
+            {error, {parameter_invalid, Field}};
+        {error, Error} ->
+        {error, Error}
+    end;
+
+parse_params(_Req, _Syntax) ->
+    {ok, #{}}.
+
 
 
 %%%% @private

@@ -27,10 +27,11 @@
 -include("nkactor_debug.hrl").
 -include_lib("nkserver/include/nkserver.hrl").
 
--export([actor_to_actor_id/1, id_to_actor_id/1, id_to_actor_id/2]).
+-export([actor_to_actor_id/1, id_to_actor_id/1]).
 -export([send_external_event/3]).
--export([get_linked_type/2, get_linked_uids/2, add_link/3, add_link/4, add_link/5, link_type/2]).
--export([add_creation_fields/1, update/2, check_links/1, do_check_links/2]).
+-export([get_linked_type/2, get_linked_uids/2, add_link/3, add_link/4, add_link/5,
+         rm_links/3, rm_links/2, link_type/2]).
+-export([add_creation_fields/2, update/2, check_actor_links/1, check_meta_links/1]).
 -export([add_labels/4, add_label/3]).
 -export([actor_id_to_path/1]).
 -export([parse/2, parse/3, parse_actor_data/2, parse_request_params/2]).
@@ -75,6 +76,13 @@ actor_to_actor_id(Actor) ->
 
 
 %% @doc Canonizes id to #actor_id{}
+%% Id can be:
+%% - If it starts with "/" it is assumed external and called actor_id/2 on guessed service
+%%   (if a 'namespaces' part in the url is found, otherwhise any service)
+%% - Group:Resource:Name.Namespace
+%% - Resource:Name.Namespace (group will be undefined, some backends will not support it)
+%% - Name.Namespace (group and resource will be undefined, some backends will not support it)
+%% - Otherwise, it is assumed to be an UID (group, resource name and namespace will be undefined)
 -spec id_to_actor_id(nkactor:id()) ->
     #actor_id{}.
 
@@ -82,34 +90,34 @@ id_to_actor_id(#actor_id{}=ActorId) ->
     ActorId;
 
 id_to_actor_id(Path) ->
-    id_to_actor_id(undefined, Path).
-
-
-%% @doc Canonizes id to #actor_id{}
--spec id_to_actor_id(nkserver:id(), nkactor:id()) ->
-    #actor_id{}.
-
-id_to_actor_id(SrvId, #actor_id{namespace=undefined}=ActorId) when SrvId /= undefined ->
-    Base = nkactor:base_namespace(SrvId),
-    ActorId#actor_id{namespace = Base};
-
-id_to_actor_id(_SrvId, #actor_id{}=ActorId) ->
-    ActorId;
-
-id_to_actor_id(SrvId, Path) ->
-    case to_bin(Path) of
-        <<$/, Api/binary>> ->
-            case binary:split(Api, <<"/">>, [global]) of
-                [<<"apis">>, Group, _Vsn, <<"namespaces">>, Namespace, Resource, Name] ->
-                    <<Group/binary, $:, Resource/binary, $:, Name/binary, $., Namespace/binary>>;
-                [<<"apis">>, Group, _Vsn, Resource, Name] when SrvId /= undefined ->
-                    Base = nkactor:base_namespace(SrvId),
-                    <<Group/binary, $:, Resource/binary, $:, Name/binary, $., Base/binary>>;
-                _ ->
-                    Path
+    Path2 = to_bin(Path),
+    case Path2 of
+        <<"/", Path3/binary>> ->
+            Parts = binary:split(Path3, <<"/">>, [global]),
+            case find_namespace_in_parts(Parts) of
+                {ok, Namespace} ->
+                    case nkactor_namespace:find_service(Namespace) of
+                        {ok, SrvId} ->
+                            case ?CALL_SRV(SrvId, actor_id, [SrvId, Parts]) of
+                                #actor_id{} = ActorId ->
+                                    ActorId;
+                                continue ->
+                                    #actor_id{uid=Path2}
+                            end;
+                        _ ->
+                            lager:notice("NkACTOR id_to_actor_id unknown namespace: ~s", [Path2]),
+                            case nkactor:call_services(actor_id, [Parts]) of
+                                #actor_id{} = ActorId ->
+                                    ActorId;
+                                continue ->
+                                    #actor_id{uid=Path2}
+                            end
+                    end;
+                error ->
+                    #actor_id{uid=Path2}
             end;
-        Path2 ->
-            case binary:split(to_bin(Path2), <<$.>>) of
+        _ ->
+            case binary:split(Path2, <<$.>>) of
                 [FullName, Namespace] ->
                     case binary:split(FullName, <<$:>>, [global]) of
                         [Group, Resource, Name] ->
@@ -137,8 +145,19 @@ id_to_actor_id(SrvId, Path) ->
     end.
 
 
+%% @private
+find_namespace_in_parts([<<"namespaces">>, Namespace | _]) ->
+    {ok, Namespace};
+
+find_namespace_in_parts([_|Rest]) ->
+    find_namespace_in_parts(Rest);
+
+find_namespace_in_parts([]) ->
+    error.
+
+
 %% @doc
-add_link(#actor_id{uid=UID}, #{}=Actor, LinkType) ->
+add_link(#actor_id{uid=UID}, #{}=Actor, LinkType) when is_binary(LinkType) ->
     #{metadata:=Meta} = Actor,
     Links1 = maps:get(links, Meta, #{}),
     Links2 = Links1#{UID => LinkType},
@@ -161,7 +180,7 @@ add_link(Id, Group, Resource, #{}=Actor, LinkType)
             Links2 = Links1#{UID => LinkType},
             {ok, Actor#{metadata:=Meta#{links => Links2}}};
         _ ->
-            {error, {actor_not_found, Id}}
+            {error, {linked_actor_unknown, Id}}
     end.
 
 
@@ -188,7 +207,25 @@ get_linked_uids(Type, #{metadata:=Meta}) ->
 
 %% @doc
 link_type(Group, Resource) ->
-    <<"io.netc.", Group/binary, $., Resource/binary>>.
+    <<"io.netk.", Group/binary, $., Resource/binary>>.
+
+
+%% @doc Removes all links for a type
+rm_links(Group, Resource, #{}=Actor) ->
+    LinkType = link_type(Group, Resource),
+    rm_links(Actor, LinkType).
+
+
+%% @doc Removes all links for a type
+rm_links(#{metadata:=Meta}=Actor, LinkType) when is_binary(LinkType)->
+    Links = maps:get(links, Meta, #{}),
+    case maps:filter(fun(_UID, LT) -> LT /= LinkType end, Links) of
+        Links ->
+            Actor;
+        Links2 ->
+            Actor#{metadata:=Meta#{links=>Links2}}
+    end.
+
 
 
 %% @doc
@@ -284,8 +321,8 @@ send_external_event(SrvId, Reason, Actor) ->
 
 
 %% @doc
-check_links(#{metadata:=Meta1}=Actor) ->
-    case do_check_links(Meta1) of
+check_actor_links(#{metadata:=Meta1}=Actor) ->
+    case check_meta_links(Meta1) of
         {ok, Meta2} ->
             {ok, Actor#{metadata:=Meta2}};
         {error, Error} ->
@@ -294,7 +331,7 @@ check_links(#{metadata:=Meta1}=Actor) ->
 
 
 %% @private
-do_check_links(#{links:=Links}=Meta) ->
+check_meta_links(#{links:=Links}=Meta) ->
     case do_check_links(maps:to_list(Links), []) of
         {ok, Links2} ->
             {ok, Meta#{links:=Links2}};
@@ -302,7 +339,7 @@ do_check_links(#{links:=Links}=Meta) ->
             {error, Error}
     end;
 
-do_check_links(Meta) ->
+check_meta_links(Meta) ->
     {ok, Meta}.
 
 
@@ -326,9 +363,12 @@ do_check_links([{Id, Type}|Rest], Acc) ->
 %% @doc Prepares an actor for creation
 %% - uid is added
 %% - name is added (if not present)
-%% - metas creationTime, updateTime, generation and resourceVersion are added
-add_creation_fields(Actor) ->
+%% - metas kind, creationTime, updateTime, generation and resourceVersion are added
+add_creation_fields(SrvId, Actor) ->
+    Group = maps:get(group, Actor),
     Res = maps:get(resource, Actor),
+    Module = nkactor_actor:get_module(SrvId, Group, Res),
+    #{camel:=Camel} = nkactor_actor:get_config(SrvId, Module),
     Meta = maps:get(metadata, Actor, #{}),
     UID = make_uid(Res),
     Name1 = maps:get(name, Actor, <<>>),
@@ -343,7 +383,10 @@ add_creation_fields(Actor) ->
     Actor2 = Actor#{
         name => Name2,
         uid => UID,
-        metadata => Meta#{creation_time => Time}
+        metadata => Meta#{
+            kind => Camel,
+            creation_time => Time
+        }
     },
     update(Actor2, Time).
 
@@ -448,10 +491,11 @@ fts_normalize_multi(Text) ->
 
 
 %% @doc
-update_check_fields(NewActor, #actor_st{actor=OldActor, config=Config}) ->
+update_check_fields(NewActor, ActorSt) ->
     #{data:=NewData} = NewActor,
+    #actor_st{actor=OldActor, config=Config} = ActorSt,
     #{data:=OldData} = OldActor,
-    Fields = maps:get(immutable_fields, Config, []),
+    Fields = maps:get(fields_static, Config, []),
     do_update_check_fields(Fields, NewData, OldData).
 
 

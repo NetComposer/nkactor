@@ -21,8 +21,8 @@
 %% @doc Actor Search
 -module(nkactor_search).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
--export([parse/1]).
--export_type([search_spec/0, filter/0, sort_spec/0]).
+-export([parse_spec/2]).
+-export_type([spec/0, opts/0, filter/0, sort_spec/0]).
 
 -include("nkactor.hrl").
 
@@ -33,26 +33,33 @@
 %% ===================================================================
 
 
--type search_spec() ::
+-type spec() ::
     #{
         namespace => nkactor:namespace(),
         deep => boolean(),
         from => pos_integer(),
         size => pos_integer(),
-        totals => boolean(),
+        get_totals => boolean(),
         filter => filter(),
         sort => [sort_spec()],
         only_uid => boolean(),
         get_data => boolean(),
-        get_metadata => boolean(),
-        do_delete => boolean(),
-        meta => #{
-            filter_fields => ordsets:ordset(binary()),
-            sort_fields => ordsets:ordset(binary()),
-            field_type => #{field_name() => field_type()},
-            field_trans => #{field_name() => field_name()|fun((field_name()) -> field_name())}
-        }
+        get_metadata => boolean()
     }.
+
+
+-type opts() ::
+    #{
+        forced_spec => spec(),              % Takes top priority
+        default_spec => spec(),
+        params => params(),                 % Take priority over spec
+        default_sort => [sort_spec()],
+        fields_filter => #{field_name() => true},
+        fields_sort => #{field_name() => true},
+        fields_type => #{field_name() => field_type()},
+        fields_trans => #{field_name() => field_name()|fun((field_name()) -> field_name())}
+    }.
+
 
 
 -type filter() ::
@@ -105,26 +112,57 @@
     }.
 
 
+-type params() ::
+    #{
+        namespace => binary(),
+        from => pos_integer(),
+        size => pos_integer(),
+        sort => #{Field::binary() => asc|desc},
+        labels => #{Name::binary() => Value::binary()},  %% Value == <<>> for 'any'
+        fields => #{Name::binary() => Value::binary()},  %% Value can be "OP:Value"
+        links => #{UID::binary() => Type::binary()},     %% Type == <<>> for 'any'
+        fts => #{Field::binary() => Value::binary()},    %% Field == <<"*">> for 'any'
+        deep => boolean(),
+        get_totals => boolean(),
+        get_data => boolean(),
+        get_metadata => boolean()
+    }.
+
 
 %% ===================================================================
-%% Syntax
+%% Standard search
 %% ===================================================================
 
 
 %% @doc
-%% If filter_fields is empty, anything is accepted
-%% Same for sort_fields
+%% If fields_filter is empty, anything is accepted
+%% Same for fields_sort
 %% If field is not in field_type, string is assumed
 %% If a field is defined in FieldTypes, 'type' will be added
--spec parse(search_spec()) ->
-    {ok, search_spec()} | {error, term()}.
+-spec parse_spec(spec(), opts()) ->
+    {ok, spec()} | {error, term()}.
 
-parse(SearchSpec) ->
+parse_spec(SearchSpec, Opts) ->
+    %lager:error("NKLOG S1 ~p", [SearchSpec]),
+    %lager:error("NKLOG S2 ~s", [nklib_json:encode_pretty(Opts)]),
     Syntax = search_spec_syntax(),
-    SyntaxOpts = #{search_opts=>maps:get(meta, SearchSpec, #{})},
-    case nklib_syntax:parse(SearchSpec, Syntax, SyntaxOpts) of
+    case nklib_syntax:parse(SearchSpec, Syntax) of
         {ok, Parsed, []} ->
-            {ok, analyze(Parsed)};
+            case parse_params(Parsed, Opts) of
+                {ok, Parsed2} ->
+                    Parsed3 = apply_forced_spec(Parsed2, Opts),
+                    Parsed4 = apply_default_spec(Parsed3, Opts),
+                    case check_filters(Parsed4, Opts) of
+                        {ok, Parsed5} ->
+                            S = check_sort(Parsed5, Opts),
+                            S;
+                        {error, Error} ->
+                            {error, Error}
+                    end;
+                {error, Error} ->
+                    {error, Error}
+            end;
+            %{ok, analyze(Parsed)};
         {ok, _, [Field|_]} ->
             {error, {field_unknown, Field}};
         {error, Error} ->
@@ -139,19 +177,17 @@ search_spec_syntax() ->
         size => pos_integer,
         namespace => binary,
         deep => boolean,
-        totals => boolean,
+        get_totals => boolean,
         filter => #{
             'and' => {list, search_spec_syntax_filter()},
             'or' => {list, search_spec_syntax_filter()},
             'not' => {list, search_spec_syntax_filter()}
         },
         sort => {list, search_spec_syntax_sort()},
-        do_delete => boolean,
         only_uid => boolean,
         get_data => boolean,
         get_metadata => boolean,
         ot_span_id => any,
-        meta => ignore,
         '__defaults' => #{namespace => <<>>}
     }.
 
@@ -164,8 +200,7 @@ search_spec_syntax_filter() ->
         op => {atom, [eq, ne, lt, lte, gt, gte, values, exists, prefix, ignore]},
         value => any,
         '__mandatory' => [field, value],
-        '__defaults' => #{op => eq},
-        '__post_check' => fun syntax_parse_filter/2
+        '__defaults' => #{op => eq}
     }.
 
 
@@ -176,98 +211,387 @@ search_spec_syntax_sort() ->
         type => {atom, [string, integer, boolean]},
         order => {atom, [asc, desc]},
         '__mandatory' => [field],
-        '__defaults' => #{order => asc},
-        '__post_check' => fun syntax_parse_sort/2
+        '__defaults' => #{order => asc}
     }.
 
 
 %% @private
-syntax_parse_filter(List, #{search_opts:=Opts}) ->
-    Valid = maps:get(filter_fields, Opts, []),
-    Trans = maps:get(field_trans, Opts, #{}),
-    Types = maps:get(field_type, Opts, #{}),
-    syntax_parse_fields(List, Valid, Trans, Types).
+apply_forced_spec(Spec, #{forced_spec:=Forced}) ->
+    Spec2 = maps:merge(Spec, Forced),
+    SpecFilter = maps:get(filter, Spec, #{}),
+    ForcedFilter = maps:get(filter, Forced, #{}),
+    And1 = maps:get('and', SpecFilter, []),
+    And2 = maps:get('and', ForcedFilter, []),
+    Filter2 = case And1++And2 of
+        And1 ->
+            SpecFilter;
+        And3 ->
+            SpecFilter#{'and' => And3}
+    end,
+    Or1 = maps:get('or', SpecFilter, []),
+    Or2 = maps:get('or', ForcedFilter, []),
+    Filter3 = case Or1++Or2 of
+        Or1 ->
+            Filter2;
+        Or3 ->
+            Filter2#{'or' => Or3}
+    end,
+    Not1 = maps:get('not', SpecFilter, []),
+    Not2 = maps:get('not', ForcedFilter, []),
+    Filter4 = case Not1++Not2 of
+        Not1 ->
+            Filter3;
+        Not3 ->
+            Filter3#{'or' => Not3}
+    end,
+    Spec3 = Spec2#{filter=>Filter4},
+    Sort1 = maps:get(sort, Spec, []),
+    Sort2 = maps:get(sort, Forced, []),
+    Spec4 = case Sort2++Sort1 of
+        Sort1 ->
+            Spec3;
+        Sort3 ->
+            Spec3#{sort => Sort3}
+    end,
+    Spec4;
+
+apply_forced_spec(Spec, _Opts) ->
+    Spec.
 
 
 %% @private
-syntax_parse_sort(List, #{search_opts:=Opts}) ->
-    Valid = maps:get(sort_fields, Opts, []),
-    Trans = maps:get(field_trans, Opts, #{}),
-    Types = maps:get(field_type, Opts, #{}),
-    syntax_parse_fields(List, Valid, Trans, Types).
+apply_default_spec(Spec, #{default_spec:=Default}) ->
+    Spec2 = maps:merge(Default, Spec),
+    Spec2;
+
+apply_default_spec(Spec, _Opts) ->
+    Spec.
+
+%% @private
+check_filters(#{filter:=Filter}=Spec, Opts) ->
+    case check_filters(['and', 'or', 'not'], Filter, Opts) of
+        {ok, Filter2} ->
+            {ok, Spec#{filter:=Filter2}};
+        {error, Error} ->
+            {error, Error}
+    end;
+
+check_filters(Spec, _Opts) ->
+    {ok, Spec}.
+
+
+%% @private
+check_filters([], Filter, _Opts) ->
+    {ok, Filter};
+
+check_filters([Type|Rest], Filter, Opts) ->
+    case maps:find(Type, Filter) of
+        {ok, FilterList} ->
+            case check_field_filter(FilterList, Opts, []) of
+                {ok, FilterList2} ->
+                    check_filters(Rest, Filter#{Type:=FilterList2}, Opts);
+                {error, Error} ->
+                    {error, Error}
+            end;
+        error ->
+            check_filters(Rest, Filter, Opts)
+    end.
 
 
 %% @private
 %% Checks the filter in the valid list
-syntax_parse_fields(List, Valid, Trans, Types) ->
-    {field, Field} = lists:keyfind(field, 1, List),
-    case Field of
+check_field_filter([], _Opts, Acc) ->
+    {ok, lists:reverse(Acc)};
+
+check_field_filter([Filter|Rest], Opts, Acc) ->
+    {Field2, Filter2} = filter_trans(Filter, Opts),
+    case Field2 of
         <<"metadata.labels.", _/binary>> ->
-            syntax_parse_type(Field, List, Trans, Types);
+            check_field_filter(Rest, Opts, [Filter2|Acc]);
         <<"metadata.links.", _/binary>> ->
-            syntax_parse_type(Field, List, Trans, Types);
+            check_field_filter(Rest, Opts, [Filter2|Acc]);
         <<"metadata.fts.", _/binary>> ->
-            syntax_parse_type(Field, List, Trans, Types);
+            check_field_filter(Rest, Opts, [Filter2|Acc]);
         _ ->
-            case Valid of
-                [] ->
-                    syntax_parse_type(Field, List, Trans, Types);
-                _ ->
-                    case ordsets:is_element(Field, Valid) of
+            case maps:get(fields_filter, Opts, #{}) of
+                Valid when map_size(Valid)==0 ->
+                    case filter_type(Field2, Filter2, Opts) of
+                        {ok, Filter3} ->
+                            check_field_filter(Rest, Opts, [Filter3|Acc]);
+                        {error, Error} ->
+                            {error, Error}
+                    end;
+                Valid ->
+                    case maps:is_key(Field2, Valid) of
                         true ->
-                            syntax_parse_type(Field, List, Trans, Types);
+                            case filter_type(Field2, Filter2, Opts) of
+                                {ok, Filter3} ->
+                                    check_field_filter(Rest, Opts, [Filter3|Acc]);
+                                {error, Error} ->
+                                    {error, Error}
+                            end;
                         false ->
-                            {error, {field_invalid, Field}}
+                            {error, {field_invalid, Field2}}
                     end
             end
     end.
 
 
 %% @private
-syntax_parse_type(Field, List, Trans, Types) ->
-    {Field2, List2} = syntax_parse_trans(Field, List, Trans),
-    case maps:find(Field2, Types) of
-        {ok, Type} ->
-            case lists:keyfind(type, 1, List) of
-                {type, ListType} when Type /= ListType ->
-                    {error, {conflicting_field_type, Field}};
-                {type, Type} ->
-                    {ok, List2};
+check_sort(#{sort:=Sort}=Spec, Opts) ->
+    case check_field_sort(Sort, Opts, []) of
+        {ok, Sort2} ->
+            {ok, Spec#{sort:=Sort2}};
+        {error, Error} ->
+            lager:error("NKLOG SERR ~p", [Error]),
+            {error, Error}
+    end;
+
+check_sort(Spec, _Opts) ->
+    {ok, Spec}.
+
+
+%% @private
+%% Checks the filter in the valid list
+check_field_sort([], _Opts, Acc) ->
+    {ok, lists:reverse(Acc)};
+
+check_field_sort([Sort|Rest], Opts, Acc) ->
+    {Field2, Sort2} = filter_trans(Sort, Opts),
+    case maps:get(fields_sort, Opts, #{}) of
+        Valid when map_size(Valid)==0 ->
+            check_field_sort(Rest, Opts, [Sort2|Acc]);
+        Valid ->
+            case maps:is_key(Field2, Valid) of
+                true ->
+                    check_field_sort(Rest, Opts, [Sort2|Acc]);
                 false ->
-                    {ok, [{type, Type}|List2]}
-            end;
-        error ->
-            {ok, List2}
+                    {error, {field_invalid, Field2}}
+            end
     end.
 
 
 %% @private
-syntax_parse_trans(Field, List, Trans) ->
-    case maps:find(Field, Trans) of
-%%        {ok, ignore} ->
-%%            List2 = lists:keystore(op, 1, List, {op, ignore}),
-%%            {Field, List2};
-        {ok, Field2} when is_binary(Field2) ->
-            List2 = lists:keystore(field, 1, List, {field, Field2}),
-            {Field2, List2};
-        error ->
-            {Field, List}
+filter_trans(#{field:=Field}=Filter, #{fields_trans:=Trans}) ->
+    Field2 = to_bin(Field),
+    case maps:get(Field2, Trans, Field2) of
+        Field ->
+            {Field, Filter};
+        Field3 ->
+            {Field3, Filter#{field:=Field3}}
+    end;
+
+filter_trans(#{field:=Field}=Filter, _) ->
+    case to_bin(Field) of
+        Field ->
+            {Field, Filter};
+        Field2 ->
+            {Field2, Filter#{field:=Field2}}
     end.
 
 
 
-analyze(Spec) ->
-    Filter1 = maps:get(filter, Spec, #{}),
-    Filter2 =
-        maps:get('and', Filter1, []) ++
-        maps:get('or', Filter1, []) ++
-        maps:get('not', Filter1, []),
-    FilterFields = [{Field, Op} || #{field:=Field, op:=Op} <- Filter2],
-    Sort = maps:get(sort, Spec, []),
-    SortFields = [Field || #{field:=Field} <-Sort],
-    Spec#{filter_fields=>FilterFields, sort_fields=>SortFields}.
+
+%% @private
+filter_type(Field, Filter, Opts) ->
+    Types = maps:get(fields_type, Opts, #{}),
+    case maps:find(type, Filter) of
+        {ok, UserType} ->
+            case maps:get(Field, Types, UserType) of
+                UserType ->
+                    {ok, Filter#{filed=>Field}};
+                _ ->
+                    {error, {conflicting_field_type, Field}}
+            end;
+        error ->
+            {ok, Filter#{field=>Field, type => maps:get(Field, Types, string)}}
+    end.
 
 
 
+%%%% Adds fields_filter and fields_sort
+%%analyze(Spec) ->
+%%    Filter1 = maps:get(filter, Spec, #{}),
+%%    Filter2 =
+%%        maps:get('and', Filter1, []) ++
+%%        maps:get('or', Filter1, []) ++
+%%        maps:get('not', Filter1, []),
+%%    FilterFields = [{Field, Op} || #{field:=Field, op:=Op} <- Filter2],
+%%    Sort = maps:get(sort, Spec, []),
+%%    SortFields = [Field || #{field:=Field} <-Sort],
+%%    Spec#{fields_filter=>FilterFields, fields_sort=>SortFields}.
 
+
+%% ===================================================================
+%% Param-based search
+%% ===================================================================
+
+
+parse_params(Spec, #{params:=Params}) ->
+    Syntax = #{
+        from => pos_integer,
+        size => pos_integer,
+        sort => #{'__key_binary' => {atom, [asc, desc]}},
+        labels => #{'__key_binary' => binary},
+        fields => #{'__key_binary' => binary},
+        links => #{'__key_binary' => binary},
+        fts => #{'__key_binary' => binary},
+        deep => boolean,
+        get_totals => boolean,
+        get_data => boolean,
+        get_metadata => boolean
+    },
+    try
+        case nklib_syntax:parse_all(Params, Syntax) of
+            {ok, ParsedParams} ->
+                {ok, do_parse_params(maps:to_list(ParsedParams), Spec)};
+            {error, Error} ->
+                {error, Error}
+        end
+    catch
+        throw:Throw ->
+            Throw
+    end;
+
+parse_params(Spec, _Opts) ->
+    {ok, Spec}.
+
+
+%% @private
+do_parse_params([], Spec) ->
+    Spec;
+
+do_parse_params([{Key, Val}|Rest], Spec)
+    when Key==namespace; Key==from; Key==size; Key==deep; Key==get_totals; Key==get_data;
+         Key==get_metadata ->
+    do_parse_params(Rest, Spec#{Key => Val});
+
+do_parse_params([{fields, Map}|Rest], Spec) ->
+    Spec2 = parse_filter(maps:to_list(Map), Spec),
+    do_parse_params(Rest, Spec2);
+
+do_parse_params([{labels, Map}|Rest], Spec) ->
+    Spec2 = parse_labels(maps:to_list(Map), Spec),
+    do_parse_params(Rest, Spec2);
+
+do_parse_params([{fts, Map}|Rest], Spec) ->
+    Spec2 = parse_fts(maps:to_list(Map), Spec),
+    do_parse_params(Rest, Spec2);
+
+do_parse_params([{links, Map}|Rest], Spec) ->
+    Spec2 = parse_links(maps:to_list(Map), Spec),
+    do_parse_params(Rest, Spec2);
+
+do_parse_params([{sort, Map}|Rest], Spec) ->
+    Sort = parse_sort(maps:to_list(Map), []),
+    do_parse_params(Rest, Spec#{sort=>Sort});
+
+do_parse_params([_|Rest], Spec) ->
+    do_parse_params(Rest, Spec).
+
+
+%% @private
+parse_filter([], Spec) ->
+    Spec;
+
+parse_filter([{Field, Value}|Rest], Spec) ->
+    Spec2 = parse_field_op(Field, Value, Spec),
+    parse_filter(Rest, Spec2).
+
+
+%% @private
+parse_field_op(Field, Value, Spec) ->
+    Filter = case binary:split(to_bin(Value), <<":">>) of
+        [Op, Value2] ->
+            Op2 = case catch binary_to_existing_atom(Op, latin1) of
+                eq -> eq;
+                ne -> ne;
+                gt -> gt;
+                gte -> gte;
+                lt -> lt;
+                lte -> lte;
+                prefix -> prefix;
+                values -> values;
+                _ -> throw({error, {field_op, Op}})
+            end,
+            Value3 = case Op2 of
+                values -> binary:split(Value2, <<"|">>, [global]);
+                _ -> Value2
+            end,
+            #{field=>Field, op=>Op2, value=>Value3};
+        [<<>>] ->
+            #{field=>Field, op=>exists, value=>true};
+        [Value2] ->
+            #{field=>Field, op=>eq, value=>Value2}
+    end,
+    add_and_filter(Filter, Spec).
+
+
+%% @private
+parse_labels([], Spec) ->
+    Spec;
+
+parse_labels([{Field, Value}|Rest], Spec) when Value == <<>> ->
+    Field2 = <<"metadata.labels.", Field/binary>>,
+    Spec2 = add_and_filter(#{field=>Field2, op=>exists, value=>true}, Spec),
+    parse_labels(Rest, Spec2);
+
+parse_labels([{Field, Value}|Rest], Spec) ->
+    Field2 = <<"metadata.labels.", Field/binary>>,
+    Spec2 = add_and_filter(#{field=>Field2, op=>eq, value=>Value}, Spec),
+    parse_labels(Rest, Spec2).
+
+
+%% @private
+parse_links([], Spec) ->
+    Spec;
+
+parse_links([{UID, Type}|Rest], Spec) when Type == <<>> ->
+    Field2 = <<"metadata.links.", UID/binary>>,
+    Spec2 = add_and_filter(#{field=>Field2, op=>exists, value=>true}, Spec),
+    parse_links(Rest, Spec2);
+
+parse_links([{UID, Type}|Rest], Spec) ->
+    Field2 = <<"metadata.links.", UID/binary>>,
+    Spec2 = add_and_filter(#{field=>Field2, op=>eq, value=>Type}, Spec),
+    parse_links(Rest, Spec2).
+
+
+%% @private
+parse_fts([], Spec) ->
+    Spec;
+
+parse_fts([{Field, Value}|Rest], Spec) ->
+    Field2 = <<"metadata.fts.", Field/binary>>,
+    Filter =case binary:split(Value, <<"*">>) of
+        [V1, <<>>] ->
+            #{field=>Field2, op=>prefix, value=>V1};
+        _ ->
+            #{field=>Field2, op=>eq, value=>Value}
+    end,
+    Spec2 = add_and_filter(Filter, Spec),
+    parse_fts(Rest, Spec2).
+
+
+%% @private
+parse_sort([], Acc) ->
+    lists:reverse(Acc);
+
+parse_sort([{Field, Value}|Rest], Acc) ->
+    Sort = #{field=>Field, order=>Value},
+    parse_sort(Rest, [Sort|Acc]).
+
+
+%% @private
+add_and_filter(Filter, Spec) ->
+    SpecFilter = maps:get(filter, Spec, #{}),
+    And1 = maps:get('and', SpecFilter, []),
+    And2 = [Filter|And1],
+    SpecFilter2 = SpecFilter#{'and' => And2},
+    Spec#{filter => SpecFilter2}.
+
+
+%% @private
+to_bin(Term) when is_binary(Term) -> Term;
+to_bin(Term) -> nklib_util:to_binary(Term).
 

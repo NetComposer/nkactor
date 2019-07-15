@@ -21,9 +21,9 @@
 %% @doc Actor Syntax
 -module(nkactor_syntax).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
--export([parse_actor/1, parse_actor/2]).
--export([parse_request/1, parse_params/2]).
-
+-export([parse_actor/1, parse_actor/2, parse_request/1]).
+-export([actor_fields_filter/0, actor_fields_sort/0, actor_fields_trans/0,
+         actor_fields_type/0, actor_fields_static/0]).
 -include("nkactor.hrl").
 -include("nkactor_request.hrl").
 
@@ -57,6 +57,7 @@ parse_actor(Actor, Syntax) ->
 actor_syntax(Base) ->
     Base#{
         group => binary,
+        vsn => binary,
         resource => binary,
         name => binary,
         namespace => binary,
@@ -70,32 +71,39 @@ actor_syntax(Base) ->
     }.
 
 
+
 %% @private
+%% snake_case and camel_case are allowed, but converted to snake_case always
 meta_syntax() ->
     #{
+        kind => binary,
         vsn => binary,
         hash => binary,
         subtype => binary,
         generation => pos_integer,
         creation_time => date_3339,
+        creationTime => {'__key', creation_time, date_3339},
         update_time => date_3339,
+        updateTime => {'__key', update_time, date_3339},
         is_enabled => boolean,
+        isEnabled => {'__key', is_enabled, boolean},
         is_active => boolean,
+        isActive => {'__key', is_active, boolean},
         expires_time => [date_3339, {binary, [<<>>]}],
+        expiresTime=> {'__key', expires_time, [date_3339, {binary, [<<>>]}]},
         labels => #{'__key_binary' => binary},
         annotations => #{'__key_binary' => binary},
         links => #{'__key_binary' => binary},
         fts => #{'__key_binary' => binary},
         in_alarm => boolean,
+        inAlaram => {'__key', in_alarm, boolean},
         alarms => {list, binary},
         next_status_time => date_3339,
+        nextStatusTime => {'__key', next_status_time, date_3339},
         description => binary,
         created_by => binary,
         updated_by => binary,
-        trace_id => integer,
-        '__defaults' => #{
-            vsn => <<"0">>
-        }
+        trace_id => integer
     }.
 
 
@@ -107,18 +115,16 @@ meta_syntax() ->
 parse_request(Req) ->
     Syntax = request_syntax(),
     case nklib_syntax:parse(Req, Syntax) of
-        {ok, #{group:=_, resource:=_, namespace:=_, name:=_}=Req2, _} ->
-            {ok, Req2};
         {ok, #{uid:=UID}=Req2, _} ->
             ?REQ_DEBUG("reading UID: ~s", [UID]),
             case nkactor:find(UID) of
                 {ok, ActorId} ->
                     ?REQ_DEBUG("UID resolved", []),
                     #actor_id{
-                        group=Group,
-                        resource=Res,
-                        name=Name,
-                        namespace=Namespace
+                        group = Group,
+                        resource = Res,
+                        name = Name,
+                        namespace = Namespace
                     } = ActorId,
                     Req3 = Req2#{
                         group => Group,
@@ -130,25 +136,43 @@ parse_request(Req) ->
                 {error, Error} ->
                     {error, Error}
             end;
-        {ok, #{group:=_, resource:=_, namespace:=_}=Req2, _} ->
-            {ok, Req2};
-        {ok, #{body:=Body}=Req2, _} when is_map(Body) ->
-            case nklib_syntax:parse(Body, body_syntax()) of
-                {ok, ParsedBody, _} ->
-                    case maps:merge(Req2, ParsedBody) of
-                        #{group:=_, resource:=_, namespace:=_}=Req3 ->
-                            {ok, Req3};
-                        _ ->
-                            parse_request_missing(Req2)
-                    end;
-                _ ->
-                    parse_request_missing(Req2)
-            end;
         {ok, Req2, _} ->
-            parse_request_missing(Req2);
+            parse_request_body(Req2);
         {error, Error} ->
             {error, Error}
     end.
+
+
+%% @private
+parse_request_body(#{verb:=Verb, body:=Body}=Req) when Verb==create; Verb==update ->
+    case nklib_syntax:parse(Body, body_syntax()) of
+        {ok, ParsedBody, _} ->
+            case {ParsedBody, Req} of
+                {#{group:=G1}, #{group:=G2}} when G1 /= G2 ->
+                    {error, {field_invalid, <<"group">>}};
+                {#{resource:=R1}, #{resource:=R2}} when R1 /= R2 ->
+                    {error, {field_invalid, <<"resource">>}};
+                {#{name:=N1}, #{name:=N2}} when N1 /= N2 ->
+                    {error, {field_invalid, <<"name">>}};
+                {#{namespace:=S1}, #{namespace:=S2}} when S1 /= S2 ->
+                    {error, {field_invalid, <<"namespace">>}};
+                _ ->
+                    case maps:merge(Req, ParsedBody) of
+                        #{group:=_, resource:=_}=Req2 ->
+                            {ok, Req2};
+                        _ ->
+                            parse_request_missing(Req)
+                    end
+            end;
+        {error, Error} ->
+            {error, Error}
+    end;
+
+parse_request_body(#{group:=_, resource:=_}=Req) ->
+    {ok, Req};
+
+parse_request_body(Req) ->
+    parse_request_missing(Req).
 
 
 %% @private
@@ -170,26 +194,28 @@ parse_request_missing(Req) ->
 %% @private
 request_syntax() ->
     #{
+        srv => atom,
+        class => any,
         verb => atom,
-        group => binary,
         namespace => binary,
+        group => binary,
+        vsn => binary,
         resource => binary,
         name => binary,
         uid => binary,
-        subresource => path,
+        subresource => binary,
         params => map,
+        content_type => binary,
         body => [map, binary],
         auth => map,
         ot_span_id => any,
-
         external_url => binary,
-        srv => atom,
         callback => atom,
         meta => map,
-        '__defaults' => #{
-            verb => get,
-            subresource => <<"/">>
-        }
+%%        '__defaults' => #{
+%%            verb => get
+%%        },
+        '__mandatory' => [srv]
     }.
 
 
@@ -203,78 +229,87 @@ body_syntax() ->
     }.
 
 
-%% @doc
-parse_params(Verb, #{params:=Params}=Req) ->
-    Syntax = params_syntax(Verb),
-    case nklib_syntax:parse(Params, Syntax, #{allow_unknown=>true}) of
-        {ok, Parsed, []} ->
-            {ok, Req#{params:=Parsed}};
-        {error, {syntax_error, Field}} ->
-            {error, {parameter_invalid, Field}};
-        {error, Error} ->
-            {error, Error}
-    end;
 
-parse_params(_Verb, Req) ->
-    {ok, Req}.
+%% ===================================================================
+%% Common fields
+%% ===================================================================
+
+%% @private Called from nkactor_callbacks
+actor_fields_filter() ->
+    [
+        uid,
+        group,
+        resource,
+        'group+resource',           % Maps to special group + resource
+        name,
+        namespace,
+        'metadata.kind',
+        'metadata.subtype',
+        'metadata.vsn',
+        'metadata.hash',
+        'metadata.generation',
+        'metadata.creation_time',
+        'metadata.update_time',
+        'metadata.is_active',
+        'metadata.expires_time',
+        'metadata.is_enabled',
+        'metadata.in_alarm',
+        'metadata.next_status_time'
+    ].
 
 
-%% @doc
-params_syntax(get) ->
+%% @private Called from nkactor_callbacks
+actor_fields_sort() ->
+    [
+        group,
+        resource,
+        'group+resource',
+        name,
+        namespace,
+        path,
+        'metadata.kind',
+        'metadata.subtype',
+        'metadata.vsn',
+        'metadata.generation',
+        'metadata.creation_time',
+        'metadata.update_time',
+        'metadata.is_active',
+        'metadata.expires_time',
+        'metadata.is_enabled',
+        'metadata.in_alarm',
+        'metadata.next_status_time'
+    ].
+
+
+
+%% @private Called from nkactor_callbacks
+actor_fields_trans() ->
     #{
-        activate => boolean,
-        consume => boolean,
-        ttl => {integer, 1, none}
-    };
+        kind => 'metadata.kind',
+        'metadata.creationTime' => 'metadata.creation_time',
+        'metadata.updateTime' => 'metadata.update_time',
+        'metadata.isActive' => 'metadata.is_active',
+        'metadata.expiresTime'=> 'metadata.expires_time',
+        'metadata.isEnabled' => 'metadata.is_enabled',
+        'metadata.inAlaram' => 'metadata.in_alarm',
+        'metadata.nextStatusTime' => 'metadata.next_status_time'
+    }.
 
-params_syntax(create) ->
+
+%% @private Called from nkactor_callbacks
+actor_fields_type() ->
     #{
-        activate => boolean,
-        ttl => {integer, 1, none}
-    };
-
-params_syntax(list) ->
-    #{
-        from => pos_integer,
-        size => pos_integer,
-        sort => binary,
-        labels => #{'__key_binary' => binary},
-        fields => #{'__key_binary' => binary},
-        links => #{'__key_binary' => binary},
-        fts => binary,
-        deep => boolean,
-        totals => boolean
-    };
-
-params_syntax(delete) ->
-    #{
-        cascade => boolean
-    };
+        'metadata.generation' => integer,
+        'metadata.is_active' => boolean,
+        'metadata.is_enabled' => boolean,
+        'metadata.in_alarm' => boolean
+    }.
 
 
-params_syntax(deletecollection) ->
-    #{
-        from => pos_integer,
-        size => pos_integer,
-        sort => binary,
-        labels => #{'__key_binary' => binary},
-        fields => #{'__key_binary' => binary},
-        links => #{'__key_binary' => binary},
-        fts => binary,
-        deep => boolean
-    };
 
-params_syntax(watch) ->
-    #{
-        deep => boolean,
-        kind => binary,
-        version => binary
-    };
-
-
-params_syntax(_Veb) ->
-    #{}.
-
+%% @private Called from nkactor_callbacks
+actor_fields_static() ->
+    [].
 
 
 %%%% @private

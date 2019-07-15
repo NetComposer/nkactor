@@ -22,8 +22,9 @@
 -module(nkactor_actor).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([get_module/3, get_config/1, get_config/2]).
--export([make_actor_config/1, parse/3, request/3]).
+-export([get_module/3, get_config/1, get_config/2, get_common_config/1]).
+-export([parse/3, unparse/3, request/3]).
+-export([from_external/2, to_external/2]).
 
 -include("nkactor.hrl").
 -include("nkactor_debug.hrl").
@@ -53,13 +54,18 @@
 -callback config() -> config().
 
 
-%% @doc Called to parse an actor from an external representation
--callback parse(actor(), request()) ->
-    {ok, actor()} | {syntax, nklib_syntax:syntax()} | {error, term()}.
+%% @doc Called to validate an actor (only 'data' is presented)
+-callback parse(map(), request()) ->
+    continue | {ok, map()} | {syntax, nklib_syntax:syntax()} | {error, term()}.
+
+
+%% @doc Called to parse an actor from an external representation into canonical format
+-callback unparse(actor(), request()) ->
+    continue | {ok, actor()} | {syntax, nklib_syntax:syntax()} | {error, term()}.
 
 
 %% @doc Called to process an incoming API
-%% SrvId will be the service supporting the domain in ApiReq
+%% SrvId will be the service supporting the domain in Req
 %% If not implemented, or 'continue' is returned, standard processing will apply
 -callback request(verb(), [binary()], actor_id(), request()) ->
     response() | continue.
@@ -162,7 +168,7 @@
 
 %% @doc
 -optional_callbacks([
-    parse/2, request/4, save/2,
+    parse/2, unparse/2, request/4, save/2,
     init/2, get/2, update/2, delete/1, sync_op/3, async_op/2, enabled/2, heartbeat/1,
     event/2, link_event/4, next_status_timer/1,
     handle_call/3, handle_cast/2, handle_info/2, stop/2, terminate/2]).
@@ -190,7 +196,7 @@ get_module(SrvId, Group, Key) when is_atom(SrvId) ->
 get_config(SrvId, Module) when is_atom(SrvId), is_atom(Module) ->
     case catch nklib_util:do_config_get({nkactor_config, SrvId, Module}, undefined) of
         undefined ->
-            Config1 = make_actor_config(Module),
+            Config1 = make_actor_config(SrvId, Module),
             Config2 = ?CALL_SRV(SrvId, actor_config, [Config1]),
             Config3 = Config2#{module=>Module},
             nklib_util:do_config_put({nkactor_config, SrvId, Module}, Config2),
@@ -218,33 +224,40 @@ get_config(#actor_id{group=Group, resource=Resource, namespace=Namespace}) ->
     end.
 
 
-%% @doc Used to call the 'request' callback on an actor's module, in case
-%% it has implemented it (to support specific requests)
-%% If parse_id is used, logs will be added
--spec request(nkserver:id(), #actor_id{}, any()) ->
-    response() | continue.
-
-request(SrvId, ActorId, Request) ->
-    #{verb:=Verb, subresource:=SubRes} = Request,
-    [<<>>|SubRes2] = binary:split(SubRes, <<"/">>, [global]),
-    #actor_id{group = Group, resource = Res} = ActorId,
-    Args = [request, Group, Res, [Verb, SubRes2, ActorId, Request]],
-    % See nkactor_callback in nkactor_plugin
-    SpanId = maps:get(ot_span_id, Request, undefined),
-    nkserver_ot:log(SpanId, <<"calling actor request">>),
-    case ?CALL_SRV(SrvId, nkactor_callback, Args) of
-        continue ->
-            nkserver_ot:log(SpanId, <<"no specific action">>),
-            continue;
-        Other ->
-            nkserver_ot:log(SpanId, <<"specific action return">>),
-            Other
+%% @doc
+get_common_config(SrvId) ->
+    case nklib_util:do_config_get({nkactor_config, SrvId}) of
+        undefined ->
+            Filter1 = ?CALL_SRV(SrvId, actor_fields_filter, [[]]),
+            Filter2 = [{to_bin(Field), true} || Field <- Filter1],
+            Filter3 = maps:from_list(Filter2),
+            Sort1 = ?CALL_SRV(SrvId, actor_fields_sort, [[]]),
+            Sort2 = [{to_bin(Field), true} || Field <- Sort1],
+            Sort3 = maps:from_list(Sort2),
+            Trans1 = maps:to_list(?CALL_SRV(SrvId, actor_fields_trans, [#{}])),
+            Trans2 = [{to_bin(Field1), to_bin(Field2)} || {Field1, Field2} <- Trans1],
+            Trans3 = maps:from_list(Trans2),
+            Type1 = maps:to_list(?CALL_SRV(SrvId, actor_fields_type, [#{}])),
+            Type2 = [{to_bin(Field), Type} || {Field, Type} <- Type1],
+            Type3 = maps:from_list(Type2),
+            Static1 = ?CALL_SRV(SrvId, actor_fields_static, [[]]),
+            Static2 = lists:usort([to_bin(Field) || Field <- Static1]),
+            Data = #{
+                fields_filter => Filter3,
+                fields_sort => Sort3,
+                fields_trans => Trans3,
+                fields_type => Type3,
+                fields_static => Static2
+            },
+            nklib_util:do_config_put({nkactor_config, SrvId}, Data),
+            Data;
+        Data ->
+            Data
     end.
 
 
-%% @doc Used to call the 'config' callback on an actor's module
-%% You normally will use nkdomain_util:get_config/2, as its has a complete set of fields
-make_actor_config(Module) ->
+%% @private
+make_actor_config(SrvId, Module) ->
     #{resource:=Res1} = Config = Module:config(),
     Res2 = to_bin(Res1),
     Singular = case Config of
@@ -272,17 +285,27 @@ make_actor_config(Module) ->
             [get, list, create]
     end,
     Versions = maps:get(versions, Config),
-    FilterFields1 = maps:get(filter_fields, Config, []),
-    FilterFields2 = [to_bin(Field) || Field <- FilterFields1++filter_fields()],
-    SortFields1 = maps:get(sort_fields, Config, []),
-    SortFields2 = [to_bin(Field) || Field <- SortFields1++sort_fields()],
-    FieldType1 = maps:get(field_type, Config, #{}),
-    FieldType2 = maps:to_list(maps:merge(FieldType1, field_type())),
-    FieldType3 = maps:from_list([{to_bin(Field), Value} || {Field, Value} <- FieldType2]),
-    FieldTrans1 = maps:to_list(maps:get(field_trans, Config, #{})),
-    FieldTrans2 = maps:from_list([{to_bin(Field), Value} || {Field, Value} <- FieldTrans1]),
-    StaticFields1 = maps:get(immutable_fields, Config, []),
-    StaticFields2 = [to_bin(Field) || Field <- StaticFields1],
+    #{
+        fields_filter :=CommonFilter,
+        fields_sort := CommonSort,
+        fields_trans := CommonTrans,
+        fields_type := CommonType,
+        fields_static := CommonStatic
+    } = get_common_config(SrvId),
+    FieldsFilter1 = maps:get(fields_filter, Config, []),
+    FieldsFilter2 = [{to_field(Field), true} || Field <- FieldsFilter1],
+    FieldsFilter3 = maps:from_list(FieldsFilter2),
+    FieldsSort1 = maps:get(fields_sort, Config, []),
+    FieldsSort2 = [{to_field(Field), true} || Field <- FieldsSort1],
+    FieldsSort3 = maps:from_list(FieldsSort2),
+    FieldsType1 = maps:to_list(maps:get(fields_type, Config, #{})),
+    FieldsType2 = [{to_field(Field), Value} || {Field, Value} <- FieldsType1],
+    FieldsType3 = maps:from_list(FieldsType2),
+    FieldsTrans1 = maps:to_list(maps:get(fields_trans, Config, #{})),
+    FieldsTrans2 = [{to_field(Field), to_field(Trans)} || {Field, Trans} <- FieldsTrans1],
+    FieldsTrans3 = maps:from_list(FieldsTrans2),
+    FieldsStatic1 = maps:get(fields_static, Config, []),
+    FieldsStatic2 = [to_field(Field) || Field <- FieldsStatic1],
     Config#{
         module => Module,
         resource := Res2,
@@ -291,30 +314,44 @@ make_actor_config(Module) ->
         singular => Singular,
         camel => Camel,
         short_names => ShortNames,
-        filter_fields => lists:usort(FilterFields2),
-        sort_fields => lists:usort(SortFields2),
-        field_type => FieldType3,
-        field_trans => FieldTrans2,
-        immutable_fields => lists:usort(StaticFields2)
+        fields_filter => maps:merge(FieldsFilter3, CommonFilter),
+        fields_sort => maps:merge(FieldsSort3, CommonSort),
+        fields_type => maps:merge(FieldsType3, CommonType),
+        fields_trans => maps:merge(FieldsTrans3, CommonTrans),
+        fields_static => lists:usort(FieldsStatic2++CommonStatic)
     }.
 
 
+%% @private Adds "data." at head it not there
+to_field(Field) ->
+    case to_bin(Field) of
+        <<"data.", _/binary>> = Field2 ->
+            Field2;
+        <<"metadata.", _/binary>> = Field2 ->
+            Field2;
+        Other ->
+            <<"data.", Other/binary>>
+    end.
+
 
 %% @doc Used to parse an actor, for an specific request
+%% Each external resource (store or API) is responsible to present the
+%% canonical form for the actor (maps, etc.)
+
 %% If ot_span_id is used, logs will be added
--spec parse(nkserver:id(), actor(), nkactor_request:request()) ->
+-spec parse(nkserver:id(), actor(), request()) ->
     {ok, actor()} | {error, nkserver:msg()}.
 
-parse(SrvId, Actor, Request) ->
+parse(SrvId, Actor, Req) ->
     #{group:=Group, resource:=Res} = Actor,
     % See nkactor_callback in nkactor_plugin
-    SpanId = maps:get(ot_span_id, Request, undefined),
+    SpanId = maps:get(ot_span_id, Req, undefined),
     nkserver_ot:log(SpanId, <<"calling actor parse">>),
-    Args = [parse, Group, Res, [Actor, Request]],
+    Args = [parse, Group, Res, [Actor, Req]],
     case ?CALL_SRV(SrvId, nkactor_callback, Args) of
         continue ->
             nkserver_ot:log(SpanId, <<"default syntax">>),
-            {syntax, #{}};
+            {ok, Actor};
         {ok, Actor2} ->
             nkserver_ot:log(SpanId, <<"actor is custom parsed">>),
             {ok, Actor2};
@@ -325,85 +362,79 @@ parse(SrvId, Actor, Request) ->
             nkserver_ot:log(SpanId, <<"actor has custom syntax and actor">>),
             nkactor_lib:parse_actor_data(Actor2, Syntax);
         {error, Error} ->
+            nkserver_ot:log(SpanId, <<"error parsing actor: ~p">>, [Error]),
+            {error, Error}
+    end.
+
+
+%% @doc Used to transform an actor into an external representation
+-spec unparse(nkserver:id(), actor(), request()) ->
+    {ok, actor()} | {error, nkserver:msg()}.
+
+unparse(SrvId, Actor, Req) ->
+    #{group:=Group, resource:=Res} = Actor,
+    SpanId = maps:get(ot_span_id, Req, undefined),
+    nkserver_ot:log(SpanId, <<"calling actor unparse">>),
+    Args = [unparse, Group, Res, [Actor, Req]],
+    case ?CALL_SRV(SrvId, nkactor_callback, Args) of
+        continue ->
+            nkserver_ot:log(SpanId, <<"default syntax">>),
+            {ok, Actor};
+        {ok, Actor2} ->
+            nkserver_ot:log(SpanId, <<"actor is custom parsed">>),
+            {ok, Actor2};
+        {error, Error} ->
             nkserver_ot:log(SpanId, <<"error parsing actor: ~p">>, Error),
             {error, Error}
     end.
 
 
+%% @doc Used to call the 'request' callback on an actor's module, in case
+%% it has implemented it (to support specific requests)
+%% If parse_id is used, logs will be added
+-spec request(nkserver:id(), #actor_id{}, any()) ->
+    response() | continue.
 
-%% ===================================================================
-%% Common fields
-%% ===================================================================
-
-
-%% @doc Default filter fields
-%% Must be sorted!
-filter_fields() ->
-    [
-        group,
-        resource,
-        'group+resource',           % Maps to special group + resource
-        vsn,
-        name,
-        namespace,
-        path,
-        groups,
-        uid,
-        'metadata.hash',
-        'metadata.subtype',
-        'metadata.creation_time',
-        'metadata.update_time',
-        'metadata.created_by',
-        'metadata.updated_by',
-        'metadata.expires_time',
-        'metadata.generation',
-        'metadata.is_active',
-        'metadata.is_enabled',
-        'metadata.in_alarm'
-    ].
+request(SrvId, ActorId, Req) ->
+    #{verb:=Verb, subresource:=SubRes} = Req,
+    #actor_id{group = Group, resource = Res} = ActorId,
+    Args = [request, Group, Res, [Verb, SubRes, ActorId, Req]],
+    % See nkactor_callback in nkactor_plugin
+    SpanId = maps:get(ot_span_id, Req, undefined),
+    nkserver_ot:log(SpanId, <<"calling actor request">>),
+    case ?CALL_SRV(SrvId, nkactor_callback, Args) of
+        continue ->
+            nkserver_ot:log(SpanId, <<"no specific action">>),
+            continue;
+        Other ->
+            nkserver_ot:log(SpanId, <<"specific action return">>),
+            Other
+    end.
 
 
-%% @doc Default sort fields
-%% Must be sorted!
-sort_fields() ->
-    [
-        group,
-        resource,
-        'group+resource',
-        name,
-        namespace,
-        path,
-        'metadata.subtype',
-        'metadata.creation_time',
-        'metadata.update_time',
-        'metadata.created_by',
-        'metadata.updated_by',
-        'metadata.expires_time',
-        'metadata.generation',
-        'metadata.is_active',
-        'metadata.is_enabled',
-        'metadata.in_alarm'
-    ].
+%% @doc Converts an actor to an external representation
+to_external(Actor, #{class:=Class, srv:=SrvId}=Req) ->
+    case Actor of
+        #{group:=Group, resource:=Res} ->
+            ?CALL_SRV(SrvId, actor_to_external, [Class, Group, Res, Actor, Req]);
+        _ ->
+            Actor
+    end;
+
+to_external(Actor, _Req) ->
+    Actor.
 
 
-%%%% @doc
-%%field_trans() ->
-%%    #{
-%%        <<"apiGroup">> => <<"group">>,
-%%        <<"kind">> => <<"data.kind">>,
-%%        <<"metadata.uid">> => <<"uid">>,
-%%        <<"metadata.name">> => <<"name">>
-%%    }.
+%% @doc Converts an actor from an external representation
+%% (only for 'data' field, the rest must be already updated before calling request)
+-spec from_external(nkactor:actor(), nkactor_request:request()) ->
+    {ok, nkactor:actor()} | {error, term()}.
 
+from_external(Actor, #{class:=Class, srv:=SrvId, group:=Group, resource:=Res}=Req) ->
+    ?CALL_SRV(SrvId, actor_from_external, [Class, Group, Res, Actor, Req]);
 
-%% @doc Field value, applied after trans
-field_type() ->
-    #{
-        'metadata.generation' => integer,
-        'metadata.is_active' => boolean,
-        'metadata.is_enabled' => boolean,
-        'metadata.in_alarm' => boolean
-    }.
+from_external(Actor, _Req) ->
+    {ok, Actor}.
 
 
 
@@ -412,23 +443,6 @@ field_type() ->
 %% Internal
 %% ===================================================================
 %%
-%%%% @private
-%%call_actor(Fun, Args, #actor_st{module=Module}) ->
-%%    %?TRACE(call_actor_1, #{'fun'=>Fun}),
-%%    case erlang:function_exported(Module, Fun, length(Args)) of
-%%        true ->
-%%            %?TRACE(call_actor_2),
-%%            R = apply(Module, Fun, Args),
-%%            %?TRACE(call_actor_3),
-%%            R;
-%%        false ->
-%%            continue
-%%    end;
-%%
-%%call_actor(_Fun, _Args, _ActorSt) ->
-%%    continue.
-
-
 
 %% @private
 to_bin(Term) when is_binary(Term) -> Term;

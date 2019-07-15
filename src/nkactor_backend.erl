@@ -23,7 +23,7 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([find/2, activate/2, read/2]).
--export([create/2, update/3, delete/2]).
+-export([create/2, update/3, delete/2, delete_multi/2]).
 -export([search/3, aggregation/3, truncate/2]).
 %% -export([check_service/4]).
 %%-export_type([search_obj/0, search_objs_opts/0]).
@@ -197,6 +197,7 @@ read(Id, Opts) ->
     {ok, nkserver:id(), nkactor:actor(),  Meta::map()} | {error, actor_not_found|term()}.
 
 create(Actor, #{activate:=false}=Opts) ->
+    lager:error("NKLOG CREATE"),
     span_create(create, undefined, Opts),
     case nkactor_util:pre_create(Actor, Opts) of
         {ok, SrvId, Actor2} ->
@@ -319,11 +320,10 @@ update(_Id, _Actor, #{activate:=false}) ->
 
 update(Id, Actor, Opts) ->
     span_create(update, undefined, Opts),
-    ActorId = nkactor_lib:id_to_actor_id(Id),
-    case nkactor_util:pre_update(ActorId, Actor, Opts#{ot_span_id=>span_id(update)}) of
+    case nkactor_util:pre_update(Actor, Opts#{ot_span_id=>span_id(update)}) of
         {ok, SrvId, Actor2} ->
             span_update_srv_id(update, SrvId),
-            case do_activate(ActorId, Opts#{ot_span_id=>span_id(update)}) of
+            case do_activate(Id, Opts#{ot_span_id=>span_id(update)}) of
                 {ok, SrvId, ActorId2, _} ->
                     #actor_id{
                         namespace = Namespace,
@@ -342,10 +342,9 @@ update(Id, Actor, Opts) ->
                         <<"actor.pid">> => list_to_binary(pid_to_list(Pid)),
                         <<"actor.opts.activate">> => true
                     }),
-                    UpdOpts1 = maps:get(update_opts, Opts, #{}),
-                    UpdOpts2 = UpdOpts1#{ot_span_id=>span_id(update)},
+                    Opts2 = Opts#{ot_span_id=>span_id(update)},
                     span_log(update, <<"calling update actor">>),
-                    case nkactor_srv:sync_op(ActorId2, {update, Actor2, UpdOpts2}, infinity) of
+                    case nkactor_srv:sync_op(ActorId2, {update, Actor2, Opts2}, infinity) of
                         {ok, Actor3} ->
                             span_finish(update),
                             {ok, SrvId, Actor3, #{}};
@@ -440,6 +439,12 @@ delete(Id, Opts) ->
             span_delete(delete),
             {error, Error}
     end.
+
+
+%% @doc
+delete_multi(SrvId, ActorIds) ->
+    ?CALL_SRV(SrvId, actor_db_delete_multi, [SrvId, ActorIds, #{}]).
+
 
 
 
@@ -637,6 +642,7 @@ do_read(SrvId, ActorId, Opts) ->
             },
             Req3 = maps:merge(#{ot_span_id=>SpanId}, Req2),
             nkserver_ot:log(SpanId, <<"calling actor parse">>),
+            % Should nc
             case nkactor_actor:parse(SrvId, Actor, Req3) of
                 {ok, Actor2} ->
                     nkserver_ot:log(SpanId, <<"actor is valid">>),
@@ -690,7 +696,6 @@ make_fake_actor(ActorId) ->
         group = Group,
         resource = Resource,
         name = Name,
-        %vsn = Vsn,
         namespace = Namespace,
         uid = UID
     } = ActorId,
@@ -699,7 +704,6 @@ make_fake_actor(ActorId) ->
         resource => Resource,
         name => Name,
         namespace => Namespace,
-        %vsn => Vsn,
         uid => UID
     }.
 

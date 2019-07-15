@@ -66,8 +66,8 @@
 -export([init/1, terminate/2, code_change/3, handle_call/3, handle_cast/2, handle_info/2]).
 -export([count/0, get_state/1, get_timers/1, raw_stop/2]).
 -export([do_event/2, do_event_link/2, do_update/3, do_delete/1, do_set_next_status_time/2,
-    do_unset_next_status_time/1, do_get_links/1, do_add_link/3, do_remove_link/2,
-    do_save/2]).
+         do_unset_next_status_time/1, do_get_links/1, do_add_link/3, do_remove_link/2,
+         do_save/2]).
 -export_type([event/0, save_reason/0]).
 
 -include("nkactor.hrl").
@@ -249,26 +249,23 @@ sync_op(Id, Op, Timeout) ->
 sync_op(_Id, _Op, _Timeout, 0) ->
     {error, process_not_found};
 
+sync_op(#actor_id{pid=Pid}=ActorId, Op, Timeout, Tries) when is_pid(Pid) ->
+    case sync_op(Pid, Op, Timeout) of
+        {error, process_not_found} ->
+            ActorId2 = ActorId#actor_id{pid = undefined},
+            timer:sleep(250),
+            lager:warning("NkACTOR SynOP failed (~p), retrying...", [ActorId2]),
+            sync_op(ActorId2, Op, Timeout, Tries - 1);
+        Other ->
+            Other
+    end;
+
 sync_op(Id, Op, Timeout, Tries) ->
-    ActorId = nkactor_lib:id_to_actor_id(Id),
-    case ActorId of
-        #actor_id{pid = Pid} when is_pid(Pid) ->
-            case sync_op(Pid, Op, Timeout) of
-                {error, process_not_found} ->
-                    ActorId2 = ActorId#actor_id{pid = undefined},
-                    timer:sleep(250),
-                    lager:warning("NkACTOR SynOP failed (~p), retrying...", [ActorId2]),
-                    sync_op(ActorId2, Op, Timeout, Tries - 1);
-                Other ->
-                    Other
-            end;
-        _ ->
-            case nkactor:activate(ActorId) of
-                {ok, #actor_id{pid = Pid} = ActorId2} when is_pid(Pid) ->
-                    sync_op(ActorId2, Op, Timeout, Tries);
-                {error, Error} ->
-                    {error, Error}
-            end
+    case nkactor:activate(Id) of
+        {ok, #actor_id{pid = Pid} = ActorId2} when is_pid(Pid) ->
+            sync_op(ActorId2, Op, Timeout, Tries);
+        {error, Error} ->
+            {error, Error}
     end.
 
 
@@ -450,7 +447,7 @@ do_remove_link(Link, #actor_st{links = Links} = State) ->
 
 %% @private
 %% It will create an 'operation span' if ot_span_id option is used
-do_update(UpdActor, Opts, #actor_st{srv = SrvId, actor_id = ActorId, actor = Actor} = State) ->
+do_update(UpdActor, Opts, #actor_st{actor_id = ActorId, actor = Actor} = State) ->
     UpdActorId = nkactor_lib:actor_to_actor_id(UpdActor),
     #actor_id{uid = UID, namespace = Namespace, group = Class, resource = Res, name = Name} = ActorId,
     try
@@ -498,6 +495,11 @@ do_update(UpdActor, Opts, #actor_st{srv = SrvId, actor_id = ActorId, actor = Act
             CT -> ok;
             _ -> throw({updated_invalid_field, metadata})
         end,
+        Kind = maps:get(kind, Meta, <<>>),
+        case maps:get(kind, Meta, <<>>) of
+            Kind -> ok;
+            _ -> throw({updated_invalid_field, kind})
+        end,
         SubType = maps:get(subtype, Meta, <<>>),
         case maps:get(subtype, UpdMeta, <<>>) of
             SubType -> ok;
@@ -509,7 +511,7 @@ do_update(UpdActor, Opts, #actor_st{srv = SrvId, actor_id = ActorId, actor = Act
             true ->
                 UpdMeta;
             false ->
-                case nkactor_lib:do_check_links(SrvId, UpdMeta) of
+                case nkactor_lib:check_meta_links(UpdMeta) of
                     {ok, UpdMetaLinks} ->
                         UpdMetaLinks;
                     {error, Error} ->
@@ -537,14 +539,14 @@ do_update(UpdActor, Opts, #actor_st{srv = SrvId, actor_id = ActorId, actor = Act
                     false ->
                         NewMeta#{is_enabled=>false}
                 end,
-                Data2 = maps:merge(Data, UpdDataFields),
-                NewActor1 = Actor#{data=>Data2, metadata:=NewMeta2},
+                NewData2 = maps:merge(Data, UpdDataFields),
+                NewActor1 = Actor#{data=>NewData2, metadata:=NewMeta2},
                 case nkactor_lib:update_check_fields(NewActor1, State2) of
                     ok ->
                         op_span_log(<<"calling actor_srv_update">>, State2),
                         case handle(actor_srv_update, [NewActor1], State2) of
-                            {ok, NewActor3, State3} ->
-                                State4 = do_set_dirty(State3#actor_st{actor=NewActor3}),
+                            {ok, NewActor2, State3} ->
+                                State4 = do_set_dirty(State3#actor_st{actor=NewActor2}),
                                 State5 = do_enabled(UpdEnabled, State4),
                                 State6 = set_unload_policy(State5),
                                 op_span_log(<<"calling do_save">>, State6),
@@ -594,7 +596,12 @@ do_delete(#actor_st{srv = SrvId, actor_id = ActorId, actor = Actor} = State) ->
                     ?ACTOR_DEBUG("object deleted: ~p", [DbMeta], State),
                     {ok, do_event(deleted, State2#actor_st{is_dirty = deleted})};
                 {error, Error} ->
-                    ?ACTOR_LOG(warning, "object could not be deleted: ~p", [Error], State),
+                    case Error of
+                        actor_has_linked_actors ->
+                            ok;
+                        _ ->
+                            ?ACTOR_LOG(warning, "object could not be deleted: ~p", [Error], State)
+                    end,
                     {{error, Error}, State2#actor_st{actor = Actor}}
             end;
         {error, Error, State2} ->
@@ -680,7 +687,7 @@ do_save(Reason, SaveOpts, #actor_st{is_dirty = true} = State) ->
                             State5 = op_span_finish(State4),
                             {{error, not_implemented}, State5};
                         {error, Error} ->
-                            op_span_log(<<"save error: ~p">>, Error, State4),
+                            op_span_log(<<"save error: ~p">>, [Error], State4),
                             op_span_error(Error, State4),
                             State5 = op_span_finish(State4),
                             ?ACTOR_LOG(warning, "save error: ~p", [Error], State5),
@@ -1008,7 +1015,7 @@ do_sync_op({link, Link, Opts}, _From, State) ->
     reply(ok, do_refresh_ttl(State2));
 
 do_sync_op({update, Actor, Opts}, _From, State) ->
-    #actor_st{is_enabled=IsEnabled, config=Config, actor=Actor} = State,
+    #actor_st{is_enabled=IsEnabled, config=Config} = State,
     case {IsEnabled, Config} of
         {false, #{dont_update_on_disabled:=true}} ->
             reply({error, actor_is_disabled}, State);
@@ -1017,7 +1024,7 @@ do_sync_op({update, Actor, Opts}, _From, State) ->
                 {ok, State2} ->
                     ReplyActor = case Opts of
                         #{get_actor:=true} ->
-                            Actor;
+                            State2#actor_st.actor;
                         _ ->
                             #{}
                     end,
@@ -1092,7 +1099,7 @@ do_async_op({stop, Reason}, State) ->
 
 do_async_op({raw_stop, Reason}, State) ->
     % We don't send the deleted event here, since we may not be active at all
-    ?ACTOR_LOG(warning, "received raw_stop: ~p", [Reason], State),
+    ?ACTOR_LOG(notice, "received raw_stop: ~p", [Reason], State),
     {_, State2} = handle(actor_srv_stop, [Reason], State),
     State3 = do_event({stopped, Reason}, State2),
     {stop, normal, State3#actor_st{stop_reason=raw_stop}};

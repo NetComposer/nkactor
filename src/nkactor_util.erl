@@ -27,7 +27,7 @@
 -include("nkactor_debug.hrl").
 -include_lib("nkserver/include/nkserver.hrl").
 
--export([pre_create/2, pre_update/3]).
+-export([pre_create/2, pre_update/2]).
 -export([activate_actors/1]).
 
 -define(ACTIVATE_SPAN, auto_activate).
@@ -45,14 +45,7 @@ pre_create(Actor, Opts) ->
     case nkactor_syntax:parse_actor(Actor, Syntax) of
         {ok, Actor2} ->
             nkserver_ot:log(SpanId, <<"actor parsed">>),
-            Actor3 = nkactor_lib:add_creation_fields(Actor2),
-            Actor4 = case Opts of
-                #{forced_uid:=UID} ->
-                    Actor3#{uid := UID};
-                _ ->
-                    Actor3
-            end,
-            #{namespace:=Namespace} = Actor4,
+            #{namespace:=Namespace} = Actor2,
             case nkactor_namespace:find_service(Namespace) of
                 {ok, SrvId} ->
                     nkserver_ot:log(SpanId, <<"actor namespace found: ~s">>, [SrvId]),
@@ -61,9 +54,16 @@ pre_create(Actor, Opts) ->
                         verb => create,
                         srv => SrvId
                     },
+                    Actor3 = nkactor_lib:add_creation_fields(SrvId, Actor2),
+                    Actor4 = case Opts of
+                        #{forced_uid:=UID} ->
+                            Actor3#{uid := UID};
+                        _ ->
+                            Actor3
+                    end,
                     case nkactor_actor:parse(SrvId, Actor4, Req2) of
                         {ok, Actor5} ->
-                            case nkactor_lib:check_links(Actor5) of
+                            case nkactor_lib:check_actor_links(Actor5) of
                                 {ok, Actor6} ->
                                     nkserver_ot:log(SpanId, <<"actor parsed">>),
                                     {ok, SrvId, Actor6};
@@ -87,13 +87,12 @@ pre_create(Actor, Opts) ->
 
 
 %% @private
-pre_update(ActorId, Actor, Opts) ->
+pre_update(Actor, Opts) ->
     SpanId = maps:get(ot_span_id, Opts, undefined),
     Syntax = #{'__mandatory' => [group, resource, namespace]},
     case nkactor_syntax:parse_actor(Actor, Syntax) of
-        {ok, Actor2} ->
+        {ok, #{namespace:=Namespace}=Actor2} ->
             nkserver_ot:log(SpanId, <<"actor parsed">>),
-            #actor_id{namespace=Namespace} = ActorId,
             case nkactor_namespace:find_service(Namespace) of
                 {ok, SrvId} ->
                     nkserver_ot:log(SpanId, <<"actor namespace found: ~s">>, [SrvId]),
@@ -104,7 +103,7 @@ pre_update(ActorId, Actor, Opts) ->
                     },
                     case nkactor_actor:parse(SrvId, Actor2, Req2) of
                         {ok, Actor3} ->
-                            case nkactor_lib:check_links(Actor3) of
+                            case nkactor_lib:check_actor_links(Actor3) of
                                 {ok, Actor4} ->
                                     nkserver_ot:log(SpanId, <<"actor parsed">>),
                                     {ok, SrvId, Actor4};

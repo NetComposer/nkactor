@@ -4,6 +4,7 @@
 -include("nkactor.hrl").
 
 
+
 -define(REQ_SPAN, nkactor_request).
 
 -define(REQ_DEBUG(Txt, Args),

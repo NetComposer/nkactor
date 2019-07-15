@@ -26,10 +26,11 @@
 -export([find/1, activate/1, update/3, create/2, delete/1, delete/2]).
 -export([get_actor/1, get_actor/2, get_path/1, is_enabled/1, enable/2, stop/1, stop/2]).
 -export([search_groups/2, search_resources/3]).
--export([search_label/3, search_linked_to/3, search_fts/3, search_actors/2, search_delete/2, delete_old/5]).
+-export([search_label/3, search_linked_to/3, search_fts/3, search_actors/3, delete_multi/3, delete_old/5]).
 -export([search_active/2, search_expired/2, truncate/1]).
--export([base_namespace/1, get_services/0]).
+-export([base_namespace/1]).
 -export([sync_op/2, sync_op/3, async_op/2]).
+-export([get_services/0, call_services/2]).
 -export_type([actor/0, id/0, uid/0, namespace/0, resource/0, path/0, name/0,
               vsn/0, group/0,hash/0, subresource/0, verb/0,
               data/0, alarm_class/0, alarm_body/0]).
@@ -38,7 +39,7 @@
 -include("nkactor.hrl").
 -include("nkactor.hrl").
 -include("nkactor_debug.hrl").
-
+-include_lib("nkserver/include/nkserver.hrl").
 
 
 %% ===================================================================
@@ -55,7 +56,9 @@
         namespace => namespace(),
         data => map(),
         metadata => #{
+            kind => binary(),               % Usually camel version of resource
             subtype => binary(),
+            % Version of the actor structure for this group and resource
             vsn => vsn(),
             hash => binary(),
             generation => integer(),
@@ -139,12 +142,15 @@
         create_check_unique => boolean(),               %% Default true
         dont_update_on_disabled => boolean(),           %% Default false
         dont_delete_on_disabled => boolean(),           %% Default false
-        immutable_fields => [nkactor_search:field_name()],  %% Don't allow updates
-        filter_fields => [nkactor_search:field_name()],
-        sort_fields => [nkactor_search:field_name()],
-        field_type => #{
+        fields_filter => [nkactor_search:field_name()],
+        fields_sort => [nkactor_search:field_name()],
+        fields_type => #{
             nkservie_actor_search:field_name() => nkactor_search:field_type()
         },
+        fields_trans => #{
+            nkservie_actor_search:field_name() => nkservie_actor_search:field_name()
+        },
+        fields_static => [nkactor_search:field_name()],  %% Don't allow updates
         camel => binary(),
         singular => binary(),
         short_names => [binary()]
@@ -195,7 +201,7 @@
     #{
         data_fields => [binary()],          % If used, fields not defined here will not be updated
         request => nkactor_request:request(),
-        get_actor => boolean
+        get_actor => boolean()
     }.
 
 
@@ -484,12 +490,13 @@ search_fts(SrvId, Word, Opts) ->
 %% If 'meta' is not populated with filters available, types, etc.:
 %% - any field can be used for filter, sort, etc.
 %% - you must supply the type, or it will be converted to string
--spec search_actors(nkserver:id(), nkactor_search:search_spec()) ->
+-spec search_actors(nkserver:id(), nkactor_search:spec(), nkactor_seach:opts()) ->
     {ok, [actor()], Meta::map()} | {error, term()}.
 
-search_actors(SrvId, SearchSpec) ->
-    case nkactor_search:parse(SearchSpec) of
+search_actors(SrvId, SearchSpec, SearchOpts) ->
+    case nkactor_search:parse_spec(SearchSpec, SearchOpts) of
         {ok, SearchSpec2} ->
+            %lager:error("NKLOG PARSED ~p", [SearchSpec2]),
             case nkactor_backend:search(SrvId, actors_search, SearchSpec2) of
                 {ok, Actors, Meta} ->
                     {ok, Actors, maps:with([size, total], Meta)};
@@ -502,24 +509,14 @@ search_actors(SrvId, SearchSpec) ->
 
 
 %% @doc Generic deletion of objects
-%% Use do_delete=>true for real deletion
-%% THIS WILL NOT UNLOAD STARTED ACTORS
-%% You may want to stop related namespaces before and after
--spec search_delete(nkserver:id(), nkactor_search:search_spec()) ->
-    {ok|deleted, integer(), Meta::map()}.
+-spec delete_multi(nkserver:id(), nkactor_search:spec(), nkactor_search:opts()) ->
+    {ok, #{deleted:=integer()}} | {error, term()}.
 
-search_delete(SrvId, SearchSpec) ->
-    case nkactor_search:parse(SearchSpec) of
-        {ok, SearchSpec3} ->
-            DoDelete = maps:get(do_delete, SearchSpec3, false),
-            case nkactor_backend:search(SrvId, actors_delete, SearchSpec3) of
-                {ok, Total, _Meta} when DoDelete ->
-                    {deleted, Total};
-                {ok, Total, _Meta} ->
-                    {ok, Total};
-                {error, Error} ->
-                    {error, Error}
-            end;
+delete_multi(SrvId, SearchSpec, SearchOpts) ->
+    case search_actors(SrvId, SearchSpec, SearchOpts) of
+        {ok, Actors, _Meta} ->
+            ActorIds = [nkactor_lib:actor_to_actor_id(Actor) || Actor <- Actors],
+            nkactor_backend:delete_multi(SrvId, ActorIds);
         {error, Error} ->
             {error, Error}
     end.
@@ -552,6 +549,9 @@ search_expired(SrvId, Opts) ->
 
 
 %% @doc
+base_namespace(undefined) ->
+    undefined;
+
 base_namespace(SrvId) ->
     nkserver:get_cached_config(SrvId, nkactor, base_namespace).
 
@@ -585,10 +585,28 @@ async_op(Id, Op) ->
     nkactor_srv:async_op(Id, Op).
 
 
+%% @doc Calls all defined services for a callback
+%% If it returns 'continue', next service will be tried
+call_services(Fun, Args) ->
+    call_services(get_services(), Fun, Args).
+
+call_services([], _Fun, _Args) ->
+    continue;
+
+call_services([SrvId|Rest], Fun, Args) ->
+    case ?CALL_SRV(SrvId, Fun, [SrvId|Args]) of
+        continue ->
+            call_services(Rest, Fun, Args);
+        Other ->
+            Other
+    end.
+
+
 %% @doc
 get_services() ->
     [
         SrvId ||
         {SrvId, _Hash, _Pid} <- nkserver_srv:get_all_local(nkactor)
     ].
+
 

@@ -128,15 +128,28 @@ plugin_update(SrvId, #{base_namespace:=New}, #{base_namespace:=Old}, _Service) -
 expand_modules(Group, Modules, Config) ->
     KeyList = lists:foldl(
         fun(Mod, Acc) ->
-            ModConfig = nkactor_actor:make_actor_config(Mod),
-            #{
-                resource := Res,
-                singular := Singular,
-                camel := Camel,
-                short_names := Short
-            } = ModConfig,
+            #{resource:=Res1} = ModConfig = Mod:config(),
+            Res2 = nklib_util:to_binary(Res1),
+            Singular = case ModConfig of
+                #{singular:=S0} ->
+                    nklib_util:to_binary(S0);
+                _ ->
+                    nkactor_lib:make_singular(Res2)
+            end,
+            Camel = case ModConfig of
+                #{camel:=C0} ->
+                    nklib_util:to_binary(C0);
+                _ ->
+                    nklib_util:to_capital(Singular)
+            end,
+            ShortNames = case ModConfig of
+                #{short_names:=SN} ->
+                    [nklib_util:to_binary(N) || N <- SN];
+                _ ->
+                    []
+            end,
             Acc2 = [
-                {nklib_util:to_binary(Res), Mod},
+                {Res2, Mod},
                 {{singular, Singular}, Mod},
                 {{camel, Camel}, Mod}
                 | Acc
@@ -144,7 +157,7 @@ expand_modules(Group, Modules, Config) ->
             lists:foldl(
                 fun(SN, AccSN) -> [{{short, nklib_util:to_binary(SN)}, Mod}|AccSN] end,
                 Acc2,
-                Short)
+                ShortNames)
         end,
         [],
         Modules),
@@ -221,6 +234,7 @@ gen_actor_callbacks(SrvId, Group, [Module|Rest], Acc) ->
     #{resource:=Res} = Module:config(),
     FunList = [
         {parse, 2},
+        {unparse, 2},
         {request, 4},
         {save, 2},
         {init, 2},
