@@ -24,6 +24,7 @@
 -export([parse_actor/1, parse_actor/2, parse_request/1]).
 -export([actor_fields_filter/0, actor_fields_sort/0, actor_fields_trans/0,
          actor_fields_type/0, actor_fields_static/0]).
+-export([alarm_syntax/0]).
 -include("nkactor.hrl").
 -include("nkactor_request.hrl").
 
@@ -57,7 +58,6 @@ parse_actor(Actor, Syntax) ->
 actor_syntax(Base) ->
     Base#{
         group => binary,
-        vsn => binary,
         resource => binary,
         name => binary,
         namespace => binary,
@@ -82,28 +82,32 @@ meta_syntax() ->
         subtype => binary,
         generation => pos_integer,
         creation_time => date_3339,
-        creationTime => {'__key', creation_time, date_3339},
         update_time => date_3339,
-        updateTime => {'__key', update_time, date_3339},
         is_enabled => boolean,
-        isEnabled => {'__key', is_enabled, boolean},
         is_active => boolean,
-        isActive => {'__key', is_active, boolean},
         expires_time => [date_3339, {binary, [<<>>]}],
-        expiresTime=> {'__key', expires_time, [date_3339, {binary, [<<>>]}]},
-        labels => #{'__key_binary' => binary},
-        annotations => #{'__key_binary' => binary},
-        links => #{'__key_binary' => binary},
-        fts => #{'__key_binary' => binary},
+        labels => #{'__map_binary' => binary},
+        annotations => #{'__map_binary' => binary},
+        links => #{'__map_binary' => binary},
+        fts => #{'__map_binary' => binary},
         in_alarm => boolean,
-        inAlaram => {'__key', in_alarm, boolean},
-        alarms => {list, binary},
+        alarms => {list, alarm_syntax()},
         next_status_time => date_3339,
-        nextStatusTime => {'__key', next_status_time, date_3339},
         description => binary,
         created_by => binary,
         updated_by => binary,
         trace_id => integer
+    }.
+
+
+alarm_syntax() ->
+    #{
+        class => binary,
+        code => binary,
+        last_time => date_3339,
+        message => binary,
+        meta => map,
+        '__mandatory' => [class, code]
     }.
 
 
@@ -146,8 +150,12 @@ parse_request(Req) ->
 %% @private
 parse_request_body(#{verb:=Verb, body:=Body}=Req) when Verb==create; Verb==update ->
     case nklib_syntax:parse(Body, body_syntax()) of
-        {ok, ParsedBody, _} ->
-            case {ParsedBody, Req} of
+        {ok, BodyFields, _} ->
+            ReqVsn = maps:get(vsn, Req, <<>>),
+            Metadata = maps:get(metadata, BodyFields, #{}),
+            BodyVsn = maps:get(vsn, Metadata, ReqVsn),
+            BodyFields2 = maps:remove(metadata, BodyFields),
+            case {BodyFields2, Req} of
                 {#{group:=G1}, #{group:=G2}} when G1 /= G2 ->
                     {error, {field_invalid, <<"group">>}};
                 {#{resource:=R1}, #{resource:=R2}} when R1 /= R2 ->
@@ -156,10 +164,17 @@ parse_request_body(#{verb:=Verb, body:=Body}=Req) when Verb==create; Verb==updat
                     {error, {field_invalid, <<"name">>}};
                 {#{namespace:=S1}, #{namespace:=S2}} when S1 /= S2 ->
                     {error, {field_invalid, <<"namespace">>}};
+                _ when BodyVsn /= ReqVsn ->
+                    {error, {field_invalid, <<"metadata.vsn">>}};
                 _ ->
-                    case maps:merge(Req, ParsedBody) of
+                    case maps:merge(Req, BodyFields2) of
                         #{group:=_, resource:=_}=Req2 ->
-                            {ok, Req2};
+                            case ReqVsn of
+                                <<>> ->
+                                    {ok, Req2};
+                                _ ->
+                                    {ok, Req2#{vsn => ReqVsn}}
+                            end;
                         _ ->
                             parse_request_missing(Req)
                     end
@@ -212,9 +227,6 @@ request_syntax() ->
         external_url => binary,
         callback => atom,
         meta => map,
-%%        '__defaults' => #{
-%%            verb => get
-%%        },
         '__mandatory' => [srv]
     }.
 
@@ -225,7 +237,10 @@ body_syntax() ->
         group => binary,
         namespace => binary,
         resource => binary,
-        name => binary
+        name => binary,
+        metadata => #{
+            vsn => binary
+        }
     }.
 
 

@@ -23,7 +23,7 @@
 -module(nkactor).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([find/1, activate/1, update/3, create/2, delete/1, delete/2]).
+-export([find/1, activate/1, is_activated/1, update/3, create/2, delete/1, delete/2]).
 -export([get_actor/1, get_actor/2, get_path/1, is_enabled/1, enable/2, stop/1, stop/2]).
 -export([search_groups/2, search_resources/3]).
 -export([search_label/3, search_linked_to/3, search_fts/3, search_actors/3, delete_multi/3, delete_old/5]).
@@ -33,7 +33,7 @@
 -export([get_services/0, call_services/2]).
 -export_type([actor/0, id/0, uid/0, namespace/0, resource/0, path/0, name/0,
               vsn/0, group/0,hash/0, subresource/0, verb/0,
-              data/0, alarm_class/0, alarm_body/0]).
+              data/0, alarm/0]).
 -export_type([config/0]).
 
 -include("nkactor.hrl").
@@ -110,19 +110,13 @@
     }.
 
 
-
--type alarm() :: term().
-
--type alarm_class() :: binary().
-
-%% Recommended alarm fields
-%% ------------------------
-%% - code (binary)
-%% - message (binary)
-%% - lastTime (binary, rfc3339)
-%% - meta (map)
-
--type alarm_body() :: map().
+-type alarm() :: #{
+    class := binary(),
+    code := binary(),
+    last_time => binary(),
+    message => binary(),
+    meta => map()
+}.
 
 
 -type config() ::
@@ -146,9 +140,6 @@
         fields_sort => [nkactor_search:field_name()],
         fields_type => #{
             nkservie_actor_search:field_name() => nkactor_search:field_type()
-        },
-        fields_trans => #{
-            nkservie_actor_search:field_name() => nkservie_actor_search:field_name()
         },
         fields_static => [nkactor_search:field_name()],  %% Don't allow updates
         camel => binary(),
@@ -231,6 +222,19 @@ find(Id) ->
             {ok, ActorId};
         {error, Error} ->
             {error, Error}
+    end.
+
+
+%% @doc Checks if an actor is currently activated
+-spec is_activated(id()) ->
+    {true, pid()} | false.
+
+is_activated(Id) ->
+    case find(Id) of
+        {ok, #actor_id{pid=Pid}} when is_pid(Pid) ->
+            {true, Pid};
+        _ ->
+            false
     end.
 
 

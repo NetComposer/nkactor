@@ -102,7 +102,7 @@
     {link_added, nklib_links:link()} |
     {link_removed, nklib_links:link()} |
     {link_down, Type :: binary()} |
-    {alarm_fired, nkactor:alarm_class(), nkactor:alarm_body()} |
+    {alarm_fired, nkactor:alarm()} |
     alarms_all_cleared |
     {stopped, nkserver:msg()}.
 
@@ -130,7 +130,7 @@
     {update, nkactor:actor(), nkactor:update_opts()} |
     {update_name, binary()} |
     get_alarms |
-    {set_alarm, nkactor:alarm_class(), nkactor:alarm_body()} |
+    {set_alarm, nkactor:alarm()} |
     {apply, Mod :: module(), Fun :: atom(), Args :: list()} |
     term().
 
@@ -139,7 +139,7 @@
     {send_info, atom()|binary(), map()} |
     {send_event, event()} |
     {set_next_status_time, binary()|integer()} |
-    {set_alarm, nkactor:alarm_class(), nkactor:alarm_body()} |
+    {set_alarm, nkactor:alarm()} |
     clear_all_alarms |
     save |
     delete |
@@ -246,7 +246,8 @@ sync_op(Id, Op, Timeout) ->
 
 
 %% @private
-sync_op(_Id, _Op, _Timeout, 0) ->
+sync_op(Id, Op, _Timeout, 0) ->
+    lager:warning("NkACTOR SynOP failed (too many retries) (~p) (~p)", [Id, Op]),
     {error, process_not_found};
 
 sync_op(#actor_id{pid=Pid}=ActorId, Op, Timeout, Tries) when is_pid(Pid) ->
@@ -254,7 +255,7 @@ sync_op(#actor_id{pid=Pid}=ActorId, Op, Timeout, Tries) when is_pid(Pid) ->
         {error, process_not_found} ->
             ActorId2 = ActorId#actor_id{pid = undefined},
             timer:sleep(250),
-            lager:warning("NkACTOR SynOP failed (~p), retrying...", [ActorId2]),
+            lager:notice("NkACTOR SynOP failed (~p) (~p), retrying...", [ActorId2]),
             sync_op(ActorId2, Op, Timeout, Tries - 1);
         Other ->
             Other
@@ -945,12 +946,12 @@ do_sync_op(get_srv_uid, _From, #actor_st{srv=SrvId, actor_id=ActorId}=State) ->
     #actor_id{uid=UID} = ActorId,
     reply({ok, SrvId, UID}, do_refresh_ttl(State));
 
-do_sync_op(get_actor, _From, #actor_st{actor=Actor}=State) ->
-    {ok, UserActor, State2} = handle(actor_srv_get, [Actor], State),
+do_sync_op(get_actor, _From, State) ->
+    {UserActor, State2} = do_get_user_actor(State),
     reply({ok, UserActor}, do_refresh_ttl(State2));
 
-do_sync_op(consume_actor, From, #actor_st{actor=Actor}=State) ->
-    {ok, UserActor, State2} = handle(actor_srv_get, [Actor], State),
+do_sync_op(consume_actor, From, State) ->
+    {UserActor, State2} = do_get_user_actor(State),
     gen_server:reply(From, {ok, UserActor}),
     do_stop(actor_consumed, State2);
 
@@ -1043,8 +1044,14 @@ do_sync_op(get_alarms, _From, #actor_st{actor=Actor}=State) ->
     end,
     reply({ok, Alarms}, State);
 
-do_sync_op({set_alarm, Class, Body}, _From, State) ->
-    reply(ok, do_add_alarm(Class, Body, State));
+do_sync_op({set_alarm, Alarm}, _From, State) ->
+    Syntax = nkactor_syntax:alarm_syntax(),
+    case nklib_syntax:parse(Alarm, Syntax) of
+        {ok, Alarm2, _} ->
+            reply(ok, do_add_alarm(Alarm2, State));
+        {error, Error} ->
+            reply({error, Error}, State)
+    end;
 
 do_sync_op({apply, Mod, Fun, Args}, From, State) ->
     apply(Mod, Fun, Args++[From, do_refresh_ttl(State)]);
@@ -1104,8 +1111,15 @@ do_async_op({raw_stop, Reason}, State) ->
     State3 = do_event({stopped, Reason}, State2),
     {stop, normal, State3#actor_st{stop_reason=raw_stop}};
 
-do_async_op({set_alarm, Class, Body}, State) ->
-    noreply(do_add_alarm(Class, Body, State));
+do_async_op({set_alarm, Alarm}, State) ->
+    Syntax = nkactor_syntax:alarm_syntax(),
+    case nklib_syntax:parse(Alarm, Syntax) of
+        {ok, Alarm2, _} ->
+            noreply(do_add_alarm(Alarm2, State));
+        {error, _} ->
+            ?ACTOR_LOG(error, "invalid alarm: ~p", [Alarm], State),
+            noreply(State)
+    end;
 
 do_async_op(clear_all_alarms, State) ->
     noreply(do_clear_all_alarms(State));
@@ -1341,20 +1355,21 @@ do_heartbeat(State) ->
 
 
 %% @private
-do_add_alarm(Class, Body, #actor_st{actor=Actor}=State) when is_map(Body) ->
-    #{metadata:=Meta} = Actor,
-    Alarms = maps:get(in_alarm, Meta, #{}),
-    Body2 = case maps:is_key(last_time, Body) of
+do_add_alarm(#{class:=Class}=Alarm, #actor_st{actor=Actor}=State) ->
+    Alarm2 = case maps:is_key(last_time, Alarm) of
         true ->
-            Body;
+            Alarm;
         false ->
-            Body#{last_time => nklib_date:now_3339(secs)}
+            Alarm#{last_time => nklib_date:now_3339(secs)}
     end,
-    Alarms2 = Alarms#{nklib_util:to_binary(Class) => Body2},
-    Meta2 = Meta#{in_alarm => true, alarms => Alarms2},
+    #{metadata:=Meta} = Actor,
+    Alarms = maps:get(alarms, Meta, []),
+    Alarms2 = [A || A <- Alarms, maps:get(class, A) /= Class],
+    Alarms3 = [Alarm2 | Alarms2],
+    Meta2 = Meta#{in_alarm => true, alarms => Alarms3},
     Actor2 = Actor#{metadata:=Meta2},
     State2 = do_set_dirty(State#actor_st{actor=Actor2}),
-    do_refresh_ttl(do_event({alarm_fired, Class, Body}, State2)).
+    do_refresh_ttl(do_event({alarm_fired, Alarm}, State2)).
 
 
 %% @private
@@ -1456,7 +1471,7 @@ handle(Fun, Args, State) ->
     ?CALL_SRV(SrvId, Fun, Args++[State]).
 
 
-%% @privateF
+%% @private
 safe_handle(Fun, Args, State) ->
     Reply = handle(Fun, Args, State),
     case Reply of
@@ -1476,6 +1491,12 @@ safe_handle(Fun, Args, State) ->
             ?ACTOR_LOG(error, "invalid response for ~p(~p): ~p", [Fun, Args, Other], State),
             error(invalid_handle_response)
     end.
+
+
+%% @private
+do_get_user_actor(#actor_st{actor = Actor}=State) ->
+    {ok, UserActor, State2} = handle(actor_srv_get, [Actor], State),
+    {UserActor, State2}.
 
 
 %% @private

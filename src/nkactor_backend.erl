@@ -189,15 +189,12 @@ read(Id, Opts) ->
     end.
 
 
-
-
 %% @doc Creates a brand new actor
 %% It will generate a new span
 -spec create(nkactor:actor(), nkactor:create_opts()) ->
     {ok, nkserver:id(), nkactor:actor(),  Meta::map()} | {error, actor_not_found|term()}.
 
 create(Actor, #{activate:=false}=Opts) ->
-    lager:error("NKLOG CREATE"),
     span_create(create, undefined, Opts),
     case nkactor_util:pre_create(Actor, Opts) of
         {ok, SrvId, Actor2} ->

@@ -30,6 +30,20 @@
 -define(DELETE_COLLECTION_SIZE, 10000).
 
 
+%% vsn management
+%% --------------
+%%
+%% - any request can come with field 'vsn'
+%% - if an actor is included in body with 'metadata.vsn', it must be the same as request
+%% - if vsn is included, it must be one of the supported actor versions
+%% - if special request is used, the actor callback must check the vsn
+%% - if standard request is used:
+%%      - for 'get', 'list', the actor is returned as is (with stored version)
+%%      - for 'delete', 'deletecollection', it is not used
+%%      - for 'create', 'update', the callback parse/2 must check the version, and
+%%        return the parsed version, that is stored with actor
+%%
+
 %% ===================================================================
 %% Types
 %% ===================================================================
@@ -49,11 +63,11 @@
         uid => nkactor:uid(),
         subresource => nkactor:subresource(),
         params => #{binary() => binary()},
-        % Class of the request, can be used for specific processing
+        % Class of the request, can be used for specific processing, not used here
         class => class(),
         % Used to decode the body
         content_type => binary(),
-        % If the body has a group, resource, namespace, uid or metadata.vsn
+        % If the body has a group, resource, namespace, uid,  or metadata
         % fields, they must be the same of the request
         body => binary() | map(),
         auth => map(),
@@ -291,9 +305,11 @@ default_request(list, #actor_id{name=undefined}=ActorId, Config, Req) ->
     list(ActorId, Config, Req);
 
 default_request(create, ActorId, Config, Req) ->
+    check_version(Config, Req),
     create(ActorId, Config, Req);
 
 default_request(update, #actor_id{name=Name}=ActorId, Config, Req) when is_binary(Name) ->
+    check_version(Config, Req),
     update(ActorId, Config, Req);
 
 default_request(delete, #actor_id{name=Name}=ActorId, Config, Req) when is_binary(Name) ->
@@ -332,7 +348,7 @@ get(ActorId, Config, Req) ->
             % when calling nkactor_actor:parse()
             case nkactor:get_actor(ActorId, Opts#{request=>Req}) of
                 {ok, Actor} ->
-                    {ok, nkactor_actor:to_external(Actor, Req)};
+                    {ok, Actor};
                 {error, ReadError} ->
                     nkserver_ot:log(?REQ_SPAN, "error getting actor: ~p", [ReadError]),
                     {error, ReadError}
@@ -344,38 +360,18 @@ get(ActorId, Config, Req) ->
 
 %% @doc
 list(ActorId, Config, Req) ->
-    #actor_id{namespace=Namespace, group=Group, resource=Res} = ActorId,
-    #{srv:=SrvId} = Req,
-    Base = case maps:get(body, Req, #{}) of
-        <<>> ->
-            #{};
-        Body ->
-            Body
-    end,
-    Opts1 = maps:with([fields_filter, fields_sort, fields_trans, fields_type], Config),
+    {SrvId, Base, Opts1} = get_search_spec(ActorId, Config, Req),
     Opts2 = Opts1#{
-        forced_spec => #{
-            namespace => Namespace,
-            filter => #{
-                'and' => [
-                    #{field=>group, value=>Group},
-                    #{field=>resource, value=>Res}
-                ]
-            }
-        },
         default_spec => #{
             get_data => true,
             get_metadata => true,
             sort => [#{field=><<"metadata.update_time">>, order=>desc}]
-        },
-        params => maps:get(params, Req, #{})
+        }
     },
     %io:format("NKLOG SPEC ~s\n", [nklib_json:encode_pretty(Opts2)]),
     case nkactor:search_actors(SrvId, Base, Opts2) of
         {ok, ActorList, Meta} ->
-            #actor_id{group = Group, resource = Res} = ActorId,
-            ActorList2 = [nkactor_actor:to_external(Actor, Req) || Actor <- ActorList],
-            {ok, Meta#{items=>ActorList2}};
+            {ok, Meta#{items=>ActorList}};
         {error, Error} ->
             {error, Error}
     end.
@@ -402,7 +398,7 @@ create(ActorId, Config, Req) ->
                             CreateOpts = Opts#{get_actor=>true, request=>Req, ot_span_id=>?REQ_SPAN},
                             case nkactor:create(Actor2, CreateOpts) of
                                 {ok, Actor3} ->
-                                    {created, nkactor_actor:to_external(Actor3, Req)};
+                                    {created, Actor3};
                                 {error, Error} ->
                                     nkserver_ot:log(?REQ_SPAN, "error creating actor: ~p", [Error]),
                                     {error, Error}
@@ -434,7 +430,7 @@ update(ActorId, Config, Req) ->
                             ?REQ_DEBUG("Updating actor ~p", [Actor2]),
                             case nkactor:update(ActorId, Actor2, Opts2) of
                                 {ok, Actor3} ->
-                                    {ok, nkactor_actor:to_external(Actor3, Req)};
+                                    {ok, Actor3};
                                 {error, actor_not_found} ->
                                     default_request(create, ActorId, Config, Req);
                                 {error, {field_missing, name}} ->
@@ -471,50 +467,23 @@ delete(ActorId, _Config, Req) ->
     end.
 
 
-%% @doc
-delete_collection(ActorId, Config, #{srv:=SrvId}=Req) ->
-    ParamsSyntax = #{
-        from => pos_integer,
-        size => pos_integer,
-        sort => #{'__key_binary' => {atom, [asc, desc]}},
-        labels => #{'__key_binary' => binary},
-        fields => #{'__key_binary' => binary},
-        links => #{'__key_binary' => binary},
-        fts => binary,
-        deep => boolean
+delete_collection(ActorId, Config, Req) ->
+    {SrvId, Base, Opts1} = get_search_spec(ActorId, Config, Req),
+    #{forced_spec:=Forced} = Opts1,
+    Opts2 = Opts1#{
+        forced_spec => Forced#{only_uid => true},
+        default_spec => #{
+            sort => [#{field=><<"metadata.update_time">>, order=>asc}]
+        }
     },
-    case parse_params(Req, ParamsSyntax) of
-        {ok, Params} ->
-            case nkdomain_core_search:search_params_id(SrvId, ActorId, Config, Params) of
-                {ok, ActorIds, _Meta} ->
-                    do_delete(SrvId, ActorIds, 0);
-                {error, Error} ->
-                    {error, Error}
-            end;
+    io:format("NKLOG SPEC ~s\n", [nklib_json:encode_pretty(Opts2)]),
+    case nkactor:delete_multi(SrvId, Base, Opts2) of
+        {ok, Meta} ->
+            {ok, Meta};
         {error, Error} ->
             {error, Error}
     end.
 
-
-%% @private
-do_delete(SrvId, ActorIds, Num) ->
-    case length(ActorIds) > 100 of
-        true ->
-            {Set1, Set2} = lists:split(100, ActorIds),
-            case nkdomain_core_search:do_delete(SrvId, Set1) of
-                {status, {actors_deleted, Num2}} ->
-                    do_delete(SrvId, Set2, Num+Num2);
-                {error, Error} ->
-                    {error, Error}
-            end;
-        false ->
-            case nkdomain_core_search:do_delete(SrvId, ActorIds) of
-                {status, {actors_deleted, Num2}} ->
-                    {status, {actors_deleted, Num+Num2}};
-                {error, Error} ->
-                    {error, Error}
-            end
-    end.
 
 
 %%params_syntax(watch) ->
@@ -539,13 +508,24 @@ set_debug(SrvId) when is_atom(SrvId) ->
 
 
 %% @private
-parse_body(#{body:=Actor}=Req) when is_map(Actor) ->
-    case nkactor_actor:from_external(Actor, Req) of
-        {ok, Actor2} ->
-            nkactor_syntax:parse_actor(Actor2, #{});
-        {error, Error} ->
-            {error, Error}
-    end;
+check_version(Config, Req) ->
+    case maps:get(vsn, Req, <<>>) of
+        <<>> ->
+            ok;
+        Vsn ->
+            #{versions:=Versions} = Config,
+            case lists:member(Vsn, Versions) of
+                true ->
+                    ok;
+                false ->
+                    throw({error, vsn_not_allowed})
+            end
+    end.
+
+
+%% @private
+parse_body(#{body:=Actor}) when is_map(Actor) ->
+    nkactor_syntax:parse_actor(Actor, #{});
 
 parse_body(#{body:=_}) ->
     {error, request_invalid};
@@ -644,6 +624,39 @@ authorize(SrvId, Req) ->
             nkserver_ot:log(?REQ_SPAN, <<"request is NOT authorized">>),
             false
     end.
+
+
+%% @private
+get_search_spec(ActorId, Config, Req) ->
+    #actor_id{namespace=Namespace, group=Group, resource=Res} = ActorId,
+    #{srv:=SrvId} = Req,
+    Base = case maps:get(body, Req, #{}) of
+        <<>> ->
+            #{};
+        Body ->
+            Body
+    end,
+    Opts1 = maps:with([fields_filter, fields_sort, fields_type], Config),
+    Params = maps:get(params, Req, #{}),
+    Opts2 = Opts1#{
+        forced_spec => #{
+            namespace => Namespace,
+            filter => #{
+                'and' => [
+                    #{field=>group, value=>Group},
+                    #{field=>resource, value=>Res}
+                ]
+            }
+        },
+        params => maps:remove(fields_trans, Params)
+    },
+    Opts3 = case Params of
+        #{fields_trans:=Trans} ->
+            Opts2#{fields_trans => Trans};
+        _ ->
+            Opts2
+    end,
+    {SrvId, Base, Opts3}.
 
 
 %% @private

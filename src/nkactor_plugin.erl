@@ -67,7 +67,7 @@ plugin_config(SrvId, Config, #{class:=nkactor}) ->
         auto_activate_actors_period => {integer, 5000, none},
         debug => boolean,
         debug_actors => {list, binary},
-        modules => #{'__key_binary' => {list, module}}, % To be populated by plugins
+        modules => #{'__map_binary' => {list, module}}, % To be populated by plugins
         '__defaults' => #{
             base_namespace => nklib_util:to_binary(SrvId)
         }

@@ -24,7 +24,6 @@
 
 -export([get_module/3, get_config/1, get_config/2, get_common_config/1]).
 -export([parse/3, unparse/3, request/3]).
--export([from_external/2, to_external/2]).
 
 -include("nkactor.hrl").
 -include("nkactor_debug.hrl").
@@ -42,7 +41,6 @@
 -type request() :: nkactor_request:request().
 -type response() :: nkactor_request:response().
 -type verb() :: nkactor:verb().
-%-type vsn() :: nkactor:vsn().
 -type actor_st() :: nkactor:actor_st().
 
 -type continue() ::
@@ -56,12 +54,7 @@
 
 %% @doc Called to validate an actor (only 'data' is presented)
 -callback parse(map(), request()) ->
-    continue | {ok, map()} | {syntax, nklib_syntax:syntax()} | {error, term()}.
-
-
-%% @doc Called to parse an actor from an external representation into canonical format
--callback unparse(actor(), request()) ->
-    continue | {ok, actor()} | {syntax, nklib_syntax:syntax()} | {error, term()}.
+    continue | {ok, map()} | {syntax, nkactor:vsn(), nklib_syntax:syntax()} | {error, term()}.
 
 
 %% @doc Called to process an incoming API
@@ -168,7 +161,7 @@
 
 %% @doc
 -optional_callbacks([
-    parse/2, unparse/2, request/4, save/2,
+    parse/2, request/4, save/2,
     init/2, get/2, update/2, delete/1, sync_op/3, async_op/2, enabled/2, heartbeat/1,
     event/2, link_event/4, next_status_timer/1,
     handle_call/3, handle_cast/2, handle_info/2, stop/2, terminate/2]).
@@ -196,11 +189,9 @@ get_module(SrvId, Group, Key) when is_atom(SrvId) ->
 get_config(SrvId, Module) when is_atom(SrvId), is_atom(Module) ->
     case catch nklib_util:do_config_get({nkactor_config, SrvId, Module}, undefined) of
         undefined ->
-            Config1 = make_actor_config(SrvId, Module),
-            Config2 = ?CALL_SRV(SrvId, actor_config, [Config1]),
-            Config3 = Config2#{module=>Module},
-            nklib_util:do_config_put({nkactor_config, SrvId, Module}, Config2),
-            Config3;
+            Config = make_actor_config(SrvId, Module),
+            nklib_util:do_config_put({nkactor_config, SrvId, Module}, Config),
+            Config;
         Config when is_map(Config) ->
             Config
     end.
@@ -234,9 +225,6 @@ get_common_config(SrvId) ->
             Sort1 = ?CALL_SRV(SrvId, actor_fields_sort, [[]]),
             Sort2 = [{to_bin(Field), true} || Field <- Sort1],
             Sort3 = maps:from_list(Sort2),
-            Trans1 = maps:to_list(?CALL_SRV(SrvId, actor_fields_trans, [#{}])),
-            Trans2 = [{to_bin(Field1), to_bin(Field2)} || {Field1, Field2} <- Trans1],
-            Trans3 = maps:from_list(Trans2),
             Type1 = maps:to_list(?CALL_SRV(SrvId, actor_fields_type, [#{}])),
             Type2 = [{to_bin(Field), Type} || {Field, Type} <- Type1],
             Type3 = maps:from_list(Type2),
@@ -245,7 +233,6 @@ get_common_config(SrvId) ->
             Data = #{
                 fields_filter => Filter3,
                 fields_sort => Sort3,
-                fields_trans => Trans3,
                 fields_type => Type3,
                 fields_static => Static2
             },
@@ -258,56 +245,53 @@ get_common_config(SrvId) ->
 
 %% @private
 make_actor_config(SrvId, Module) ->
-    #{resource:=Res1} = Config = Module:config(),
+    Config1 = Module:config(),
+    Config2 = ?CALL_SRV(SrvId, actor_config, [Config1#{module=>Module}]),
+    #{resource:=Res1} = Config2,
     Res2 = to_bin(Res1),
-    Singular = case Config of
+    Singular = case Config2 of
         #{singular:=S0} ->
             to_bin(S0);
         _ ->
             nkactor_lib:make_singular(Res2)
     end,
-    Camel = case Config of
+    Camel = case Config2 of
         #{camel:=C0} ->
             to_bin(C0);
         _ ->
             nklib_util:to_capital(Singular)
     end,
-    ShortNames = case Config of
+    ShortNames = case Config2 of
         #{short_names:=SN} ->
             [to_bin(N) || N <- SN];
         _ ->
             []
     end,
-    Verbs = case Config of
+    Verbs = case Config2 of
         #{verbs:=Vs} ->
             [binary_to_atom(to_bin(V), utf8) || V <- Vs];
         _ ->
             [get, list, create]
     end,
-    Versions = maps:get(versions, Config),
+    Versions = maps:get(versions, Config2),
     #{
         fields_filter :=CommonFilter,
         fields_sort := CommonSort,
-        fields_trans := CommonTrans,
         fields_type := CommonType,
         fields_static := CommonStatic
     } = get_common_config(SrvId),
-    FieldsFilter1 = maps:get(fields_filter, Config, []),
+    FieldsFilter1 = maps:get(fields_filter, Config2, []),
     FieldsFilter2 = [{to_field(Field), true} || Field <- FieldsFilter1],
     FieldsFilter3 = maps:from_list(FieldsFilter2),
-    FieldsSort1 = maps:get(fields_sort, Config, []),
+    FieldsSort1 = maps:get(fields_sort, Config2, []),
     FieldsSort2 = [{to_field(Field), true} || Field <- FieldsSort1],
     FieldsSort3 = maps:from_list(FieldsSort2),
-    FieldsType1 = maps:to_list(maps:get(fields_type, Config, #{})),
+    FieldsType1 = maps:to_list(maps:get(fields_type, Config2, #{})),
     FieldsType2 = [{to_field(Field), Value} || {Field, Value} <- FieldsType1],
     FieldsType3 = maps:from_list(FieldsType2),
-    FieldsTrans1 = maps:to_list(maps:get(fields_trans, Config, #{})),
-    FieldsTrans2 = [{to_field(Field), to_field(Trans)} || {Field, Trans} <- FieldsTrans1],
-    FieldsTrans3 = maps:from_list(FieldsTrans2),
-    FieldsStatic1 = maps:get(fields_static, Config, []),
+    FieldsStatic1 = maps:get(fields_static, Config2, []),
     FieldsStatic2 = [to_field(Field) || Field <- FieldsStatic1],
-    Config#{
-        module => Module,
+    Config2#{
         resource := Res2,
         verbs => Verbs,
         versions => Versions,
@@ -317,7 +301,6 @@ make_actor_config(SrvId, Module) ->
         fields_filter => maps:merge(FieldsFilter3, CommonFilter),
         fields_sort => maps:merge(FieldsSort3, CommonSort),
         fields_type => maps:merge(FieldsType3, CommonType),
-        fields_trans => maps:merge(FieldsTrans3, CommonTrans),
         fields_static => lists:usort(FieldsStatic2++CommonStatic)
     }.
 
@@ -337,6 +320,9 @@ to_field(Field) ->
 %% @doc Used to parse an actor, for an specific request
 %% Each external resource (store or API) is responsible to present the
 %% canonical form for the actor (maps, etc.)
+%% Field 'vsn' in request will contain vsn, if:
+%% - It is included in the request from the beginning (and not in actor itself)
+%% - It is included in actor's body (metadata.vsn)
 
 %% If ot_span_id is used, logs will be added
 -spec parse(nkserver:id(), actor(), request()) ->
@@ -355,12 +341,12 @@ parse(SrvId, Actor, Req) ->
         {ok, Actor2} ->
             nkserver_ot:log(SpanId, <<"actor is custom parsed">>),
             {ok, Actor2};
-        {syntax, Syntax} when is_map(Syntax) ->
+        {syntax, Vsn, Syntax} when is_map(Syntax) ->
             nkserver_ot:log(SpanId, <<"actor has custom syntax">>),
-            nkactor_lib:parse_actor_data(Actor, Syntax);
-        {syntax, Syntax, Actor2} when is_map(Syntax) ->
+            nkactor_lib:parse_actor_data(Actor, Vsn, Syntax);
+        {syntax, Vsn, Syntax, Actor2} when is_map(Syntax) ->
             nkserver_ot:log(SpanId, <<"actor has custom syntax and actor">>),
-            nkactor_lib:parse_actor_data(Actor2, Syntax);
+            nkactor_lib:parse_actor_data(Actor2, Vsn, Syntax);
         {error, Error} ->
             nkserver_ot:log(SpanId, <<"error parsing actor: ~p">>, [Error]),
             {error, Error}
@@ -410,33 +396,6 @@ request(SrvId, ActorId, Req) ->
             nkserver_ot:log(SpanId, <<"specific action return">>),
             Other
     end.
-
-
-%% @doc Converts an actor to an external representation
-to_external(Actor, #{class:=Class, srv:=SrvId}=Req) ->
-    case Actor of
-        #{group:=Group, resource:=Res} ->
-            ?CALL_SRV(SrvId, actor_to_external, [Class, Group, Res, Actor, Req]);
-        _ ->
-            Actor
-    end;
-
-to_external(Actor, _Req) ->
-    Actor.
-
-
-%% @doc Converts an actor from an external representation
-%% (only for 'data' field, the rest must be already updated before calling request)
--spec from_external(nkactor:actor(), nkactor_request:request()) ->
-    {ok, nkactor:actor()} | {error, term()}.
-
-from_external(Actor, #{class:=Class, srv:=SrvId, group:=Group, resource:=Res}=Req) ->
-    ?CALL_SRV(SrvId, actor_from_external, [Class, Group, Res, Actor, Req]);
-
-from_external(Actor, _Req) ->
-    {ok, Actor}.
-
-
 
 
 %% ===================================================================

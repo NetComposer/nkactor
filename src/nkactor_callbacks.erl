@@ -25,7 +25,7 @@
 -export([actor_authorize/1, actor_config/1, actor_fields_filter/1, actor_fields_sort/1,
          actor_fields_trans/1, actor_fields_type/1, actor_fields_static/1,
          actor_create/2, actor_activate/2, actor_external_event/3]).
--export([actor_id/2, actor_to_external/5, actor_from_external/5]).
+-export([actor_id/2]).
 -export([actor_srv_init/2, actor_srv_terminate/2,
          actor_srv_stop/2, actor_srv_get/2, actor_srv_update/2, actor_srv_delete/1,
          actor_srv_event/2,
@@ -61,7 +61,7 @@ status(actor_has_linked_actors)	    -> {"Actor has linked actors", #{code=>422}}
 status(actor_id_invalid)            -> "Actor ID is invalid";
 status(actor_is_not_activable)	    -> {"Actor is not activable", #{code=>422}};
 status(actor_not_found)             -> {"Actor not found", #{code=>404}};
-status(actor_updated)               -> "Actor updated";
+status(actor_updated)               -> {"Actor has been updated", #{code=>200}};
 status({api_group_unknown, G})      -> {"Unknown API Group '~s'", [G], #{code=>404, data=>#{group=>G}}};
 status({api_incompatible, A})       -> {"Incompatible API '~s'", [A], #{code=>422, data=>#{api=>A}}};
 status({api_unknown, A})            -> {"Unknown API '~s'", [A], #{code=>404, data=>#{api=>A}}};
@@ -110,7 +110,7 @@ status(_) -> continue.
 -type actor() :: nkactor:actor().
 -type actor_id() :: #actor_id{}.
 -type actor_st() :: #actor_st{}.
--type request() :: actor_request:request().
+%-type request() :: actor_request:request().
 
 
 %% @doc Called when processing a request to be authorized or not
@@ -207,24 +207,6 @@ actor_activate(Actor, Config) ->
 
 actor_external_event(_SrvId, _Event, _Actor) ->
     ok.
-
-
-%% @doc
--spec actor_to_external(nkactor_request:class(), nkactor:group(), nkactor:resource(),
-                        actor(), request()) ->
-    map().
-
-actor_to_external(_Class, _Group, _Res, Actor, _Req) ->
-    Actor.
-
-
-%% @doc
--spec actor_from_external(nkactor_request:class(), nkactor:group(), nkactor:resource(),
-                          actor(), request()) ->
-    {ok, actor()} | {error, term(), request()}.
-
-actor_from_external(_Class, _Group, _Res, Map, _Req) ->
-    {ok, Map}.
 
 
 %% @doc Called on successful registration (callback init/2 in actor)

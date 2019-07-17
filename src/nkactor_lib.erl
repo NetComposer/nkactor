@@ -34,7 +34,7 @@
 -export([add_creation_fields/2, update/2, check_actor_links/1, check_meta_links/1]).
 -export([add_labels/4, add_label/3]).
 -export([actor_id_to_path/1]).
--export([parse/2, parse/3, parse_actor_data/2, parse_request_params/2]).
+-export([parse/2, parse/3, parse_actor_data/3, parse_request_params/2]).
 -export([make_rev_path/1, make_rev_parts/1]).
 -export([make_plural/1, make_singular/1, normalized_name/1]).
 -export([fts_normalize_word/1, fts_normalize_multi/1]).
@@ -59,20 +59,27 @@ actor_id_to_path(#actor_id{namespace=Namespace, group=Group, resource=Res, name=
     #actor_id{}.
 
 actor_to_actor_id(Actor) ->
-    #{
-        group := Group,
-        resource := Resource,
-        name := Name,
-        namespace := Namespace
-    } = Actor,
-    #actor_id{
-        group = to_bin(Group),
-        resource = to_bin(Resource),
-        name = to_bin(Name),
-        namespace = to_bin(Namespace),
-        uid = maps:get(uid, Actor, undefined),
-        pid = undefined
-    }.
+    case Actor of
+        #{
+            group := Group,
+            resource := Resource,
+            name := Name,
+            namespace := Namespace
+        } ->
+            #actor_id{
+                group = to_bin(Group),
+                resource = to_bin(Resource),
+                name = to_bin(Name),
+                namespace = to_bin(Namespace),
+                uid = maps:get(uid, Actor, undefined),
+                pid = undefined
+            };
+        #{
+            uid := UID
+        } ->
+            #actor_id{uid = UID}
+    end.
+
 
 
 %% @doc Canonizes id to #actor_id{}
@@ -280,17 +287,19 @@ parse(Data, Syntax, Opts) ->
             {error, Error}
     end.
 
+
 %% @private
--spec parse_actor_data(actor(), nklib_syntax:syntax()) ->
+-spec parse_actor_data(actor(), nkactor:vsn(), nklib_syntax:syntax()) ->
     {ok, actor()} | nklib_syntax:error().
 
-parse_actor_data(#{data:=Data}=Actor, Syntax) ->
+parse_actor_data(#{data:=Data, metadata:=Meta}=Actor, Vsn, Syntax) ->
     case parse(Data, Syntax, #{path=><<"data">>}) of
         {ok, Data2} ->
-            {ok, Actor#{data:=Data2}};
+            {ok, Actor#{data:=Data2, metadata:=Meta#{vsn=>Vsn}}};
         {error, Error} ->
             {error, Error}
     end.
+
 
 
 %% @private
