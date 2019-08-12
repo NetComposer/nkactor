@@ -29,17 +29,17 @@
 
 -export([actor_to_actor_id/1, id_to_actor_id/1]).
 -export([send_external_event/3]).
--export([get_linked_type/2, get_linked_uids/2, add_link/3, add_link/4, add_link/5,
+-export([get_linked_type/2, get_linked_uids/2, add_link/3, add_checked_link/4, add_checked_link/5,
          rm_links/3, rm_links/2, link_type/2]).
--export([add_creation_fields/2, update/2, check_actor_links/1, check_meta_links/1]).
+-export([add_creation_fields/2, update/2, check_actor_links/1, check_meta_links/1, check_links/1]).
 -export([add_labels/4, add_label/3]).
 -export([actor_id_to_path/1]).
 -export([parse/2, parse/3, parse_actor_data/3, parse_request_params/2]).
 -export([make_rev_path/1, make_rev_parts/1]).
 -export([make_plural/1, make_singular/1, normalized_name/1]).
--export([fts_normalize_word/1, fts_normalize_multi/1]).
+-export([add_fts/3, fts_normalize_word/1, fts_normalize_multi/1]).
 -export([update_check_fields/2]).
-
+-export([maybe_set_ttl/2, set_ttl/2]).
 
 -type actor() :: nkactor:actor().
 
@@ -162,32 +162,33 @@ find_namespace_in_parts([_|Rest]) ->
 find_namespace_in_parts([]) ->
     error.
 
-
 %% @doc
 add_link(#actor_id{uid=UID}, #{}=Actor, LinkType) when is_binary(LinkType) ->
-    #{metadata:=Meta} = Actor,
+    add_link(UID, Actor, LinkType);
+
+add_link(UID, #{metadata:=Meta}=Actor, LinkType) when is_binary(UID), is_binary(LinkType) ->
     Links1 = maps:get(links, Meta, #{}),
     Links2 = Links1#{UID => LinkType},
     Actor#{metadata:=Meta#{links => Links2}}.
 
 
-%% @doc
-add_link(Id, Group, Resource, #{}=Actor) when is_binary(Group), is_binary(Resource) ->
+%% @doc Links checking destination type, generates type
+add_checked_link(Target, Group, Resource, #{}=Actor) when is_binary(Group), is_binary(Resource) ->
     LinkType = link_type(Group, Resource),
-    add_link(Id, Group, Resource, Actor, LinkType).
+    add_checked_link(Target, Group, Resource, Actor, LinkType).
 
 
-%% @doc
-add_link(Id, Group, Resource, #{}=Actor, LinkType)
+%% @doc Links checking destination type
+add_checked_link(Target, Group, Resource, #{}=Actor, LinkType)
         when is_binary(Group), is_binary(Resource), is_binary(LinkType) ->
-    case nkactor:find(Id) of
-        {ok, #actor_id{group=Group, resource=Resource, uid=UID}} ->
+    case nkactor:find(Target) of
+        {ok, #actor_id{group=Group, resource=Resource, uid=UID}=TargetId} ->
             #{metadata:=Meta} = Actor,
             Links1 = maps:get(links, Meta, #{}),
             Links2 = Links1#{UID => LinkType},
-            {ok, Actor#{metadata:=Meta#{links => Links2}}};
+            {ok, TargetId, Actor#{metadata:=Meta#{links => Links2}}};
         _ ->
-            {error, {linked_actor_unknown, Id}}
+            {error, {linked_actor_unknown, Target}}
     end.
 
 
@@ -232,7 +233,6 @@ rm_links(#{metadata:=Meta}=Actor, LinkType) when is_binary(LinkType)->
         Links2 ->
             Actor#{metadata:=Meta#{links=>Links2}}
     end.
-
 
 
 %% @doc
@@ -341,7 +341,7 @@ check_actor_links(#{metadata:=Meta1}=Actor) ->
 
 %% @private
 check_meta_links(#{links:=Links}=Meta) ->
-    case do_check_links(maps:to_list(Links), []) of
+    case check_links(Links) of
         {ok, Links2} ->
             {ok, Meta#{links:=Links2}};
         {error, Error} ->
@@ -353,8 +353,17 @@ check_meta_links(Meta) ->
 
 
 %% @private
+check_links(Links) ->
+    do_check_links(maps:to_list(Links), []).
+
+
+%% @private
+%% Checks if links exists, changes to UID. If empty value, it is removed
 do_check_links([], Acc) ->
     {ok, maps:from_list(Acc)};
+
+do_check_links([{_Id, <<>>}|Rest], Acc) ->
+    do_check_links(Rest, Acc);
 
 do_check_links([{Id, Type}|Rest], Acc) ->
     case nkactor:find(Id) of
@@ -367,6 +376,8 @@ do_check_links([{Id, Type}|Rest], Acc) ->
         {error, Error} ->
             {error, Error}
     end.
+
+
 
 
 %% @doc Prepares an actor for creation
@@ -490,6 +501,14 @@ make_singular(Resource) ->
 
 
 %% @private
+add_fts(Field, Value, #{metadata:=Meta}=Actor) ->
+    Fts1 = maps:get(fts, Meta, #{}),
+    Fts2 = Fts1#{to_bin(Field) => to_bin(Value)},
+    Actor#{metadata:=Meta#{fts => Fts2}}.
+
+
+
+%% @private
 fts_normalize_word(Word) ->
     nklib_parse:normalize(Word, #{unrecognized=>keep}).
 
@@ -504,8 +523,9 @@ update_check_fields(NewActor, ActorSt) ->
     #{data:=NewData} = NewActor,
     #actor_st{actor=OldActor, config=Config} = ActorSt,
     #{data:=OldData} = OldActor,
-    Fields = maps:get(fields_static, Config, []),
-    do_update_check_fields(Fields, NewData, OldData).
+    Fields1 = maps:get(fields_static, Config, []),
+    Fields2 = [F || <<"data.", F/binary>> <- Fields1],
+    do_update_check_fields(Fields2, NewData, OldData).
 
 
 %% @private
@@ -514,23 +534,44 @@ do_update_check_fields([], _NewData, _OldData) ->
 
 do_update_check_fields([Field|Rest], NewData, OldData) ->
     case binary:split(Field, <<".">>) of
-        [Group, Key] ->
-            SubNew = maps:get(Group, NewData, #{}),
-            SubOld = maps:get(Group, OldData, #{}),
+        [Group1, Key] ->
+            Group2 = binary_to_existing_atom(Group1, utf8),
+            SubNew = maps:get(Group2, NewData, #{}),
+            SubOld = maps:get(Group2, OldData, #{}),
             case do_update_check_fields([Key], SubNew, SubOld) of
                 ok ->
                     do_update_check_fields(Rest, NewData, OldData);
                 {error, {updated_invalid_field, _}} ->
-                    {error, {updated_invalid_field, Field}}
+                    {error, {updated_invalid_field, <<"data.", Field/binary>>}}
             end;
         [_] ->
-            case maps:find(Field, NewData) == maps:find(Field, OldData) of
+            Field2 = binary_to_existing_atom(Field, utf8),
+            case maps:find(Field2, NewData) == maps:find(Field2, OldData) of
                 true ->
                     do_update_check_fields(Rest, NewData, OldData);
                 false ->
-                    {error, {updated_invalid_field, Field}}
+                    {error, {updated_invalid_field, <<"data.", Field/binary>>}}
             end
     end.
+
+
+
+%% @private
+%% if expires_time is not set, it is set to now + indicated time
+maybe_set_ttl(#{metadata:=#{expires_time:=_}}=Actor, _MSecs) ->
+    Actor;
+
+maybe_set_ttl(Actor, MSecs) ->
+    set_ttl(Actor, MSecs).
+
+
+%% @private
+%% sets expires_time to now + indicated time
+set_ttl(#{metadata:=Meta}=Actor, MSecs) ->
+    Now = nklib_date:epoch(usecs),
+    {ok, Expires} = nklib_date:to_3339(Now+1000*MSecs, usecs),
+    Meta2 = Meta#{expires_time => Expires},
+    Actor#{metadata := Meta2}.
 
 
 %% @private

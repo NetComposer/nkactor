@@ -69,14 +69,19 @@
     {ok, actor_st()} | {error, Reason::term()}.
 
 
-%% @doc Called when
+%% @doc Called when an update is requested
+%% NOTICE: the received actor is the actor provided by the user.
+%% It is valid, but any previous existing data or metadata is not present, and must
+%% be retrieved from actor_st.
+%% For example, if we added something to status or links that are not generated
+%% again by parse/2, the will be gone and must be inserted again here
 -callback update(nkactor:actor(), actor_st()) ->
-    {ok, nkactor:actor(), actor_st()} | {error, nkserver:msg(), actor_st()}.
+    {ok, nkactor:actor(), actor_st()} | {error, nkserver:status(), actor_st()}.
 
 
 %% @doc Called when
 -callback delete(actor_st()) ->
-    {ok, actor_st()} | {error, nkserver:msg(), actor_st()}.
+    {ok, actor_st()} | {error, nkserver:status(), actor_st()}.
 
 
 %% @doc Called to process sync operations
@@ -119,7 +124,7 @@
 
 %% @doc Called on actor heartbeat (5 secs)
 -callback heartbeat(actor_st()) ->
-    {ok, actor_st()} | {error, nkserver:msg(), actor_st()} | continue().
+    {ok, actor_st()} | {error, nkserver:status(), actor_st()} | continue().
 
 
 %% @doc Called when about to save
@@ -217,7 +222,7 @@ get_config(#actor_id{group=Group, resource=Resource, namespace=Namespace}) ->
 
 %% @doc
 get_common_config(SrvId) ->
-    case nklib_util:do_config_get({nkactor_config, SrvId}) of
+    case nklib_util:do_config_get({nkactor_config, SrvId}, undefined) of
         undefined ->
             Filter1 = ?CALL_SRV(SrvId, actor_fields_filter, [[]]),
             Filter2 = [{to_bin(Field), true} || Field <- Filter1],
@@ -326,10 +331,21 @@ to_field(Field) ->
 
 %% If ot_span_id is used, logs will be added
 -spec parse(nkserver:id(), actor(), request()) ->
-    {ok, actor()} | {error, nkserver:msg()}.
+    {ok, actor()} | {error, nkserver:status()}.
 
 parse(SrvId, Actor, Req) ->
-    #{group:=Group, resource:=Res} = Actor,
+    Group = case Actor of
+        #{group:=ActorGroup} ->
+            ActorGroup;
+        _ ->
+            maps:get(group, Req)
+    end,
+    Res = case Actor of
+        #{resource:=ActorRes} ->
+            ActorRes;
+        _ ->
+            maps:get(resource, Req)
+    end,
     % See nkactor_callback in nkactor_plugin
     SpanId = maps:get(ot_span_id, Req, undefined),
     nkserver_ot:log(SpanId, <<"calling actor parse">>),
@@ -355,7 +371,7 @@ parse(SrvId, Actor, Req) ->
 
 %% @doc Used to transform an actor into an external representation
 -spec unparse(nkserver:id(), actor(), request()) ->
-    {ok, actor()} | {error, nkserver:msg()}.
+    {ok, actor()} | {error, nkserver:status()}.
 
 unparse(SrvId, Actor, Req) ->
     #{group:=Group, resource:=Res} = Actor,

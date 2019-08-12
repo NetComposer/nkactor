@@ -25,7 +25,7 @@
 
 -export([find/1, activate/1, is_activated/1, update/3, create/2, delete/1, delete/2]).
 -export([get_actor/1, get_actor/2, get_path/1, is_enabled/1, enable/2, stop/1, stop/2]).
--export([search_groups/2, search_resources/3]).
+-export([activate_actors/1, search_groups/2, search_resources/3]).
 -export([search_label/3, search_linked_to/3, search_fts/3, search_actors/3, delete_multi/3, delete_old/5]).
 -export([search_active/2, search_expired/2, truncate/1]).
 -export([base_namespace/1]).
@@ -64,11 +64,16 @@
             generation => integer(),
             creation_time => binary(),
             update_time => binary(),
-            is_active => boolean(),         % must be loaded at all times
+            % If this flag is set, actor will be re-activated automatically
+            % when calling nkactor:activate_actors/1
+            is_active => boolean(),
             expires_time => binary(),       % Use <<>> to disable
+            % If value is empty it is removed
             labels => #{binary() => binary() | integer() | boolean()},
             fts => #{binary() => [binary()]},
-            links => #{uid() => binary},
+            % If value is empty it is removed
+            links => #{uid() => binary()},
+            % If value is empty it is removed
             annotations => #{binary() => binary() | integer() | boolean() | map()},
             is_enabled => boolean(),
             in_alarm => boolean(),
@@ -265,8 +270,8 @@ get_actor(Id) ->
 
 get_actor(Id, Opts) ->
     case nkactor_backend:read(Id, Opts) of
-        {ok, _SrvId, ActorId, _Meta} ->
-            {ok, ActorId};
+        {ok, _SrvId, Actor, _Meta} ->
+            {ok, Actor};
         {error, Error} ->
             {error, Error}
     end.
@@ -357,7 +362,7 @@ stop(Id) ->
 
 
 %% @doc Unloads the object
--spec stop(id()|pid(), Reason::nkserver:msg()) ->
+-spec stop(id()|pid(), Reason::nkserver:status()) ->
     ok | {error, term()}.
 
 stop(Pid, Reason) when is_pid(Pid) ->
@@ -370,6 +375,15 @@ stop(Id, Reason) ->
         _ ->
             {error, not_activated}
     end.
+
+
+%% @doc Performs an query on database for actors marked as 'active' and tries
+%% to active them if not already activated
+-spec activate_actors(nkserver:id()) ->
+    {ok, [actor_id()]} | {error, term()}.
+
+activate_actors(SrvId) ->
+    nkactor_util:activate_actors(SrvId).
 
 
 -type search_opts() :: #{namespace=>namespace(), deep=>boolean()}.
@@ -513,6 +527,7 @@ search_actors(SrvId, SearchSpec, SearchOpts) ->
 
 
 %% @doc Generic deletion of objects
+%% If will find all actors, and delete them, along with their dependencies
 -spec delete_multi(nkserver:id(), nkactor_search:spec(), nkactor_search:opts()) ->
     {ok, #{deleted:=integer()}} | {error, term()}.
 

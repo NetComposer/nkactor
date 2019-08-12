@@ -27,7 +27,7 @@
 -include("nkactor_debug.hrl").
 -include_lib("nkserver/include/nkserver.hrl").
 
--export([pre_create/2, pre_update/2]).
+-export([pre_create/2, pre_update/4]).
 -export([activate_actors/1]).
 
 -define(ACTIVATE_SPAN, auto_activate).
@@ -36,6 +36,64 @@
 %% ===================================================================
 %% Public
 %% ===================================================================
+
+
+%% @doc Performs an query on database for actors marked as 'active' and tries
+%% to active them if not already activated
+-spec activate_actors(nkserver:id()) ->
+    {ok, [#actor_id{}]} | {error, term()}.
+
+activate_actors(SrvId) ->
+    nkserver_ot:new(?ACTIVATE_SPAN, SrvId, <<"Actor::auto-activate">>),
+    Res = activate_actors(SrvId, <<>>, []),
+    nkserver_ot:finish(?ACTIVATE_SPAN),
+    Res.
+
+
+%% @private
+activate_actors(SrvId, StartCursor, Acc) ->
+    nkserver_ot:log(?ACTIVATE_SPAN, {"starting cursor: ~s", [StartCursor]}),
+    ParentSpan = nkserver_ot:make_parent(?ACTIVATE_SPAN),
+    case nkactor:search_active(SrvId, #{last_cursor=>StartCursor, ot_span_id=>ParentSpan, size=>10}) of
+        {ok, [], _} ->
+            nkserver_ot:log(?ACTIVATE_SPAN, <<"no more actors">>),
+            {ok, lists:reverse(Acc)};
+        {ok, ActorIds, #{last_cursor:=LastDate}} ->
+            nkserver_ot:log(?ACTIVATE_SPAN, {"found '~p' actors", [length(ActorIds)]}),
+            Acc2 = do_activate_actors(ActorIds, Acc),
+            activate_actors(SrvId, LastDate, Acc2);
+        {error, Error} ->
+            {error, Error}
+    end.
+
+%% @private
+do_activate_actors([], Acc) ->
+    Acc;
+
+do_activate_actors([ActorId|Rest], Acc) ->
+    Acc2 = case nkactor_namespace:find_registered_actor(ActorId) of
+        {true, _, _} ->
+            Acc;
+        _ ->
+            case nkactor:activate(ActorId) of
+                {ok, ActorId2} ->
+                    nkserver_ot:log(?ACTIVATE_SPAN, {"activated actor ~p", [ActorId]}),
+                    lager:notice("NkACTOR auto-activating ~p", [ActorId]),
+                    [ActorId2|Acc];
+                {error, actor_not_found} ->
+                    nkserver_ot:log(?ACTIVATE_SPAN, {"could not activated actor ~p: not_found",
+                         [ActorId]}),
+                    Acc;
+                {error, Error} ->
+                    nkserver_ot:log(?ACTIVATE_SPAN, {"could not activated actor ~p: ~p",
+                        [ActorId, Error]}),
+                    nkserver_ot:tag_error(?ACTIVATE_SPAN, could_not_activate_actor),
+                    lager:warning("NkACTOR could not auto-activate ~p: ~p",
+                        [ActorId, Error]),
+                    Acc
+            end
+    end,
+    do_activate_actors(Rest, Acc2).
 
 
 %% @private
@@ -87,36 +145,31 @@ pre_create(Actor, Opts) ->
 
 
 %% @private
-pre_update(Actor, Opts) ->
+pre_update(SrvId, ActorId, Actor, Opts) ->
     SpanId = maps:get(ot_span_id, Opts, undefined),
-    Syntax = #{'__mandatory' => [group, resource, namespace]},
-    case nkactor_syntax:parse_actor(Actor, Syntax) of
-        {ok, #{namespace:=Namespace}=Actor2} ->
+    case nkactor_syntax:parse_actor(Actor, #{}) of
+        {ok, Actor2} ->
+            #actor_id{group=Group, resource=Res, name=Name, namespace=Namespace} = ActorId,
+            Base = #{group=>Group, resource=>Res, name=>Name, namespace=>Namespace},
+            Actor3 = maps:merge(Base, Actor2),
             nkserver_ot:log(SpanId, <<"actor parsed">>),
-            case nkactor_namespace:find_service(Namespace) of
-                {ok, SrvId} ->
-                    nkserver_ot:log(SpanId, <<"actor namespace found: ~s">>, [SrvId]),
-                    Req1 = maps:get(request, Opts, #{}),
-                    Req2 = Req1#{
-                        verb => update,
-                        srv => SrvId
-                    },
-                    case nkactor_actor:parse(SrvId, Actor2, Req2) of
-                        {ok, Actor3} ->
-                            case nkactor_lib:check_actor_links(Actor3) of
-                                {ok, Actor4} ->
-                                    nkserver_ot:log(SpanId, <<"actor parsed">>),
-                                    {ok, SrvId, Actor4};
-                                {error, Error} ->
-                                    nkserver_ot:log(SpanId, <<"error checking links: ~p">>, [Error]),
-                                    {error, Error}
-                            end;
+            Req1 = maps:get(request, Opts, #{}),
+            Req2 = Req1#{
+                verb => update,
+                srv => SrvId
+            },
+            case nkactor_actor:parse(SrvId, Actor3, Req2) of
+                {ok, Actor4} ->
+                    case nkactor_lib:check_actor_links(Actor4) of
+                        {ok, Actor5} ->
+                            nkserver_ot:log(SpanId, <<"actor parsed">>),
+                            {ok, Actor5};
                         {error, Error} ->
-                            nkserver_ot:log(SpanId, <<"error parsing specific actor: ~p">>, [Error]),
+                            nkserver_ot:log(SpanId, <<"error checking links: ~p">>, [Error]),
                             {error, Error}
                     end;
                 {error, Error} ->
-                    nkserver_ot:log(SpanId, <<"error getting namespace: ~p">>, [Error]),
+                    nkserver_ot:log(SpanId, <<"error parsing specific actor: ~p">>, [Error]),
                     {error, Error}
             end;
         {error, Error} ->
@@ -125,49 +178,48 @@ pre_update(Actor, Opts) ->
     end.
 
 
-%% @doc Performs an query on database for actors marked as 'active' and tries
-%% to active them if not already activated
-activate_actors(SrvId) ->
-    nkserver_ot:new(?ACTIVATE_SPAN, SrvId, <<"Actor::auto-activate">>),
-    activate_actors(SrvId, <<>>),
-    nkserver_ot:finish(?ACTIVATE_SPAN),
-    ok.
 
 
-%% @private
-activate_actors(SrvId, StartCursor) ->
-    nkserver_ot:log(?ACTIVATE_SPAN, {"starting cursor: ~s", [StartCursor]}),
-    ParentSpan = nkserver_ot:make_parent(?ACTIVATE_SPAN),
-    case nkactor:search_active(SrvId, #{last_cursor=>StartCursor, ot_span_id=>ParentSpan, size=>2}) of
-        {ok, [], _} ->
-            nkserver_ot:log(?ACTIVATE_SPAN, <<"no more actors">>),
-            ok;
-        {ok, ActorIds, #{last_cursor:=LastDate}} ->
-            nkserver_ot:log(?ACTIVATE_SPAN, {"found '~p' actors", [length(ActorIds)]}),
-            lists:foreach(
-                fun(ActorId) ->
-                    case nkactor_namespace:find_registered_actor(ActorId) of
-                        {true, _, _} ->
-                            ok;
-                        _ ->
-                            case nkactor:activate(ActorId) of
-                                {ok, _} ->
-                                    nkserver_ot:log(?ACTIVATE_SPAN, {"activated actor ~p", [ActorId]}),
-                                    lager:notice("NkACTOR auto-activating ~p", [ActorId]);
-                                {error, Error} ->
-                                    nkserver_ot:log(?ACTIVATE_SPAN, {"could not activated actor ~p: ~p",
-                                                    [ActorId, Error]}),
-                                    nkserver_ot:tag_error(?ACTIVATE_SPAN, could_not_activate_actor),
-                                    lager:warning("NkACTOR could not auto-activate ~p: ~p",
-                                                 [ActorId, Error])
-                            end
-                    end
-                end,
-                ActorIds),
-            activate_actors(SrvId, LastDate);
-        {error, Error} ->
-            {error, Error}
-    end.
+
+
+%%%% @private
+%%pre_update(Actor, Opts) ->
+%%    SpanId = maps:get(ot_span_id, Opts, undefined),
+%%    Syntax = #{'__mandatory' => [group, resource, namespace]},
+%%    case nkactor_syntax:parse_actor(Actor, Syntax) of
+%%        {ok, #{namespace:=Namespace}=Actor2} ->
+%%            nkserver_ot:log(SpanId, <<"actor parsed">>),
+%%            case nkactor_namespace:find_service(Namespace) of
+%%                {ok, SrvId} ->
+%%                    nkserver_ot:log(SpanId, <<"actor namespace found: ~s">>, [SrvId]),
+%%                    Req1 = maps:get(request, Opts, #{}),
+%%                    Req2 = Req1#{
+%%                        verb => update,
+%%                        srv => SrvId
+%%                    },
+%%                    case nkactor_actor:parse(SrvId, Actor2, Req2) of
+%%                        {ok, Actor3} ->
+%%                            case nkactor_lib:check_actor_links(Actor3) of
+%%                                {ok, Actor4} ->
+%%                                    nkserver_ot:log(SpanId, <<"actor parsed">>),
+%%                                    {ok, SrvId, Actor4};
+%%                                {error, Error} ->
+%%                                    nkserver_ot:log(SpanId, <<"error checking links: ~p">>, [Error]),
+%%                                    {error, Error}
+%%                            end;
+%%                        {error, Error} ->
+%%                            nkserver_ot:log(SpanId, <<"error parsing specific actor: ~p">>, [Error]),
+%%                            {error, Error}
+%%                    end;
+%%                {error, Error} ->
+%%                    nkserver_ot:log(SpanId, <<"error getting namespace: ~p">>, [Error]),
+%%                    {error, Error}
+%%            end;
+%%        {error, Error} ->
+%%            nkserver_ot:log(SpanId, <<"error parsing generic actor: ~p">>, [Error]),
+%%            {error, Error}
+%%    end.
+
 
 
 %%%% @private

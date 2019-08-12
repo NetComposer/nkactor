@@ -39,7 +39,7 @@
         deep => boolean(),
         from => pos_integer(),
         size => pos_integer(),
-        get_totals => boolean(),
+        get_total => boolean(),
         filter => filter(),
         sort => [sort_spec()],
         only_uid => boolean(),
@@ -123,7 +123,7 @@
         links => #{UID::binary() => Type::binary()},     %% Type == <<>> for 'any'
         fts => #{Field::binary() => Value::binary()},    %% Field == <<"*">> for 'any'
         deep => boolean(),
-        get_totals => boolean(),
+        get_total => boolean(),
         get_data => boolean(),
         get_metadata => boolean()
     }.
@@ -177,7 +177,7 @@ search_spec_syntax() ->
         size => pos_integer,
         namespace => binary,
         deep => boolean,
-        get_totals => boolean,
+        get_total => boolean,
         filter => #{
             'and' => {list, search_spec_syntax_filter()},
             'or' => {list, search_spec_syntax_filter()},
@@ -199,8 +199,7 @@ search_spec_syntax_filter() ->
         type => {atom, [string, integer, boolean, object]},
         op => {atom, [eq, ne, lt, lte, gt, gte, values, exists, prefix, ignore]},
         value => any,
-        '__mandatory' => [field, value],
-        '__defaults' => #{op => eq}
+        '__mandatory' => [field, value]
     }.
 
 
@@ -304,29 +303,30 @@ check_field_filter([], _Opts, Acc) ->
     {ok, lists:reverse(Acc)};
 
 check_field_filter([Filter|Rest], Opts, Acc) ->
-    {Field2, Filter2} = filter_trans(Filter, Opts),
+    {Field2, Filter2} = field_trans(Filter, Opts),
+    Filter3 = filter_op(Filter2),
     case Field2 of
         <<"metadata.labels.", _/binary>> ->
-            check_field_filter(Rest, Opts, [Filter2|Acc]);
+            check_field_filter(Rest, Opts, [Filter3|Acc]);
         <<"metadata.links.", _/binary>> ->
-            check_field_filter(Rest, Opts, [Filter2|Acc]);
+            check_field_filter(Rest, Opts, [Filter3|Acc]);
         <<"metadata.fts.", _/binary>> ->
-            check_field_filter(Rest, Opts, [Filter2|Acc]);
+            check_field_filter(Rest, Opts, [Filter3|Acc]);
         _ ->
             case maps:get(fields_filter, Opts, #{}) of
                 Valid when map_size(Valid)==0 ->
-                    case filter_type(Field2, Filter2, Opts) of
-                        {ok, Filter3} ->
-                            check_field_filter(Rest, Opts, [Filter3|Acc]);
+                    case field_type(Field2, Filter3, Opts) of
+                        {ok, Filter4} ->
+                            check_field_filter(Rest, Opts, [Filter4|Acc]);
                         {error, Error} ->
                             {error, Error}
                     end;
                 Valid ->
                     case maps:is_key(Field2, Valid) of
                         true ->
-                            case filter_type(Field2, Filter2, Opts) of
-                                {ok, Filter3} ->
-                                    check_field_filter(Rest, Opts, [Filter3|Acc]);
+                            case field_type(Field2, Filter3, Opts) of
+                                {ok, Filter4} ->
+                                    check_field_filter(Rest, Opts, [Filter4|Acc]);
                                 {error, Error} ->
                                     {error, Error}
                             end;
@@ -343,7 +343,6 @@ check_sort(#{sort:=Sort}=Spec, Opts) ->
         {ok, Sort2} ->
             {ok, Spec#{sort:=Sort2}};
         {error, Error} ->
-            lager:error("NKLOG SERR ~p", [Error]),
             {error, Error}
     end;
 
@@ -357,14 +356,24 @@ check_field_sort([], _Opts, Acc) ->
     {ok, lists:reverse(Acc)};
 
 check_field_sort([Sort|Rest], Opts, Acc) ->
-    {Field2, Sort2} = filter_trans(Sort, Opts),
+    {Field2, Sort2} = field_trans(Sort, Opts),
     case maps:get(fields_sort, Opts, #{}) of
         Valid when map_size(Valid)==0 ->
-            check_field_sort(Rest, Opts, [Sort2|Acc]);
+            case field_type(Field2, Sort2, Opts) of
+                {ok, Sort3} ->
+                    check_field_sort(Rest, Opts, [Sort3|Acc]);
+                {error, Error} ->
+                    {error, Error}
+            end;
         Valid ->
             case maps:is_key(Field2, Valid) of
                 true ->
-                    check_field_sort(Rest, Opts, [Sort2|Acc]);
+                    case field_type(Field2, Sort2, Opts) of
+                        {ok, Sort3} ->
+                            check_field_sort(Rest, Opts, [Sort3|Acc]);
+                        {error, Error} ->
+                            {error, Error}
+                    end;
                 false ->
                     {error, {field_invalid, Field2}}
             end
@@ -372,7 +381,7 @@ check_field_sort([Sort|Rest], Opts, Acc) ->
 
 
 %% @private
-filter_trans(#{field:=Field}=Filter, #{fields_trans:=Trans}) ->
+field_trans(#{field:=Field}=Filter, #{fields_trans:=Trans}) ->
     Field2 = to_bin(Field),
     case maps:get(Field2, Trans, Field2) of
         Field ->
@@ -381,7 +390,7 @@ filter_trans(#{field:=Field}=Filter, #{fields_trans:=Trans}) ->
             {Field3, Filter#{field:=Field3}}
     end;
 
-filter_trans(#{field:=Field}=Filter, _) ->
+field_trans(#{field:=Field}=Filter, _) ->
     case to_bin(Field) of
         Field ->
             {Field, Filter};
@@ -390,10 +399,8 @@ filter_trans(#{field:=Field}=Filter, _) ->
     end.
 
 
-
-
 %% @private
-filter_type(Field, Filter, Opts) ->
+field_type(Field, Filter, Opts) ->
     Types = maps:get(fields_type, Opts, #{}),
     case maps:find(type, Filter) of
         {ok, UserType} ->
@@ -406,6 +413,14 @@ filter_type(Field, Filter, Opts) ->
         error ->
             {ok, Filter#{field=>Field, type => maps:get(Field, Types, string)}}
     end.
+
+%% @private
+filter_op(#{op:=_}=Filter) ->
+    Filter;
+
+filter_op(#{value:=Value}=Filter) ->
+    {Op, Value2} = expand_op(Value),
+    Filter#{op=>Op, value:=Value2}.
 
 
 
@@ -437,7 +452,7 @@ parse_params(Spec, #{params:=Params}) ->
         links => #{'__map_binary' => binary},
         fts => #{'__map_binary' => binary},
         deep => boolean,
-        get_totals => boolean,
+        get_total => boolean,
         get_data => boolean,
         get_metadata => boolean
     },
@@ -462,7 +477,7 @@ do_parse_params([], Spec) ->
     Spec;
 
 do_parse_params([{Key, Val}|Rest], Spec)
-    when Key==namespace; Key==from; Key==size; Key==deep; Key==get_totals; Key==get_data;
+    when Key==namespace; Key==from; Key==size; Key==deep; Key==get_total; Key==get_data;
          Key==get_metadata ->
     do_parse_params(Rest, Spec#{Key => Val});
 
@@ -501,29 +516,8 @@ parse_filter([{Field, Value}|Rest], Spec) ->
 
 %% @private
 parse_field_op(Field, Value, Spec) ->
-    Filter = case binary:split(to_bin(Value), <<":">>) of
-        [Op, Value2] ->
-            Op2 = case catch binary_to_existing_atom(Op, latin1) of
-                eq -> eq;
-                ne -> ne;
-                gt -> gt;
-                gte -> gte;
-                lt -> lt;
-                lte -> lte;
-                prefix -> prefix;
-                values -> values;
-                _ -> throw({error, {field_op, Op}})
-            end,
-            Value3 = case Op2 of
-                values -> binary:split(Value2, <<"|">>, [global]);
-                _ -> Value2
-            end,
-            #{field=>Field, op=>Op2, value=>Value3};
-        [<<>>] ->
-            #{field=>Field, op=>exists, value=>true};
-        [Value2] ->
-            #{field=>Field, op=>eq, value=>Value2}
-    end,
+    {Op, Value2} = expand_op(Value),
+    Filter = #{field=>Field, op=>Op, value=>Value2},
     add_and_filter(Filter, Spec).
 
 
@@ -580,6 +574,34 @@ parse_sort([], Acc) ->
 parse_sort([{Field, Value}|Rest], Acc) ->
     Sort = #{field=>Field, order=>Value},
     parse_sort(Rest, [Sort|Acc]).
+
+
+%% @private
+expand_op(Value) ->
+    case binary:split(to_bin(Value), <<":">>) of
+        [Op, Value2] ->
+            Op2 = case catch binary_to_existing_atom(Op, latin1) of
+                eq -> eq;
+                ne -> ne;
+                gt -> gt;
+                gte -> gte;
+                lt -> lt;
+                lte -> lte;
+                prefix -> prefix;
+                values -> values;
+                _ -> throw({error, {field_op, Op}})
+            end,
+            Value3 = case Op2 of
+                values -> binary:split(Value2, <<"|">>, [global]);
+                _ -> Value2
+            end,
+            {Op2, Value3};
+        [<<>>] ->
+            {exists, true};
+        [Value2] ->
+            {eq, Value2}
+    end.
+
 
 
 %% @private

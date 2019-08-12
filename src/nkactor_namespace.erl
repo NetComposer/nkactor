@@ -97,7 +97,7 @@
 %% @doc Register an actor with the namespace server
 %% If successful, stores in local cache
 -spec register_actor(#actor_id{}) ->
-    {ok, nkserver:id(), pid()} | {error, nkserver:msg()}.
+    {ok, nkserver:id(), pid()} | {error, nkserver:status()}.
 
 register_actor(#actor_id{uid=UID, pid=Pid, namespace=Namespace}=ActorId) ->
     #actor_id{
@@ -145,7 +145,7 @@ find_actor(Id) ->
 %% @doc Finds an actor loaded and registered with a namespace
 %% If successful, stores in local cache
 -spec find_registered_actor(#actor_id{}) ->
-    {true, nkserver:id(), #actor_id{}}| {false, nkserver:id()} | false | {error, nkserver:msg()}.
+    {true, nkserver:id(), #actor_id{}}| {false, nkserver:id()} | false | {error, nkserver:status()}.
 
 find_registered_actor(ActorId) ->
     #actor_id{
@@ -274,7 +274,7 @@ find_index(Namespace, Index) ->
 
 %% @doc Gets the service that manages a namespace, start it if it was not started
 -spec find_service(nkactor:namespace()) ->
-    {ok, nkserver:id()} | {error, nkserver:msg()}.
+    {ok, nkserver:id()} | {error, nkserver:status()}.
 
 find_service(Namespace) ->
     Namespace2 = to_bin(Namespace),

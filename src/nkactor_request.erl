@@ -88,17 +88,17 @@
 -type response() ::
     ok | {ok, map()} | {ok, map(), request()} |
     created | {created, map()} | {created, map(), request()} |
-    {status, nkserver:msg()} |
-    {status, nkserver:msg(), map()} |  %% See status/2
-    {status, nkserver:msg(), map(), request()} |
-    {error, nkserver:msg()} |
-    {error, nkserver:msg(), request()}.
+    {status, nkserver:status()} |
+    {status, nkserver:status(), map()} |  %% See status/2
+    {status, nkserver:status(), map(), request()} |
+    {error, nkserver:status()} |
+    {error, nkserver:status(), request()}.
 
 
 -type reply() ::
     {ok|created, map(), request()} |
     {raw, {CT::binary(), Body::binary()}, request()} |
-    {status|error, nkserver:msg(), request()}.
+    {status|error, nkserver:status(), request()}.
 
 -type class() :: term().
 
@@ -476,7 +476,6 @@ delete_collection(ActorId, Config, Req) ->
             sort => [#{field=><<"metadata.update_time">>, order=>asc}]
         }
     },
-    io:format("NKLOG SPEC ~s\n", [nklib_json:encode_pretty(Opts2)]),
     case nkactor:delete_multi(SrvId, Base, Opts2) of
         {ok, Meta} ->
             {ok, Meta};

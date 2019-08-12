@@ -65,9 +65,6 @@
 -export([create/2, start/2, sync_op/2, sync_op/3, async_op/2, live_async_op/2, delayed_async_op/3, hibernate/0]).
 -export([init/1, terminate/2, code_change/3, handle_call/3, handle_cast/2, handle_info/2]).
 -export([count/0, get_state/1, get_timers/1, raw_stop/2]).
--export([do_event/2, do_event_link/2, do_update/3, do_delete/1, do_set_next_status_time/2,
-         do_unset_next_status_time/1, do_get_links/1, do_add_link/3, do_remove_link/2,
-         do_save/2]).
 -export_type([event/0, save_reason/0]).
 
 -include("nkactor.hrl").
@@ -75,7 +72,7 @@
 -include_lib("nkserver_ot/include/nkserver_ot.hrl").
 -include_lib("nkserver/include/nkserver.hrl").
 
--define(DEFAULT_TTL, 10000).
+%%-define(DEFAULT_TTL, 10000).
 -define(DEF_SYNC_CALL, 5000).
 -define(HEARTBEAT_TIME, 5000).
 -define(DEFAULT_SAVE_TIME, 5000).
@@ -104,7 +101,7 @@
     {link_down, Type :: binary()} |
     {alarm_fired, nkactor:alarm()} |
     alarms_all_cleared |
-    {stopped, nkserver:msg()}.
+    {stopped, nkserver:status()}.
 
 
 -type link_opts() ::
@@ -143,7 +140,7 @@
     clear_all_alarms |
     save |
     delete |
-    {stop, Reason :: nkserver:msg()} |
+    {stop, Reason :: nkserver:status()} |
     term().
 
 
@@ -164,12 +161,6 @@ creation | user_op | user_order | unloaded | update | timer.
 
 
 
--record(link_info, {
-    get_events :: boolean(),
-    gen_events :: boolean(),
-    avoid_unload :: boolean(),
-    data :: term()
-}).
 
 
 %% ===================================================================
@@ -359,352 +350,6 @@ count() ->
     nklib_counters:value(?MODULE).
 
 
-%% ===================================================================
-%% In-process API
-%% ===================================================================
-
-%% @private
-do_event(Event, State) ->
-    ?ACTOR_DEBUG("sending 'event': ~p", [Event], State),
-    State2 = do_event_link(Event, State),
-    {ok, State3} = handle(actor_srv_event, [Event], State2),
-    State3.
-
-
-%% @private
-do_event_link(Event, #actor_st{links = Links} = State) ->
-    nklib_links:fold_values(
-        fun
-            (Link, #link_info{get_events = true, data = Data}, Acc) ->
-                {ok, Acc2} = handle(actor_srv_link_event, [Link, Data, Event], Acc),
-                Acc2;
-            (_Link, _LinkOpts, Acc) ->
-                Acc
-        end,
-        State,
-        Links).
-
-
-%% @private
-do_set_next_status_time(NextTime, #actor_st{actor = Actor} = State) ->
-    {ok, NextTime2} = nklib_date:to_3339(NextTime, msecs),
-    #{metadata:=Meta} = Actor,
-    Meta2 = Meta#{next_status_time => NextTime2},
-    Actor2 = Actor#{metadata:=Meta2},
-    self() ! nkactor_check_next_status_time,
-    do_set_dirty(State#actor_st{actor=Actor2}).
-
-
-%% @private
-do_unset_next_status_time(#actor_st{actor = Actor, status_timer = Timer} = State) ->
-    nklib_util:cancel_timer(Timer),
-    #{metadata:=Meta} = Actor,
-    case maps:is_key(next_status_time, Meta) of
-        true ->
-            Meta2 = maps:remove(next_status_time, Meta),
-            Actor2 = Actor#{metadata:=Meta2},
-            do_set_dirty(State#actor_st{actor=Actor2});
-        false ->
-            State
-    end.
-
-
-%% @private
-do_get_links(#actor_st{links = Links}) ->
-    nklib_links:fold_values(
-        fun(Link, #link_info{data = Data}, Acc) -> [{Link, Data} | Acc] end,
-        [],
-        Links).
-
-
-%% @private
-do_add_link(Link, Opts, #actor_st{links = Links} = State) ->
-    LinkInfo = #link_info{
-        get_events = maps:get(get_events, Opts, false),
-        gen_events = maps:get(gen_events, Opts, true),
-        avoid_unload = maps:get(avoid_unload, Opts, false),
-        data = maps:get(data, Opts, undefined)
-    },
-    State2 = case LinkInfo#link_info.gen_events of
-        true ->
-            do_event({link_added, Link}, State);
-        _ ->
-            State
-    end,
-    State2#actor_st{links = nklib_links:add(Link, LinkInfo, Links)}.
-
-
-%% @private
-do_remove_link(Link, #actor_st{links = Links} = State) ->
-    case nklib_links:get_value(Link, Links) of
-        {ok, #link_info{gen_events = true}} ->
-            State2 = do_event({link_removed, Link}, State),
-            State3 = State2#actor_st{links = nklib_links:remove(Link, Links)},
-            {true, State3};
-        not_found ->
-            false
-    end.
-
-
-%% @private
-%% It will create an 'operation span' if ot_span_id option is used
-do_update(UpdActor, Opts, #actor_st{actor_id = ActorId, actor = Actor} = State) ->
-    UpdActorId = nkactor_lib:actor_to_actor_id(UpdActor),
-    #actor_id{uid = UID, namespace = Namespace, group = Class, resource = Res, name = Name} = ActorId,
-    try
-        case UpdActorId#actor_id.namespace of
-            Namespace -> ok;
-            _ -> throw({updated_invalid_field, namespace})
-        end,
-        case UpdActorId#actor_id.uid of
-            undefined -> ok;
-            UID -> ok;
-            _ -> throw({updated_invalid_field, uid})
-        end,
-        case UpdActorId#actor_id.group of
-            Class -> ok;
-            _ -> throw({updated_invalid_field, group})
-        end,
-        case UpdActorId#actor_id.resource of
-            Res -> ok;
-            _ -> throw({updated_invalid_field, resource})
-        end,
-        case UpdActorId#actor_id.name of
-            Name -> ok;
-            _ -> throw({updated_invalid_field, name})
-        end,
-        DataFieldsList = maps:get(data_fields, Opts, all),
-        Data = maps:get(data, Actor, #{}),
-        Meta = maps:get(metadata, Actor),
-        DataFields = case DataFieldsList of
-            all ->
-                Data;
-            _ ->
-                maps:with(DataFieldsList, Data)
-        end,
-        UpdData = maps:get(data, UpdActor, #{}),
-        UpdDataFields = case DataFieldsList of
-            all ->
-                UpdData;
-            _ ->
-                maps:with(DataFieldsList, UpdData)
-        end,
-        IsDataUpdated = UpdDataFields /= DataFields,
-        UpdMeta = maps:get(metadata, UpdActor),
-        CT = maps:get(creation_time, Meta),
-        case maps:get(creation_time, UpdMeta, CT) of
-            CT -> ok;
-            _ -> throw({updated_invalid_field, metadata})
-        end,
-        Kind = maps:get(kind, Meta, <<>>),
-        case maps:get(kind, Meta, <<>>) of
-            Kind -> ok;
-            _ -> throw({updated_invalid_field, kind})
-        end,
-        SubType = maps:get(subtype, Meta, <<>>),
-        case maps:get(subtype, UpdMeta, <<>>) of
-            SubType -> ok;
-            _ -> throw({updated_invalid_field, subtype})
-        end,
-        Links = maps:get(links, Meta, #{}),
-        UpdLinks = maps:get(links, UpdMeta, Links),
-        UpdMeta2 = case UpdLinks == Links of
-            true ->
-                UpdMeta;
-            false ->
-                case nkactor_lib:check_meta_links(UpdMeta) of
-                    {ok, UpdMetaLinks} ->
-                        UpdMetaLinks;
-                    {error, Error} ->
-                        throw(Error)
-                end
-        end,
-        Enabled = maps:get(is_enabled, Meta, true),
-        UpdEnabled = maps:get(is_enabled, UpdMeta2, true),
-        UpdMeta3 = case maps:get(is_enabled, UpdMeta2, true) of
-            true ->
-                maps:remove(is_enabled, UpdMeta2);
-            false ->
-                UpdMeta2
-        end,
-        NewMeta = maps:merge(Meta, UpdMeta3),
-        IsMetaUpdated = (Meta /= NewMeta) orelse (Enabled /= UpdEnabled),
-        case IsDataUpdated orelse IsMetaUpdated of
-            true ->
-                % At this point, we create main span and operation span
-                State2 = op_span_check_create(update, Opts, State),
-                %lager:error("NKLOG UPDATE Data:~p, Meta:~p", [IsDataUpdated, IsMetaUpdated]),
-                NewMeta2 = case UpdEnabled of
-                    true ->
-                        maps:remove(is_enabled, NewMeta);
-                    false ->
-                        NewMeta#{is_enabled=>false}
-                end,
-                NewData2 = maps:merge(Data, UpdDataFields),
-                NewActor1 = Actor#{data=>NewData2, metadata:=NewMeta2},
-                case nkactor_lib:update_check_fields(NewActor1, State2) of
-                    ok ->
-                        op_span_log(<<"calling actor_srv_update">>, State2),
-                        case handle(actor_srv_update, [NewActor1], State2) of
-                            {ok, NewActor2, State3} ->
-                                State4 = do_set_dirty(State3#actor_st{actor=NewActor2}),
-                                State5 = do_enabled(UpdEnabled, State4),
-                                State6 = set_unload_policy(State5),
-                                op_span_log(<<"calling do_save">>, State6),
-                                case do_save(update, #{}, State6) of
-                                    {ok, State7} ->
-                                        nkserver_ot:log(<<"actor updated">>, State7),
-                                        op_span_log(<<"actor updated">>, State7),
-                                        State8 = op_span_finish(State7),
-                                        {ok, do_event({updated, UpdActor}, State8)};
-                                    {{error, SaveError}, State7} ->
-                                        op_span_log(<<"save error: ~p">>, [SaveError], State7),
-                                        op_span_error(SaveError, State7),
-                                        State8 = op_span_finish(State7),
-                                        {error, SaveError, State8}
-                                end;
-                            {error, UpdError, State3} ->
-                                op_span_log(<<"update error: ~p">>, [UpdError], State3),
-                                op_span_error(UpdError, State3),
-                                State4 = op_span_finish(State3),
-                                {error, UpdError, State4}
-                        end;
-                    {error, StaticFieldError} ->
-                        op_span_log(<<"update error: ~p">>, [StaticFieldError], State2),
-                        op_span_error(StaticFieldError, State2),
-                        State4 = op_span_finish(State2),
-                        {error, StaticFieldError, State4}
-                end;
-            false ->
-                % lager:error("NKLOG NO UPDATE"),
-                {ok, State}
-        end
-    catch
-        throw:Throw ->
-            {error, Throw, State}
-    end.
-
-
-%% @private
-do_delete(#actor_st{is_dirty = deleted} = State) ->
-    {ok, State};
-
-do_delete(#actor_st{srv = SrvId, actor_id = ActorId, actor = Actor} = State) ->
-    case handle(actor_srv_delete, [], State) of
-        {ok, State2} ->
-            case ?CALL_SRV(SrvId, actor_db_delete, [SrvId, ActorId, #{}]) of
-                {ok, DbMeta} ->
-                    ?ACTOR_DEBUG("object deleted: ~p", [DbMeta], State),
-                    {ok, do_event(deleted, State2#actor_st{is_dirty = deleted})};
-                {error, Error} ->
-                    case Error of
-                        actor_has_linked_actors ->
-                            ok;
-                        _ ->
-                            ?ACTOR_LOG(warning, "object could not be deleted: ~p", [Error], State)
-                    end,
-                    {{error, Error}, State2#actor_st{actor = Actor}}
-            end;
-        {error, Error, State2} ->
-            {{error, Error}, State2}
-    end.
-
-
-%% @private
-do_set_dirty(#actor_st{actor=Actor}=ActorSt) ->
-    Actor2 = nkactor_lib:update(Actor, nklib_date:now_3339(usecs)),
-    ActorSt#actor_st{actor = Actor2, is_dirty = true}.
-
-
-%% @private
-do_save(Reason, State) ->
-    do_save(Reason, #{}, State).
-
-
-%% @private
-do_save(Reason, SaveOpts, #actor_st{is_dirty = true} = State) ->
-    #actor_st{
-        srv = SrvId,
-        actor = Actor,
-        saved_metadata = SavedMeta,
-        save_timer = Timer,
-        config = Config
-    } = State,
-    nklib_util:cancel_timer(Timer),
-    State2 = State#actor_st{save_timer = undefined},
-    State3 = op_span_force_create(save, State2),
-    #actor_st{op_span_ids=[SpanId|_]} = State3,
-    {SaveFun, SaveOpts2} = case Reason of
-        create ->
-            CheckUnique = maps:get(create_check_unique, Config, true),
-            {
-                actor_db_create,
-                SaveOpts#{check_unique=>CheckUnique, ot_span_id=>SpanId}
-            };
-        _ ->
-            {
-                actor_db_update,
-                SaveOpts#{last_metadata=>SavedMeta, ot_span_id=>SpanId}}
-    end,
-    op_span_log(<<"calling actor_srv_save">>, State3),
-    case handle(actor_srv_save, [Actor], State3) of
-        {ok, SaveActor, #actor_st{config = Config}=State4} ->
-            case Config of
-                #{async_save:=true} when Reason /= create ->
-                    Self = self(),
-                    Pid = spawn_link(
-                        fun() ->
-                            Span1 = nkserver_ot:span(SrvId, <<"ActorSrc::async_save">>, SpanId),
-                            Span2 = nkserver_ot:log(Span1, <<"calling ~s">>, [SaveFun]),
-                            case ?CALL_SRV(SrvId, SaveFun, [SrvId, SaveActor, SaveOpts2]) of
-                                {ok, _DbMeta} ->
-                                    Span3 = nkserver_ot:log(Span2, <<"actor saved">>),
-                                    nkserver_ot:finish(Span3),
-                                    async_op(Self, {send_event, saved});
-                                {error, Error} ->
-                                    Span3 = nkserver_ot:log(Span2, "save error: ~p", [Error]),
-                                    Span4 = nkserver_ot:tag_error(Span3, Error),
-                                    nkserver_ot:finish(Span4)
-                            end
-                        end),
-                    op_span_log(<<"launched asynchronous save: ~p">>, [Pid], State4),
-                    % We must guess that the save is successful
-                    #{metadata:=NewMeta} = Actor,
-                    State5 = op_span_finish(State4),
-                    {ok, State5#actor_st{saved_metadata = NewMeta, is_dirty = false}};
-                _ ->
-                    case ?CALL_SRV(SrvId, SaveFun, [SrvId, SaveActor, SaveOpts2]) of
-                        {ok, DbMeta} ->
-                            op_span_log(<<"actor saved">>, State4),
-                            State5 = op_span_finish(State4),
-                            ?ACTOR_DEBUG("save (~p) (~p)", [Reason, DbMeta], State5),
-                            % The metadata of the updated actor is the new old metadata
-                            % to check differences
-                            #{metadata:=NewMeta} = Actor,
-                            State6 = State5#actor_st{saved_metadata = NewMeta, is_dirty = false},
-                            {ok, do_event(saved, State6)};
-                        {error, not_implemented} ->
-                            op_span_log(<<"save not implemented">>, State4),
-                            State5 = op_span_finish(State4),
-                            {{error, not_implemented}, State5};
-                        {error, Error} ->
-                            op_span_log(<<"save error: ~p">>, [Error], State4),
-                            op_span_error(Error, State4),
-                            State5 = op_span_finish(State4),
-                            ?ACTOR_LOG(warning, "save error: ~p", [Error], State5),
-                            {{error, Error}, State5}
-                    end
-            end;
-        {ignore, State4} ->
-            op_span_log(<<"save ignored">>, State4),
-            State5 = op_span_finish(State4),
-            {ok, State5}
-    end;
-
-do_save(_Reason, _SaveOpts, State) ->
-    {ok, State}.
-
-
 % ===================================================================
 %% gen_server behaviour
 %% ===================================================================
@@ -726,8 +371,8 @@ init({Op, Actor, StartConfig, Caller, Ref}) ->
         {ok, SrvId, BaseConfig} ->
             Config = maps:merge(BaseConfig, StartConfig),
             State1 = do_pre_init(ActorId, Actor, Config, SrvId),
-            State2 = op_span_check_create(Op, Config, State1),
-            op_span_log(<<"starting initialization: ~p">>, [Op], State2),
+            State2 = nkactor_srv_lib:op_span_check_create(Op, Config, State1),
+            nkactor_srv_lib:op_span_log(<<"starting initialization: ~p">>, [Op], State2),
             #actor_id{
                 group = Group,
                 resource = Res,
@@ -743,14 +388,14 @@ init({Op, Actor, StartConfig, Caller, Ref}) ->
                 <<"actor.uid">> => UID,
                 <<"actor.pid">> => list_to_binary(pid_to_list(self()))
             },
-            op_span_tags(Tags, State2),
+            nkactor_srv_lib:op_span_tags(Tags, State2),
             case do_check_expired(State2) of
                 {false, State3} ->
-                    op_span_log(<<"registering with namespace">>, State3),
+                    nkactor_srv_lib:op_span_log(<<"registering with namespace">>, State3),
                     case do_register(1, State3) of
                         {ok, State4} ->
-                            op_span_log(<<"registered with namespace">>, State4),
-                            case handle(actor_srv_init, [Op], State4) of
+                            nkactor_srv_lib:op_span_log(<<"registered with namespace">>, State4),
+                            case nkactor_srv_lib:handle(actor_srv_init, [Op], State4) of
                                 {ok, State5} ->
                                     case do_post_init(Op, State5) of
                                         {ok, State6} ->
@@ -761,15 +406,15 @@ init({Op, Actor, StartConfig, Caller, Ref}) ->
                                 {error, Error} ->
                                     do_init_stop(Error, Caller, Ref, State4);
                                 {delete, Error} ->
-                                    _ = do_delete(State4),
+                                    _ = nkactor_srv_lib:delete(State4),
                                     do_init_stop(Error, Caller, Ref, State4)
                             end;
                         {error, Error} ->
                             do_init_stop(Error, Caller, Ref, State3)
                     end;
                 true ->
-                    op_span_log(<<"actor is expired on load">>, State2),
-                    ?ACTOR_LOG(warning, "actor is expired on load", [], State2),
+                    nkactor_srv_lib:op_span_log(<<"actor is expired on load">>, State2),
+                    ?ACTOR_LOG(notice, "actor is expired on load", [], State2),
                     % Call stop functions, probably will delete the actor
                     _ = do_stop(actor_expired, State2),
                     do_init_stop(actor_not_found, Caller, Ref, State2)
@@ -783,16 +428,16 @@ init({Op, Actor, StartConfig, Caller, Ref}) ->
     {stop, Reason :: term(), state()} | {stop, Reason :: term(), Reply :: term(), state()}.
 
 handle_call({nkactor_sync_op, Op}, From, State) ->
-    case handle(actor_srv_sync_op, [Op, From], State) of
+    case nkactor_srv_lib:handle(actor_srv_sync_op, [Op, From], State) of
         {reply, Reply, #actor_st{} = State2} ->
             reply(Reply, do_refresh_ttl(State2));
         {reply_and_save, Reply, #actor_st{} = State2} ->
-            {_, State3} = do_save(user_op, do_set_dirty(State2)),
+            {_, State3} = nkactor_srv_lib:save(user_op, nkactor_srv_lib:set_dirty(State2)),
             reply(Reply, do_refresh_ttl(State3));
         {noreply, #actor_st{} = State2} ->
             noreply(do_refresh_ttl(State2));
         {noreply_and_save, #actor_st{} = State2} ->
-            {_, State3} = do_save(user_op, do_set_dirty(State2)),
+            {_, State3} = nkactor_srv_lib:save(user_op, nkactor_srv_lib:set_dirty(State2)),
             noreply(do_refresh_ttl(State3));
         {stop, Reason, Reply, #actor_st{} = State2} ->
             gen_server:reply(From, Reply),
@@ -817,11 +462,11 @@ handle_call(Msg, From, State) ->
     {noreply, state()} | {stop, term(), state()}.
 
 handle_cast({nkactor_async_op, Op}, State) ->
-    case handle(actor_srv_async_op, [Op], State) of
+    case nkactor_srv_lib:handle(actor_srv_async_op, [Op], State) of
         {noreply, #actor_st{} = State2} ->
             noreply(do_refresh_ttl(State2));
         {noreply_and_save, #actor_st{} = State2} ->
-            {_, State3} = do_save(user_op, do_set_dirty(State2)),
+            {_, State3} = nkactor_srv_lib:save(user_op, nkactor_srv_lib:set_dirty(State2)),
             noreply(do_refresh_ttl(State3));
         {stop, Reason, #actor_st{} = State2} ->
             do_stop(Reason, State2);
@@ -835,7 +480,7 @@ handle_cast({nkactor_async_op, Op}, State) ->
     end;
 
 handle_cast(nkactor_hibernate, State) ->
-    {_, State2} = do_save(hibernate, State),
+    {_, State2} = nkactor_srv_lib:save(hibernate, State),
     {noreply, State2, hibernate};
 
 handle_cast(Msg, State) ->
@@ -850,7 +495,7 @@ handle_info({nkactor_updated, _SrvId}, State) ->
     set_debug(State),
     noreply(State);
 
-handle_info(nkactor_check_expire, State) ->
+handle_info(nkactor_check_expired, State) ->
     case do_check_expired(State) of
         true ->
             do_stop(actor_expired, State);
@@ -867,7 +512,7 @@ handle_info(nkactor_timer_save, State) ->
 handle_info(nkactor_check_next_status_time, State) ->
     case is_next_status_time(State) of
         {true, State2} ->
-            {ok, State3} = handle(actor_srv_next_status_timer, [], State2),
+            {ok, State3} = nkactor_srv_lib:handle(actor_srv_next_status_timer, [], State2),
             noreply(State3);
         {false, State2} ->
             noreply(State2)
@@ -897,7 +542,7 @@ handle_info({'DOWN', Ref, process, _Pid, Reason} = Info, State) ->
         {ok, Link, #link_info{data = Data} = LinkInfo, State2} ->
             ?ACTOR_LOG(warning, "link ~p down (~p) (~p)", [Link, LinkInfo, Reason], State),
             ?ACTOR_DEBUG("link ~p down (~p) (~p)", [Link, LinkInfo, Reason], State),
-            {ok, State3} = handle(actor_srv_link_down, [Link, Data], State2),
+            {ok, State3} = nkactor_srv_lib:handle(actor_srv_link_down, [Link, Data], State2),
             noreply(State3);
         not_found ->
             safe_handle(actor_srv_handle_info, [Info], State)
@@ -924,7 +569,7 @@ code_change(OldVsn, #actor_st{srv = SrvId} = State, Extra) ->
 
 terminate(Reason, #actor_st{op_span_ids=SpanIds}=State) ->
     State2 = do_stop2({terminate, Reason}, State),
-    {ok, _State3} = handle(actor_srv_terminate, [Reason], State2),
+    {ok, _State3} = nkactor_srv_lib:handle(actor_srv_terminate, [Reason], State2),
     lists:foreach(
         fun(SpanId) ->
             nkserver_ot:log(SpanId, <<"actor terminated: ~p">>, [Reason]),
@@ -968,15 +613,15 @@ do_sync_op(get_timers, _From, State) ->
     reply({ok, Data}, State);
 
 do_sync_op(get_links, _From, State) ->
-    Data = do_get_links(State),
+    Data = nkactor_srv_lib:get_links(State),
     reply({ok, Data}, State);
 
 do_sync_op(save, _From, State) ->
-    {Reply, State2} = do_save(user_order, State),
+    {Reply, State2} = nkactor_srv_lib:save(user_order, State),
     reply(Reply, do_refresh_ttl(State2));
 
 do_sync_op(force_save, _From, State) ->
-    {Reply, State2} = do_save(user_order, do_set_dirty(State)),
+    {Reply, State2} = nkactor_srv_lib:save(user_order, nkactor_srv_lib:set_dirty(State)),
     reply(Reply, do_refresh_ttl(State2));
 
 do_sync_op(get_unload_policy, _From, #actor_st{unload_policy=Policy}=State) ->
@@ -987,7 +632,7 @@ do_sync_op(delete, From, #actor_st{is_enabled=IsEnabled, config=Config}=State) -
         {false, #{dont_delete_on_disabled:=true}} ->
             reply({error, actor_is_disabled}, State);
         _ ->
-            {Reply, State2} = do_delete(State),
+            {Reply, State2} = nkactor_srv_lib:delete(State),
             gen_server:reply(From, Reply),
             do_stop(actor_deleted, State2)
     end;
@@ -1000,7 +645,7 @@ do_sync_op({enable, Enable}, _From, State) when is_boolean(Enable)->
         _ ->
             Meta2 = Meta#{is_enabled => Enable},
             UpdActor = Actor#{metadata := Meta2},
-            case do_update(UpdActor, #{}, State) of
+            case nkactor_srv_lib:update(UpdActor, #{}, State) of
                 {ok, State2} ->
                     reply(ok, do_refresh_ttl(State2));
                 {error, Error, State2} ->
@@ -1012,7 +657,7 @@ do_sync_op(is_enabled, _From, #actor_st{is_enabled=IsEnabled}=State) ->
     reply({ok, IsEnabled}, State);
 
 do_sync_op({link, Link, Opts}, _From, State) ->
-    State2 = do_add_link(Link, Opts, State),
+    State2 = nkactor_srv_lib:add_link(Link, Opts, State),
     reply(ok, do_refresh_ttl(State2));
 
 do_sync_op({update, Actor, Opts}, _From, State) ->
@@ -1021,7 +666,7 @@ do_sync_op({update, Actor, Opts}, _From, State) ->
         {false, #{dont_update_on_disabled:=true}} ->
             reply({error, actor_is_disabled}, State);
         _ ->
-            case do_update(Actor, Opts, State) of
+            case nkactor_srv_lib:update(Actor, Opts, State) of
                 {ok, State2} ->
                     ReplyActor = case Opts of
                         #{get_actor:=true} ->
@@ -1063,7 +708,7 @@ do_sync_op(Op, _From, State) ->
 
 %% @private
 do_async_op({unlink, Link}, State) ->
-    case do_remove_link(Link, State) of
+    case nkactor_srv_lib:remove_link(Link, State) of
         {true, State2} ->
             {ok, State2};
         false ->
@@ -1071,16 +716,16 @@ do_async_op({unlink, Link}, State) ->
     end;
 
 do_async_op({send_info, Info, Meta}, State) ->
-    noreply(do_event({info, nklib_util:to_binary(Info), Meta}, do_refresh_ttl(State)));
+    noreply(nkactor_srv_lib:event({info, nklib_util:to_binary(Info), Meta}, do_refresh_ttl(State)));
 
 do_async_op({send_event, Event}, State) ->
-    noreply(do_event(Event, do_refresh_ttl(State)));
+    noreply(nkactor_srv_lib:event(Event, do_refresh_ttl(State)));
 
 do_async_op({set_next_status_time, Time}, State) ->
-    noreply(do_set_next_status_time(Time, State));
+    noreply(nkactor_srv_lib:set_next_status_time(Time, State));
 
 do_async_op({set_dirty, true}, State) ->
-    noreply(do_refresh_ttl(do_set_dirty(State)));
+    noreply(do_refresh_ttl(nkactor_srv_lib:set_dirty(State)));
 
 do_async_op({set_dirty, false}, State) ->
     noreply(do_refresh_ttl(State#actor_st{is_dirty = false}));
@@ -1089,7 +734,7 @@ do_async_op(save, State) ->
     do_async_op({save, user_order}, State);
 
 do_async_op({save, Reason}, State) ->
-    {_Reply, State2} = do_save(Reason, State),
+    {_Reply, State2} = nkactor_srv_lib:save(Reason, State),
     noreply(do_refresh_ttl(State2));
 
 do_async_op(delete, #actor_st{is_enabled=IsEnabled, config=Config}=State) ->
@@ -1097,7 +742,7 @@ do_async_op(delete, #actor_st{is_enabled=IsEnabled, config=Config}=State) ->
         {false, #{dont_delete_on_disabled:=true}} ->
             noreply(State);
         _ ->
-            {_Reply, State2} = do_delete(State),
+            {_Reply, State2} = nkactor_srv_lib:delete(State),
             do_stop(actor_deleted, State2)
     end;
 do_async_op({stop, Reason}, State) ->
@@ -1107,8 +752,8 @@ do_async_op({stop, Reason}, State) ->
 do_async_op({raw_stop, Reason}, State) ->
     % We don't send the deleted event here, since we may not be active at all
     ?ACTOR_LOG(notice, "received raw_stop: ~p", [Reason], State),
-    {_, State2} = handle(actor_srv_stop, [Reason], State),
-    State3 = do_event({stopped, Reason}, State2),
+    {_, State2} = nkactor_srv_lib:handle(actor_srv_stop, [Reason], State),
+    State3 = nkactor_srv_lib:event({stopped, Reason}, State2),
     {stop, normal, State3#actor_st{stop_reason=raw_stop}};
 
 do_async_op({set_alarm, Alarm}, State) ->
@@ -1161,7 +806,7 @@ do_pre_init(ActorId, Actor, Config, SrvId) ->
         false ->
             ok
     end,
-    set_unload_policy(State).
+    nkactor_srv_lib:set_unload_policy(State).
 
 
 %% @private
@@ -1170,21 +815,21 @@ do_post_init(Op, State) ->
     ?ACTOR_DEBUG("started (~p)", [self()], State),
     State2 = case Op of
         create ->
-            op_span_log(<<"starting creation save">>, State),
+            nkactor_srv_lib:op_span_log(<<"starting creation save">>, State),
             % Do not update generation
             State#actor_st{is_dirty=true};
         _ ->
             State
     end,
-    case do_save(Op, State2) of
+    case nkactor_srv_lib:save(Op, State2) of
         {ok, State3} ->
             State4 = case Op of
                 create ->
-                    op_span_log(<<"actor saved">>, State),
-                    do_event(created, State3);
+                    nkactor_srv_lib:op_span_log(<<"actor saved">>, State),
+                    nkactor_srv_lib:event(created, State3);
                 _ ->
-                    op_span_log(<<"actor activated">>, State),
-                    do_event(activated, State3)
+                    nkactor_srv_lib:op_span_log(<<"actor activated">>, State),
+                    nkactor_srv_lib:event(activated, State3)
             end,
             State5 = do_check_alarms(State4),
             case Config of
@@ -1194,20 +839,20 @@ do_post_init(Op, State) ->
                     ok
             end,
             nklib_counters:async([?MODULE]),
-            op_span_log(<<"actor init completed">>, State5),
-            State6 = op_span_finish(State5),
+            nkactor_srv_lib:op_span_log(<<"actor init completed">>, State5),
+            State6 = nkactor_srv_lib:op_span_finish(State5),
             {ok, do_refresh_ttl(State6)};
         {{error, Error}, State3} ->
-            op_span_log("actor save error: ~p", [Error], State3),
+            nkactor_srv_lib:op_span_log("actor save error: ~p", [Error], State3),
             {error, Error}
     end.
 
 
 %% @private
 do_init_stop(Error, Caller, Ref, State) ->
-    op_span_log("actor init error: ~p", [Error], State),
-    op_span_error(Error, State),
-    _State2 = op_span_finish(State),
+    nkactor_srv_lib:op_span_log("actor init error: ~p", [Error], State),
+    nkactor_srv_lib:op_span_error(Error, State),
+    _State2 = nkactor_srv_lib:op_span_finish(State),
     Caller ! {do_start_ignore, Ref, {error, Error}},
     ignore.
 
@@ -1225,29 +870,6 @@ set_debug(#actor_st{srv=SrvId, actor_id=ActorId}=State) ->
     end,
     put(nkactor_debug, Debug),
     ?ACTOR_DEBUG("debug activated", [], State).
-
-
-%% @private
-set_unload_policy(#actor_st{actor=Actor, config=Config}=State) ->
-    #{metadata:=Meta} = Actor,
-    ExpiresTime = maps:get(expires_time, Meta, <<>>),
-    Policy = case Config of
-        #{permanent:=true} ->
-            permanent;
-        _ when ExpiresTime /= <<>> ->
-            {ok, Expires2} = nklib_date:to_epoch(ExpiresTime, msecs),
-            % self() ! nkactor_check_expire,
-            {expires, Expires2};
-        #{auto_activate:=true} ->
-            permanent;
-        _ ->
-            % A TTL reseated after each operation
-            TTL = maps:get(ttl, Config, ?DEFAULT_TTL),
-            ?ACTOR_DEBUG("TTL is ~p", [TTL], State),
-            {ttl, TTL}
-    end,
-    ?ACTOR_DEBUG("unload policy is ~p", [Policy], State),
-    State#actor_st{unload_policy=Policy}.
 
 
 %% @private
@@ -1279,7 +901,7 @@ do_register(Tries, #actor_st{actor_id=ActorId, srv=SrvId} = State) ->
 do_check_alarms(#actor_st{actor=#{metadata:=Meta}}=State) ->
     case Meta of
         #{in_alarm:=true} ->
-            {ok, State2} = handle(actor_srv_alarms, [], State),
+            {ok, State2} = nkactor_srv_lib:handle(actor_srv_alarms, [], State),
             State2;
         _ ->
             State
@@ -1304,7 +926,7 @@ do_check_expired(#actor_st{unload_policy={expires, Expires}, ttl_timer=Timer}=St
             true;
         Now ->
             Remind = min(3600000, Expires - Now),
-            Ref = erlang:send_after(Remind, self(), nkactor_check_expire),
+            Ref = erlang:send_after(Remind, self(), nkactor_check_expired),
             {false, State#actor_st{ttl_timer=Ref}}
     end;
 
@@ -1320,13 +942,13 @@ do_stop(Reason, State) ->
 %% @private
 do_stop2(Reason, #actor_st{stop_reason=false}=State) ->
     State2 = State#actor_st{stop_reason=Reason},
-    State3 = do_event({stopped, Reason}, State2),
-    case handle(actor_srv_stop, [Reason], State3) of
+    State3 = nkactor_srv_lib:event({stopped, Reason}, State2),
+    case nkactor_srv_lib:handle(actor_srv_stop, [Reason], State3) of
         {ok, State4} ->
-            {_, State5} = do_save(unloaded, State4),
+            {_, State5} = nkactor_srv_lib:save(unloaded, State4),
             State5;
         {delete, State4} ->
-            {_, State5} = do_delete(State4),
+            {_, State5} = nkactor_srv_lib:delete(State4),
             State5
     end;
 
@@ -1335,18 +957,8 @@ do_stop2(_Reason, State) ->
 
 
 %% @private
-do_enabled(Enabled, #actor_st{is_enabled=Enabled}=State) ->
-    State;
-
-do_enabled(Enabled, State) ->
-    State2 = State#actor_st{is_enabled = Enabled},
-    {ok, State3} = handle(actor_srv_enabled, [Enabled], State2),
-    do_event({enabled, Enabled}, State3).
-
-
-%% @private
 do_heartbeat(State) ->
-    case handle(actor_srv_heartbeat, [], State) of
+    case nkactor_srv_lib:handle(actor_srv_heartbeat, [], State) of
         {ok, State2} ->
             noreply(State2);
         {error, Error} ->
@@ -1368,8 +980,8 @@ do_add_alarm(#{class:=Class}=Alarm, #actor_st{actor=Actor}=State) ->
     Alarms3 = [Alarm2 | Alarms2],
     Meta2 = Meta#{in_alarm => true, alarms => Alarms3},
     Actor2 = Actor#{metadata:=Meta2},
-    State2 = do_set_dirty(State#actor_st{actor=Actor2}),
-    do_refresh_ttl(do_event({alarm_fired, Alarm}, State2)).
+    State2 = nkactor_srv_lib:set_dirty(State#actor_st{actor=Actor2}),
+    do_refresh_ttl(nkactor_srv_lib:event({alarm_fired, Alarm}, State2)).
 
 
 %% @private
@@ -1379,8 +991,8 @@ do_clear_all_alarms(#actor_st{actor=Actor}=State) ->
         #{in_alarm:=true} ->
             Meta2 = maps:without([in_alarm, alarms], Meta),
             Actor2 = Actor#{metadata := Meta2},
-            State2 = do_set_dirty(State#actor_st{actor=Actor2}),
-            do_refresh_ttl(do_event(alarms_all_cleared, State2));
+            State2 = nkactor_srv_lib:set_dirty(State#actor_st{actor=Actor2}),
+            do_refresh_ttl(nkactor_srv_lib:event(alarms_all_cleared, State2));
         _ ->
             State
     end.
@@ -1435,7 +1047,7 @@ is_next_status_time(State) ->
                         status_timer = undefined,
                         actor = Actor#{metadata:=Meta2}
                     },
-                    {true, do_set_dirty(State2)};
+                    {true, nkactor_srv_lib:set_dirty(State2)};
                 Step ->
                     Step2 = min(Step, ?MAX_STATUS_TIME),
                     Timer2 = erlang:send_after(Step2, self(), nkactor_check_next_status_time),
@@ -1464,16 +1076,8 @@ noreply(#actor_st{}=State) ->
 
 
 %% @private
-%% Will call the service's functions
-handle(Fun, Args, State) ->
-    #actor_st{srv=SrvId} = State,
-    %lager:error("NKLOG CALL ~p:~p:~p", [SrvId, Fun, Args]),
-    ?CALL_SRV(SrvId, Fun, Args++[State]).
-
-
-%% @private
 safe_handle(Fun, Args, State) ->
-    Reply = handle(Fun, Args, State),
+    Reply = nkactor_srv_lib:handle(Fun, Args, State),
     case Reply of
         {reply, _, #actor_st{}} ->
             Reply;
@@ -1495,7 +1099,7 @@ safe_handle(Fun, Args, State) ->
 
 %% @private
 do_get_user_actor(#actor_st{actor = Actor}=State) ->
-    {ok, UserActor, State2} = handle(actor_srv_get, [Actor], State),
+    {ok, UserActor, State2} = nkactor_srv_lib:handle(actor_srv_get, [Actor], State),
     {UserActor, State2}.
 
 
@@ -1505,7 +1109,7 @@ link_down(Mon, #actor_st{links=Links}=State) ->
         {ok, Link, #link_info{data=Data}=LinkInfo, Links2} ->
             case LinkInfo of
                 #link_info{gen_events=true, data=Data} ->
-                    State2 = do_event({link_down, Data}, State),
+                    State2 = nkactor_srv_lib:event({link_down, Data}, State),
                     {ok, Link, LinkInfo, State2#actor_st{links=Links2}};
                 _ ->
                     {ok, Link, LinkInfo, State#actor_st{links=Links2}}
@@ -1513,74 +1117,6 @@ link_down(Mon, #actor_st{links=Links}=State) ->
         not_found ->
             not_found
     end.
-
-
-%% @private
-op_span_check_create(Op, Config, #actor_st{srv=SrvId, op_span_ids=SpanIds}=ActorSt) ->
-    case Config of
-        #{ot_span_id:=ParentSpan} when ParentSpan /= undefined ->
-            Name = <<"ActorSrv::", (nklib_util:to_binary(Op))/binary>>,
-            SpanId = nkserver_ot:new(Op, SrvId, Name, ParentSpan),
-            ActorSt#actor_st{op_span_ids=[SpanId|SpanIds]};
-        _ ->
-            ActorSt
-    end.
-
-
-%% @private
-op_span_force_create(Op, #actor_st{op_span_ids=SpanIds}=ActorSt) ->
-    ParentSpan = case SpanIds of
-        [SpanId|_] ->
-            SpanId;
-        [] ->
-            {undefined, undefined}
-    end,
-    op_span_check_create(Op, #{ot_span_id=>ParentSpan}, ActorSt).
-
-
-
-
-%% @private
-op_span_finish(#actor_st{op_span_ids=[]}=ActorSt) ->
-    ActorSt;
-
-op_span_finish(#actor_st{op_span_ids=[SpanId|Rest]}=ActorSt) ->
-    nkserver_ot:finish(SpanId),
-    ActorSt#actor_st{op_span_ids=Rest}.
-
-
-
-%% @private
-op_span_log(Log, #actor_st{op_span_ids=[SpanId|_]}) ->
-    nkserver_ot:log(SpanId, Log);
-
-op_span_log(_Log, #actor_st{op_span_ids=[]}) ->
-    ok.
-
-
-%% @private
-op_span_log(Txt, Data, #actor_st{op_span_ids=[SpanId|_]}) ->
-    nkserver_ot:log(SpanId, Txt, Data);
-
-op_span_log(_Txt, _Data, #actor_st{op_span_ids=[]}) ->
-    ok.
-
-
-
-%% @private
-op_span_tags(Tags, #actor_st{op_span_ids=[SpanId|_]}) ->
-    nkserver_ot:tags(SpanId, Tags);
-
-op_span_tags(_Tags, #actor_st{op_span_ids=[]}) ->
-    ok.
-
-
-%% @private
-op_span_error(Error, #actor_st{op_span_ids=[SpanId|_]}) ->
-    nkserver_ot:tag_error(SpanId, Error);
-
-op_span_error(_Error, #actor_st{op_span_ids=[]}) ->
-    ok.
 
 %%%% @private
 %%op_span_update_srv_id(SrvId, #actor_st{op_span_ids=[SpanId|_]}) ->

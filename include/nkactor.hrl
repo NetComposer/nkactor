@@ -42,4 +42,12 @@
 }).
 
 
+-record(link_info, {
+    get_events :: boolean(),
+    gen_events :: boolean(),
+    avoid_unload :: boolean(),
+    data :: term()
+}).
+
+
 -endif.

@@ -72,7 +72,7 @@ status(db_not_defined)              -> "Object database not defined";
 status(delete_too_deep)             -> "DELETE is too deep";
 status(download_server_error)       -> "Download server error";
 status(element_action_unknown)      -> "Unknown element action";
-status({field_unknown, F})          -> {"Unknown field '~s", [F], #{code=>409, data=>#{field=>F}}};
+status({field_unknown, F})          -> {"Unknown field '~s'", [F], #{code=>409, data=>#{field=>F}}};
 status(group_unknown)               -> "Invalid Group";
 status(invalid_content_type)        -> "Invalid Content-Type";
 status({invalid_name, N})           -> {"Invalid name '~s'", [N]};
@@ -84,7 +84,7 @@ status({linked_actor_unknown, Id})  -> {"Linked actor is unknown: ~s", [Id], #{c
 status(multiple_ids)                -> "Multiple matching ids";
 status(missing_auth_header)         -> "Missing authentication header";
 status(namespace_missing)           -> {"Namespace is missing", #{code=>409}};
-status({provider_unknown, P})       -> {"Provider '~s' unknown", [P], #{code=>400, data=>#{provider=>P}}};
+status({provider_unknown, P})       -> {"Provider unknown: '~s'", [P], #{code=>422, data=>#{provider=>P}}};
 status({request_class_unknown, C})  -> {"Request class uknown: '~s'", [C]};
 status({resource_invalid, R})       -> {"Invalid resource (~s)", [R], #{code=>400}};
 status(session_already_present)     -> "Session is already present";
@@ -296,7 +296,7 @@ actor_srv_enabled(Enabled, ActorSt) ->
 
 
 %% @doc Called to send an event from inside an actor's process
-%% from nkactor_srv:do_event/2
+%% from nkactor_srv_lib:event/2
 %% The events are 'erlang' events (tuples usually)
 -spec actor_srv_event(term(), actor_st()) ->
     {ok, actor_st()} | continue().
@@ -312,7 +312,7 @@ actor_srv_event(Event, ActorSt) ->
 
 
 %% @doc Called when an event is sent, for each registered process to the session
-%% from nkactor_srv:do_event_link/2
+%% from nkactor_srv_lib:event_link/2
 %% The events are 'erlang' events (tuples usually)
 -spec actor_srv_link_event(nklib:link(), term(), nkactor_srv:event(), actor_st()) ->
     {ok, actor_st()} | continue().

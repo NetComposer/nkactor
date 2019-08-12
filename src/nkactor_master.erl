@@ -67,7 +67,7 @@
 
 %% @doc Registers a namespace
 -spec register_namespace(id(), nkactor:namespace()) ->
-    {ok, pid()} | {error, nkserver:msg()}.
+    {ok, pid()} | {error, nkserver:status()}.
 
 register_namespace(SrvId, Namespace) when is_binary(Namespace) ->
     nkserver_master:call_leader(SrvId, {nkactor_register_namespace, Namespace, self()}).
@@ -75,7 +75,7 @@ register_namespace(SrvId, Namespace) when is_binary(Namespace) ->
 
 %% @doc Gets a namespace processor
 -spec get_namespace(id(), nkactor:namespace()) ->
-    {ok, pid()} | {error, nkserver:msg()}.
+    {ok, pid()} | {error, nkserver:status()}.
 
 get_namespace(SrvId, Namespace) when is_binary(Namespace) ->
     nkserver_master:call_leader(SrvId, {nkactor_get_namespace, Namespace}).
