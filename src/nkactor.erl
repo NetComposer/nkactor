@@ -28,7 +28,7 @@
 -export([activate_actors/1, search_groups/2, search_resources/3]).
 -export([search_label/3, search_linked_to/3, search_fts/3, search_actors/3, delete_multi/3, delete_old/5]).
 -export([search_active/2, search_expired/2, truncate/1]).
--export([base_namespace/1]).
+-export([base_namespace/1, find_label/3]).
 -export([sync_op/2, sync_op/3, async_op/2]).
 -export([get_services/0, call_services/2]).
 -export_type([actor/0, id/0, uid/0, namespace/0, resource/0, path/0, name/0,
@@ -78,6 +78,7 @@
             is_enabled => boolean(),
             in_alarm => boolean(),
             alarms => [alarm()],
+            events => [event()],
             next_status_time => binary(),
             description => binary(),
             trace_id => binary()
@@ -115,6 +116,14 @@
     }.
 
 
+-type event() :: #{
+    class := binary(),
+    type => binary(),
+    time := binary(),
+    meta => map()
+}.
+
+
 -type alarm() :: #{
     class := binary(),
     code := binary(),
@@ -138,6 +147,8 @@
         activable => boolean(),                         %% Default true
         auto_activate => boolean(),                     %% Periodic automatic activation
         async_save => boolean(),
+        %% Max number of events stored in actor, default 10
+        max_actor_events => integer(),
         create_check_unique => boolean(),               %% Default true
         dont_update_on_disabled => boolean(),           %% Default false
         dont_delete_on_disabled => boolean(),           %% Default false
@@ -234,13 +245,22 @@ find(Id) ->
 -spec is_activated(id()) ->
     {true, pid()} | false.
 
+%%is_activated(Id) ->
+%%    case find(Id) of
+%%        {ok, #actor_id{pid=Pid}} when is_pid(Pid) ->
+%%            {true, Pid};
+%%        _ ->
+%%            false
+%%    end.
+
 is_activated(Id) ->
-    case find(Id) of
-        {ok, #actor_id{pid=Pid}} when is_pid(Pid) ->
+    case nkactor_namespace:find_actor(Id) of
+        {true, _SrvId, #actor_id{pid=Pid}} when is_pid(Pid) ->
             {true, Pid};
         _ ->
             false
     end.
+
 
 
 %% @doc Finds an actors's pid or loads it from storage and activates it
@@ -418,6 +438,8 @@ search_resources(SrvId, Group, Opts) ->
 
 -type search_labels_opts() ::
     #{
+        namespace => namespace(),
+        deep => boolean(),
         op => nkactor_search:filter_op(),
         value => nkactor_search:value(),
         from => pos_integer(),
@@ -428,7 +450,7 @@ search_resources(SrvId, Group, Opts) ->
 
 %% @doc Gets objects having a label
 -spec search_label(nkservice:id(), binary(), search_labels_opts()) ->
-    {ok, [{Value::binary(), #actor_id{}}]} | {error, term()}.
+    {ok, [{Value::binary(), #actor_id{}}]} | {error, actor_not_found|term()}.
 
 search_label(SrvId, Label, Opts) ->
     Label2 = nklib_util:to_binary(Label),
@@ -437,7 +459,7 @@ search_label(SrvId, Label, Opts) ->
             #{
                 field => <<"label:", Label2/binary>>,
                 op => maps:get(op, Opts, exists),
-                value => maps:get(value, Opts, <<>>)
+                value => nklib_util:to_binary(maps:get(value, Opts, <<>>))
             }
         ]
     },
@@ -447,8 +469,19 @@ search_label(SrvId, Label, Opts) ->
         _ ->
             []
     end,
-    Opts2 = Opts#{filter=>Filter, sort=>Sort},
-    case nkactor_backend:search(SrvId, actors_search_labels, Opts2) of
+    Opts2 = maps:with([namespace, deep, from, size], Opts),
+    Opts3 = Opts2#{
+        filter => Filter,
+        sort => Sort,
+        only_uid => true
+    },
+    Opts4 = case maps:is_key(namespace, Opts3) of
+        true ->
+            Opts3;
+        false ->
+            Opts3#{namespace => base_namespace(SrvId)}
+    end,
+    case nkactor_backend:search(SrvId, actors_search_labels, Opts4) of
         {ok, Result, _Meta} ->
             {ok, Result};
         {error, Error} ->
@@ -602,6 +635,38 @@ sync_op(Id, Op, Timeout) ->
 
 async_op(Id, Op) ->
     nkactor_srv:async_op(Id, Op).
+
+
+%% @doc Finds first actor with some label, and stores it in cache
+-spec find_label(nkserver:id(), binary(), binary()) ->
+    {ok, uid(), pid|undefined} | {error, term()}.
+
+find_label(SrvId, Key, Value) ->
+    Key2 = nklib_util:to_binary(Key),
+    case nklib_proc:values({?MODULE, label, SrvId, Key2}) of
+        [{UID, Pid}|_] ->
+            {ok, UID, Pid};
+        [] ->
+            Opts = #{
+                op => eq,
+                value => nklib_util:to_binary(Value),
+                order => desc,
+                deep => true
+                %ot_span_id=>Parent
+            },
+            case search_label(SrvId, Key, Opts) of
+                {ok, [#{uid:=UID}|_]} ->
+                    case is_activated(UID) of
+                        {true, Pid} ->
+                            nklib_proc:put({?MODULE, label, SrvId, Key2}, UID, Pid),
+                            {ok, UID, Pid};
+                        _ ->
+                            {ok, UID, undefined}
+                    end;
+                Other ->
+                    Other
+            end
+    end.
 
 
 %% @doc Calls all defined services for a callback
