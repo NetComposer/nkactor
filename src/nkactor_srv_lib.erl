@@ -24,7 +24,7 @@
 
 -export([event/2, event_link/2, update/3, delete/1, set_next_status_time/2,
          unset_next_status_time/1, get_links/1, add_link/3, remove_link/2,
-         save/2, set_active/2, remove_all_links/1]).
+         save/2, set_active/2, remove_all_links/1, add_actor_event/4, set_dirty/1]).
 -export([handle/3, set_unload_policy/1]).
 -export([op_span_check_create/3, op_span_force_create/2, op_span_finish/1,
          op_span_log/2, op_span_log/3, op_span_tags/2, op_span_error/2]).
@@ -470,6 +470,41 @@ set_unload_policy(#actor_st{actor=Actor, config=Config}=State) ->
     end,
     ?ACTOR_DEBUG("unload policy is ~p", [Policy], State),
     State#actor_st{unload_policy=Policy}.
+
+
+%% @doc
+add_actor_event(Class, Type, Data, ActorSt) ->
+    #actor_st{actor=#{metadata:=Meta}=Actor, config=Config} = ActorSt,
+    Event1 = #{
+        class => nklib_util:to_binary(Class),
+        time => nklib_date:now_3339(usecs)
+    },
+    Event2 = case nklib_util:to_binary(Type) of
+        <<>> ->
+            Event1;
+        Type2 ->
+            Event1#{type => Type2}
+    end,
+    Event3 = case map_size(Data) of
+        0 ->
+            Event2;
+        _ ->
+            Event2#{data => Data}
+    end,
+    Events1 = maps:get(events, Meta, []),
+    MaxEvents = maps:get(max_actor_events, Config, 10),
+    Events2 = case length(Events1) >= MaxEvents of
+        true ->
+            lists:sublist(Events1, MaxEvents-1);
+        false ->
+            Events1
+    end,
+    Events3 = [Event3|Events2],
+    Meta2 = Meta#{events => Events3},
+    Actor2 = Actor#{metadata:=Meta2},
+    % We don't call set_dirty, the actor is no really modified by user,
+    % and many actors can insert a 'created' event, and would start with generation=1, etc.
+    ActorSt#actor_st{actor=Actor2, is_dirty=true}.
 
 
 

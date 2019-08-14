@@ -92,6 +92,7 @@ meta_syntax() ->
         fts => #{'__map_binary' => binary},
         in_alarm => boolean,
         alarms => {list, alarm_syntax()},
+        events => {list, event_syntax()},
         next_status_time => date_3339,
         description => binary,
         created_by => binary,
@@ -99,7 +100,7 @@ meta_syntax() ->
         trace_id => integer
     }.
 
-
+%% @private
 alarm_syntax() ->
     #{
         class => binary,
@@ -109,6 +110,17 @@ alarm_syntax() ->
         meta => map,
         '__mandatory' => [class, code]
     }.
+
+%% @private
+event_syntax() ->
+    #{
+        class => binary,
+        time => date_3339,
+        type => binary,
+        data => map,
+        '__mandatory' => [class, time]
+    }.
+
 
 
 %% @doc

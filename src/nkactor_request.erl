@@ -268,7 +268,6 @@ do_request(Req) ->
         end,
         nkserver_ot:log(?REQ_SPAN, <<"calling specific processing">>),
         %lager:error("NKLOG REQ ~p", [Req]),
-        lager:notice("NKLOG REQ ~p ~p ~p", [Verb, Res, SubRes]),
         case nkactor_actor:request(SrvId, ActorId, Req) of
             continue when SubRes == <<>> ->
                 nkserver_ot:log(?REQ_SPAN, <<"processing default">>),
