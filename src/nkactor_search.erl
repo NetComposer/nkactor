@@ -589,13 +589,16 @@ expand_op(Value) ->
                 lte -> lte;
                 prefix -> prefix;
                 values -> values;
-                _ -> throw({error, {field_op, Op}})
+                _ -> none
             end,
-            Value3 = case Op2 of
-                values -> binary:split(Value2, <<"|">>, [global]);
-                _ -> Value2
-            end,
-            {Op2, Value3};
+            case Op2 of
+                values ->
+                    {values, binary:split(Value2, <<"|">>, [global])};
+                none ->
+                    {eq, Value};
+                _ ->
+                    {Op2, Value2}
+            end;
         [<<>>] ->
             {exists, true};
         [Value2] ->
