@@ -21,7 +21,7 @@
 %% @doc Actor Syntax
 -module(nkactor_syntax).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
--export([parse_actor/1, parse_actor/2, parse_request/1]).
+-export([name/0, parse_actor/1, parse_actor/2, parse_request/1]).
 -export([actor_fields_filter/0, actor_fields_sort/0, actor_fields_trans/0,
          actor_fields_type/0, actor_fields_static/0]).
 -export([alarm_syntax/0]).
@@ -59,8 +59,8 @@ actor_syntax(Base) ->
     Base#{
         group => binary,
         resource => binary,
-        name => binary,
-        namespace => binary,
+        name => name(),
+        namespace => binary, %name(),
         uid => binary,
         data => map,
         metadata => meta_syntax(),
@@ -70,6 +70,10 @@ actor_syntax(Base) ->
         }
     }.
 
+
+%% @doc
+name() ->
+    {is_normalized, ?NORMALIZE_OPTS}.
 
 
 %% @private

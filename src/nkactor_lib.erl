@@ -396,6 +396,8 @@ add_creation_fields(SrvId, Actor) ->
     Name2 = case normalized_name(to_bin(Name1)) of
         <<>> ->
             make_name(UID);
+        <<"undefined">> ->
+            make_name(UID);
         NormName ->
             NormName
     end,
@@ -468,7 +470,7 @@ make_name(Id) ->
 
 %% @private
 normalized_name(Name) ->
-    nklib_parse:normalize(Name, #{space=>$_, allowed=>[$+, $-, $., $_]}).
+    nklib_parse:normalize(Name, ?NORMALIZE_OPTS).
 
 
 %% @private
