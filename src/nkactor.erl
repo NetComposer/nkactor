@@ -28,7 +28,7 @@
 -export([activate_actors/1, search_groups/2, search_resources/3]).
 -export([search_label/3, search_linked_to/3, search_fts/3, search_actors/3, delete_multi/3, delete_old/5]).
 -export([search_active/2, search_expired/2, truncate/1]).
--export([base_namespace/1, find_label/3]).
+-export([base_namespace/1, find_label/4, find_linked/3]).
 -export([sync_op/2, sync_op/3, async_op/2]).
 -export([get_services/0, call_services/2]).
 -export_type([actor/0, id/0, uid/0, namespace/0, resource/0, path/0, name/0,
@@ -450,7 +450,7 @@ search_resources(SrvId, Group, Opts) ->
 
 %% @doc Gets objects having a label
 -spec search_label(nkservice:id(), binary(), search_labels_opts()) ->
-    {ok, [{Value::binary(), #actor_id{}}]} | {error, actor_not_found|term()}.
+    {ok, [uid()]} | {error, actor_not_found|term()}.
 
 search_label(SrvId, Label, Opts) ->
     Label2 = nklib_util:to_binary(Label),
@@ -483,7 +483,7 @@ search_label(SrvId, Label, Opts) ->
     end,
     case nkactor_backend:search(SrvId, actors_search_labels, Opts4) of
         {ok, Result, _Meta} ->
-            {ok, Result};
+            {ok, [UID || #{uid:=UID}<-Result]};
         {error, Error} ->
             {error, Error}
     end.
@@ -638,10 +638,10 @@ async_op(Id, Op) ->
 
 
 %% @doc Finds first actor with some label, and stores it in cache
--spec find_label(nkserver:id(), binary(), binary()) ->
-    {ok, uid(), pid|undefined} | {error, term()}.
+-spec find_label(nkserver:id(), namespace(), binary(), binary()) ->
+    {ok, uid(), pid()|undefined} | {error, term()}.
 
-find_label(SrvId, Key, Value) ->
+find_label(SrvId, Namespace, Key, Value) ->
     Key2 = nklib_util:to_binary(Key),
     case nklib_proc:values({?MODULE, label, SrvId, Key2}) of
         [{UID, Pid}|_] ->
@@ -651,11 +651,12 @@ find_label(SrvId, Key, Value) ->
                 op => eq,
                 value => nklib_util:to_binary(Value),
                 order => desc,
+                namespace => Namespace,
                 deep => true
                 %ot_span_id=>Parent
             },
             case search_label(SrvId, Key, Opts) of
-                {ok, [#{uid:=UID}|_]} ->
+                {ok, [UID|_]} ->
                     case is_activated(UID) of
                         {true, Pid} ->
                             nklib_proc:put({?MODULE, label, SrvId, Key2}, UID, Pid),
@@ -663,10 +664,46 @@ find_label(SrvId, Key, Value) ->
                         _ ->
                             {ok, UID, undefined}
                     end;
-                Other ->
-                    Other
+                {ok, []} ->
+                    {error, {label_not_found, Key}};
+                {error, Error} ->
+                    {error, Error}
             end
     end.
+
+
+%% @doc Finds first actor linked to another, and stores it in cache
+-spec find_linked(nkserver:id(), binary(), uid()) ->
+    {ok, uid(), pid()|undefined} | {error, term()}.
+
+find_linked(SrvId, Type, UID) ->
+    Type2 = nklib_util:to_binary(Type),
+    case nklib_proc:values({?MODULE, linked, SrvId, Type2, UID}) of
+        [{UID2, Pid}|_] ->
+            {ok, UID2, Pid};
+        [] ->
+            Opts = #{
+                link_type => Type2,
+                deep => true,
+                size => 1
+            },
+            case search_linked_to(SrvId, UID, Opts) of
+                {ok, [{UID2, _Type}|_]} ->
+                    case is_activated(UID2) of
+                        {true, Pid} ->
+                            nklib_proc:put({?MODULE, linked, SrvId, Type2, UID}, UID2, Pid),
+                            {ok, UID2, Pid};
+                        _ ->
+                            {ok, UID2, undefined}
+                    end;
+                {ok, []} ->
+                    {error, actor_not_found};
+                {error, Error} ->
+                    {error, Error}
+            end
+    end.
+
+
 
 
 %% @doc Calls all defined services for a callback
