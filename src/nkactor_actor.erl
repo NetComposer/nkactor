@@ -52,7 +52,11 @@
 -callback config() -> config().
 
 
-%% @doc Called to validate an actor (only 'data' is presented)
+%% @doc Called to validate an actor, on create and on update
+%% Do not add labels, links or anything on metadata, do it on
+%% init/2 or update/2
+%% Use request to see the verb (get, create, update, patch)
+
 -callback parse(map(), request()) ->
     continue | {ok, map()} | {syntax, nkactor:vsn(), nklib_syntax:syntax()} | {error, term()}.
 
@@ -65,6 +69,8 @@
 
 
 %% @doc Called when a new actor starts
+%% For create, actor is saved after this call (is_dirty does not matter)
+%% For start, it is saved only if is_dirty
 -callback init(create|start, actor_st()) ->
     {ok, actor_st()} | {error, Reason::term()}.
 
@@ -73,13 +79,15 @@
 %% NOTICE: the received actor is the actor provided by the user.
 %% It is valid, but any previous existing data or metadata is not present, and must
 %% be retrieved from actor_st.
-%% For example, if we added something to status or links that are not generated
-%% again by parse/2, the will be gone and must be inserted again here
+%% For example, if we added something to status or links
+%% the will be gone and must be inserted again here
+%% @see nkactor_srv_lib:copy_status_fields/3
 -callback update(nkactor:actor(), actor_st()) ->
-    {ok, nkactor:actor(), actor_st()} | {error, nkserver:status(), actor_st()}.
+    {ok, nkactor:actor(), actor_st()} | {ok, actor_st()} |
+    {error, nkserver:status(), actor_st()}.
 
 
-%% @doc Called when
+%% @doc Called when the actor is about to be deleted
 -callback delete(actor_st()) ->
     {ok, actor_st()} | {error, nkserver:status(), actor_st()}.
 
@@ -129,10 +137,11 @@
 
 %% @doc Called when about to save
 -callback save(actor(), actor_st()) ->
-    {ok, actor(), actor_st()} | {ignore, actor_st()} | continue().
+    {ok, actor(), actor_st()} | {ok, actor_st()} |
+    {ignore, actor_st()} | continue().
 
 
-%% @doc Called when
+%% @doc Called when a requests asks for the actor
 -callback get(actor(), actor_st()) ->
     {ok, actor(), actor_st()} | {error, nkactor_msg:msg(), actor_st()} | continue().
 

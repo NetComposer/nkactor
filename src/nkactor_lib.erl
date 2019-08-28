@@ -32,7 +32,7 @@
 -export([get_linked_type/2, get_linked_uids/2, add_link/3, add_checked_link/4, add_checked_link/5,
          rm_links/3, rm_links/2, link_type/2]).
 -export([add_creation_fields/2, update/2, check_actor_links/1, check_meta_links/1, check_links/1]).
--export([add_labels/4, add_label/3]).
+-export([add_labels/4, add_label/3, rm_label_re/2]).
 -export([actor_id_to_path/1]).
 -export([parse/2, parse/3, parse_actor_data/3, parse_request_params/2]).
 -export([make_rev_path/1, make_rev_parts/1]).
@@ -257,6 +257,13 @@ add_label(Key, Value, #{metadata:=Meta}=Actor) ->
     Actor#{metadata:=Meta2}.
 
 
+%% @doc Remove all labels with a pattern
+rm_label_re(Bin, #{metadata:=Meta}=Actor) ->
+    Labels = maps:filter(
+        fun(Key, _V) -> binary:match(Key, Bin)==nomatch end,
+        maps:get(labels, Meta, #{})),
+    Actor#{metadata:=Meta#{labels => Labels}}.
+
 
 %% @private Generic parse with standard errors
 -spec parse(map(), nklib_syntax:syntax()) ->
@@ -371,8 +378,7 @@ do_check_links([{Id, Type}|Rest], Acc) ->
             true = is_binary(UID),
             do_check_links(Rest, [{UID, Type}|Acc]);
         {error, actor_not_found} ->
-            lager:error("NKLOG LINKED NOT FOUND ~p", [Id]),
-            {error, linked_actor_unknown};
+            {error, {linked_actor_unknown, Id}};
         {error, Error} ->
             {error, Error}
     end.

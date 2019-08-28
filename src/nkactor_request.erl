@@ -309,7 +309,11 @@ default_request(create, ActorId, Config, Req) ->
 
 default_request(update, #actor_id{name=Name}=ActorId, Config, Req) when is_binary(Name) ->
     check_version(Config, Req),
-    update(ActorId, Config, Req);
+    update(ActorId, false, Config, Req);
+
+default_request(patch, #actor_id{name=Name}=ActorId, Config, Req) when is_binary(Name) ->
+    check_version(Config, Req),
+    update(ActorId, true, Config, Req);
 
 default_request(delete, #actor_id{name=Name}=ActorId, Config, Req) when is_binary(Name) ->
     delete(ActorId, Config, Req);
@@ -415,7 +419,7 @@ create(ActorId, Config, Req) ->
 
 
 %% @doc
-update(ActorId, Config, Req) ->
+update(ActorId, Patch, Config, Req) ->
     ParamsSyntax = #{
     },
     case parse_params(Req, ParamsSyntax) of
@@ -426,8 +430,14 @@ update(ActorId, Config, Req) ->
                         {ok, Actor2} ->
                             Opts1 = set_activate_opts(Config, Params),
                             Opts2 = Opts1#{get_actor=>true},
+                            Opts3 = case Patch of
+                                true ->
+                                    Opts2#{do_patch=>true};
+                                false ->
+                                    Opts2
+                            end,
                             ?REQ_DEBUG("Updating actor ~p", [Actor2]),
-                            case nkactor:update(ActorId, Actor2, Opts2) of
+                            case nkactor:update(ActorId, Actor2, Opts3) of
                                 {ok, Actor3} ->
                                     {ok, Actor3};
                                 {error, actor_not_found} ->

@@ -262,6 +262,10 @@ actor_srv_update(Actor, ActorSt) ->
     case ?CALL_SRV(SrvId, nkactor_callback, [update, Group, Res, [Actor, ActorSt]]) of
         continue ->
             {ok, Actor, ActorSt};
+        {ok, Actor2, ActorSt2} ->
+            {ok, Actor2, ActorSt2};
+        {ok, #actor_st{actor=Actor2}=ActorSt2} ->
+            {ok, Actor2, ActorSt2};
         Other ->
             Other
     end.
@@ -334,6 +338,10 @@ actor_srv_link_event(Link, LinkData, Event, ActorSt) ->
 actor_srv_save(Actor, ActorSt) ->
     #actor_st{srv=SrvId, actor_id=#actor_id{group=Group, resource=Res}} = ActorSt,
     case ?CALL_SRV(SrvId, nkactor_callback, [save, Group, Res, [Actor, ActorSt]]) of
+        {ok, Actor2, ActorSt2} ->
+            {ok, Actor2, ActorSt2};
+        {ok, #actor_st{actor=Actor2}=ActorSt2} ->
+            {ok, Actor2, ActorSt2};
         continue ->
             {ok, Actor, ActorSt};
         Other ->

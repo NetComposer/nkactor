@@ -24,7 +24,8 @@
 
 -export([event/2, event_link/2, update/3, delete/1, set_next_status_time/2,
          unset_next_status_time/1, get_links/1, add_link/3, remove_link/2,
-         save/2, set_active/2, remove_all_links/1, add_actor_event/4, set_dirty/1]).
+         save/2, set_active/2, remove_all_links/1, add_actor_event/4, set_dirty/1,
+         copy_status_fields/3]).
 -export([handle/3, set_unload_policy/1]).
 -export([op_span_check_create/3, op_span_force_create/2, op_span_finish/1,
          op_span_log/2, op_span_log/3, op_span_tags/2, op_span_error/2]).
@@ -150,24 +151,30 @@ update(UpdActor, Opts, #actor_st{actor_id = ActorId, actor = Actor} = State) ->
             Name -> ok;
             _ -> throw({updated_invalid_field, name})
         end,
-        DataFieldsList = maps:get(data_fields, Opts, all),
         Data = maps:get(data, Actor, #{}),
-        Meta = maps:get(metadata, Actor),
-        DataFields = case DataFieldsList of
-            all ->
-                Data;
-            _ ->
-                maps:with(DataFieldsList, Data)
+        UpdData1 = maps:get(data, UpdActor, #{}),
+%%        DataFields = maps:get(data_fields, Opts, all),
+%%        UpdData2 = case DataFields of
+%%            all ->
+%%                UpdData1;
+%%            _ ->
+%%                maps:with(DataFields, UpdData1)
+%%        end,
+        NewData = case maps:get(do_patch, Opts, false) of
+            false ->
+                UpdData1;
+            true ->
+%%                Data2 = case DataFields of
+%%                    all ->
+%%                        Data1;
+%%                    _ ->
+%%                        maps:with(DataFields, Data1)
+%%                end,
+                nklib_util:map_merge(UpdData1, Data)
         end,
-        UpdData = maps:get(data, UpdActor, #{}),
-        UpdDataFields = case DataFieldsList of
-            all ->
-                UpdData;
-            _ ->
-                maps:with(DataFieldsList, UpdData)
-        end,
-        IsDataUpdated = UpdDataFields /= DataFields,
+        IsDataUpdated = NewData /= Data,
         UpdMeta = maps:get(metadata, UpdActor),
+        Meta = maps:get(metadata, Actor),
         CT = maps:get(creation_time, Meta),
         case maps:get(creation_time, UpdMeta, CT) of
             CT -> ok;
@@ -238,9 +245,8 @@ update(UpdActor, Opts, #actor_st{actor_id = ActorId, actor = Actor} = State) ->
                     false ->
                         NewMeta#{is_enabled=>false}
                 end,
-                NewData2 = maps:merge(Data, UpdDataFields),
-                NewActor1 = Actor#{data=>NewData2, metadata:=NewMeta2},
-               case nkactor_lib:update_check_fields(NewActor1, State2) of
+                NewActor1 = Actor#{data=>NewData, metadata:=NewMeta2},
+                case nkactor_lib:update_check_fields(NewActor1, State2) of
                     ok ->
                         op_span_log(<<"calling actor_srv_update">>, State2),
                         case handle(actor_srv_update, [NewActor1], State2) of
@@ -282,6 +288,16 @@ update(UpdActor, Opts, #actor_st{actor_id = ActorId, actor = Actor} = State) ->
         throw:Throw ->
             {error, Throw, State}
     end.
+
+%% @doc Copy fields from 'data.status' from old actor to new
+copy_status_fields(Actor, Fields, #actor_st{actor=OldActor}) ->
+    Data = maps:get(data, Actor, #{}),
+    Status = maps:get(status, Data, #{}),
+    OldData = maps:get(data, OldActor, #{}),
+    OldStatus = maps:get(status, OldData, #{}),
+    OldStatus2 = maps:with(Fields, OldStatus),
+    Status2 = maps:merge(Status, OldStatus2),
+    Actor#{data=>Data#{status=>Status2}}.
 
 
 %% @doc
@@ -391,6 +407,7 @@ save(Reason, SaveOpts, #actor_st{is_dirty = true} = State) ->
                     State5 = op_span_finish(State4),
                     {ok, State5#actor_st{saved_metadata = NewMeta, is_dirty = false}};
                 _ ->
+
                     case ?CALL_SRV(SrvId, SaveFun, [SrvId, SaveActor, SaveOpts2]) of
                         {ok, DbMeta} ->
                             op_span_log(<<"actor saved">>, State4),

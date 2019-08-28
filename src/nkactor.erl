@@ -206,7 +206,8 @@
 
 -type update_opts() ::
     #{
-        data_fields => [binary()],          % If used, fields not defined here will not be updated
+        %data_fields => [binary()],          % If used, fields not defined here will not be updated
+        do_patch => boolean(),               % Default false, merges data instead of replace
         request => nkactor_request:request(),
         get_actor => boolean()
     }.
