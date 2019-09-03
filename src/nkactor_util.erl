@@ -50,15 +50,20 @@ fold_actors(SrvId, Group, Res, Namespace, Deep, FoldFun, FoldAcc) ->
         #{
             namespace => Namespace,
             deep => Deep,
-            size => 2,
+            size => 100,
             get_data => true,
             get_metadata => true,
             filter => #{
-                'and' => [
+                'and' => lists:flatten([
                     #{field=>uid, op=>gt, value=>Start},
                     #{field=>group, value=>Group},
-                    #{field=>resource, value=>Res}
-                ]
+                    case Res of
+                        any ->
+                            [];
+                        _ ->
+                            #{field=>resource, value=>Res}
+                    end
+                ])
             },
             sort => [#{field=><<"uid">>, order=>asc}]
         }
