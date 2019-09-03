@@ -25,7 +25,7 @@
 -export([event/2, event_link/2, update/3, delete/1, set_next_status_time/2,
          unset_next_status_time/1, get_links/1, add_link/3, remove_link/2,
          save/2, set_active/2, remove_all_links/1, add_actor_event/4, set_dirty/1,
-         copy_status/2, copy_status_fields/3]).
+         update_status/2, update_status/3]).
 -export([handle/3, set_unload_policy/1]).
 -export([op_span_check_create/3, op_span_force_create/2, op_span_finish/1,
          op_span_log/2, op_span_log/3, op_span_tags/2, op_span_error/2]).
@@ -290,21 +290,21 @@ update(UpdActor, Opts, #actor_st{actor_id = ActorId, actor = Actor} = State) ->
     end.
 
 %% @doc Copy fields from 'data.status' from old actor to new
-copy_status(Actor, #actor_st{actor=OldActor}) ->
+update_status(Actor, #actor_st{actor=OldActor}) ->
     Data = maps:get(data, Actor, #{}),
     OldData = maps:get(data, OldActor, #{}),
     Status = maps:get(status, OldData, #{}),
     Actor#{data=>Data#{status=>Status}}.
 
 
-%% @doc Copy fields from 'data.status' from old actor to new
-copy_status_fields(Actor, Fields, #actor_st{actor=OldActor}) ->
+%% @doc Allow some fields on update status, copy rest from old
+update_status(Actor, Fields, #actor_st{actor=OldActor}) ->
     Data = maps:get(data, Actor, #{}),
-    Status = maps:get(status, Data, #{}),
+    UserStatus1 = maps:get(status, Data, #{}),
+    UserStatus2 = maps:with(Fields, UserStatus1),
     OldData = maps:get(data, OldActor, #{}),
     OldStatus = maps:get(status, OldData, #{}),
-    OldStatus2 = maps:with(Fields, OldStatus),
-    Status2 = maps:merge(Status, OldStatus2),
+    Status2 = maps:merge(OldStatus, UserStatus2),
     Actor#{data=>Data#{status=>Status2}}.
 
 
