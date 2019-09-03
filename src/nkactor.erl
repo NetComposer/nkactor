@@ -639,18 +639,20 @@ async_op(Id, Op) ->
 
 
 %% @doc Finds first actor with some label, and stores it in cache
+%% Only UID will be populated, along with pid if available
 -spec find_label(nkserver:id(), namespace(), binary(), binary()) ->
-    {ok, uid(), pid()|undefined} | {error, term()}.
+    {ok, #actor_id{}} | {error, term()}.
 
 find_label(SrvId, Namespace, Key, Value) ->
     Key2 = nklib_util:to_binary(Key),
-    case nklib_proc:values({?MODULE, label, SrvId, Key2}) of
+    Value2 = nklib_util:to_binary(Value),
+    case nklib_proc:values({?MODULE, label, SrvId, Key2, Value2}) of
         [{UID, Pid}|_] ->
-            {ok, UID, Pid};
+            {ok, #actor_id{uid=UID, pid=Pid}};
         [] ->
             Opts = #{
                 op => eq,
-                value => nklib_util:to_binary(Value),
+                value => Value2,
                 order => desc,
                 namespace => Namespace,
                 deep => true
@@ -660,10 +662,10 @@ find_label(SrvId, Namespace, Key, Value) ->
                 {ok, [UID|_]} ->
                     case is_activated(UID) of
                         {true, Pid} ->
-                            nklib_proc:put({?MODULE, label, SrvId, Key2}, UID, Pid),
-                            {ok, UID, Pid};
+                            nklib_proc:put({?MODULE, label, SrvId, Key2, Value2}, UID, Pid),
+                            {ok, #actor_id{uid=UID, pid=Pid}};
                         _ ->
-                            {ok, UID, undefined}
+                            {ok, #actor_id{uid=UID}}
                     end;
                 {ok, []} ->
                     {error, {label_not_found, Key}};
