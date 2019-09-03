@@ -27,8 +27,8 @@
 -include("nkactor_debug.hrl").
 -include_lib("nkserver/include/nkserver.hrl").
 
+-export([fold_actors/7, activate_actors/1]).
 -export([pre_create/2, pre_update/4]).
--export([activate_actors/1]).
 
 -define(ACTIVATE_SPAN, auto_activate).
 
@@ -36,6 +36,53 @@
 %% ===================================================================
 %% Public
 %% ===================================================================
+
+
+
+%% @doc Performs an query on database for actors marked as 'active' and tries
+%% to active them if not already activated
+-spec fold_actors(nkserver:id(), nkactor:group(), nkactor:resource(), nkactor:namespace(),
+                  boolean(), function(), term()) ->
+    {ok, [#actor_id{}]} | {error, term()}.
+
+fold_actors(SrvId, Group, Res, Namespace, Deep, FoldFun, FoldAcc) ->
+    Search = fun(Start) ->
+        #{
+            namespace => Namespace,
+            deep => Deep,
+            size => 2,
+            get_data => true,
+            get_metadata => true,
+            filter => #{
+                'and' => [
+                    #{field=>uid, op=>gt, value=>Start},
+                    #{field=>group, value=>Group},
+                    #{field=>resource, value=>Res}
+                ]
+            },
+            sort => [#{field=><<"uid">>, order=>asc}]
+        }
+    end,
+    fold_actors(SrvId, <<>>, Search, FoldFun, FoldAcc).
+
+
+%% @private
+fold_actors(SrvId, NextUID, SearchFun, FoldFun, FoldAcc) ->
+    Search = SearchFun(NextUID),
+    case nkactor:search_actors(SrvId, Search, #{}) of
+        {ok, [], _} ->
+            FoldAcc;
+        {ok, Actors, _} ->
+            FoldAcc2 = lists:foldl(
+                fun(Actor, Acc) -> FoldFun(Actor, Acc) end,
+                FoldAcc,
+                Actors),
+            [#{uid:=LastUID}|_] = lists:reverse(Actors),
+            fold_actors(SrvId, LastUID, SearchFun, FoldFun, FoldAcc2);
+        {error, Error} ->
+            {error, Error}
+    end.
+
 
 
 %% @doc Performs an query on database for actors marked as 'active' and tries
