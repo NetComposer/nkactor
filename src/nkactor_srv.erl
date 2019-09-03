@@ -246,7 +246,7 @@ sync_op(#actor_id{pid=Pid}=ActorId, Op, Timeout, Tries) when is_pid(Pid) ->
         {error, process_not_found} ->
             ActorId2 = ActorId#actor_id{pid = undefined},
             timer:sleep(250),
-            lager:notice("NkACTOR SynOP failed (~p) (~p), retrying...", [ActorId2]),
+            lager:notice("NkACTOR SynOP failed (~p), retrying...", [ActorId2]),
             sync_op(ActorId2, Op, Timeout, Tries - 1);
         Other ->
             Other
