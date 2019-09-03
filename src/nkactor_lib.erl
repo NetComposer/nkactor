@@ -30,7 +30,7 @@
 -export([actor_to_actor_id/1, id_to_actor_id/1]).
 -export([send_external_event/3]).
 -export([get_linked_type/2, get_linked_uids/2, add_link/3, add_checked_link/4, add_checked_link/5,
-         rm_links/3, rm_links/2, link_type/2]).
+         rm_link/2, rm_links/3, rm_links/2, link_type/2]).
 -export([add_creation_fields/2, update/2, check_actor_links/1, check_meta_links/1, check_links/1]).
 -export([add_labels/4, add_label/3, rm_label_re/2]).
 -export([actor_id_to_path/1]).
@@ -40,7 +40,6 @@
 -export([add_fts/3, fts_normalize_word/1, fts_normalize_multi/1]).
 -export([update_check_fields/2]).
 -export([maybe_set_ttl/2, set_ttl/2]).
-
 -type actor() :: nkactor:actor().
 
 %% ===================================================================
@@ -218,6 +217,13 @@ link_type(Group, Resource) ->
     <<"io.netk.", Group/binary, $., Resource/binary>>.
 
 
+%% @doc Removes a link
+rm_link(#{metadata:=Meta}=Actor, Target) when is_binary(Target) ->
+    Links1 = maps:get(links, Meta, #{}),
+    Links2 = maps:remove(Target, Links1),
+    Actor#{metadata:=Meta#{links=>Links2}}.
+
+
 %% @doc Removes all links for a type
 rm_links(Group, Resource, #{}=Actor) ->
     LinkType = link_type(Group, Resource),
@@ -315,8 +321,8 @@ parse_actor_data(#{data:=Data, metadata:=Meta}=Actor, Vsn, Syntax) ->
 
 parse_request_params(Req, Syntax) ->
     Params = maps:get(params, Req, #{}),
-    case nklib_syntax:parse(Params, Syntax) of
-        {ok, Data2, []} ->
+    case nklib_syntax:parse_all(Params, Syntax) of
+        {ok, Data2} ->
             {ok, Data2};
         {error, {syntax_error, Field}} ->
             {error, {parameter_invalid, Field}};
@@ -458,7 +464,9 @@ make_rev_parts(Namespace) ->
 
 %% @private
 make_uid(Res) ->
-    UUID = nklib_util:luid(),<<(to_bin(Res))/binary, $-, UUID/binary>>.
+    Time = nklib_date:now_hex(msecs),   % 12 bytes
+    <<UUID:15/binary, _/binary>> = nklib_util:luid(),
+    <<(to_bin(Res))/binary, $-, Time/binary, UUID/binary>>.
 
 
 %% @private
