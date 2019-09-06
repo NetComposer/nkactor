@@ -164,25 +164,30 @@ pre_create(Actor, Opts) ->
                         verb => create,
                         srv => SrvId
                     },
-                    Actor3 = nkactor_lib:add_creation_fields(SrvId, Actor2),
-                    Actor4 = case Opts of
-                        #{forced_uid:=UID} ->
-                            Actor3#{uid := UID};
-                        _ ->
-                            Actor3
-                    end,
-                    case nkactor_actor:parse(SrvId, Actor4, Req2) of
-                        {ok, Actor5} ->
-                            case nkactor_lib:check_actor_links(Actor5) of
-                                {ok, Actor6} ->
-                                    nkserver_ot:log(SpanId, <<"actor parsed">>),
-                                    {ok, SrvId, Actor6};
+                    case nkactor_lib:add_creation_fields(SrvId, Actor2) of
+                        {ok, Actor3} ->
+                            Actor4 = case Opts of
+                                #{forced_uid:=UID} ->
+                                    Actor3#{uid := UID};
+                                _ ->
+                                    Actor3
+                            end,
+                            case nkactor_actor:parse(SrvId, Actor4, Req2) of
+                                {ok, Actor5} ->
+                                    case nkactor_lib:check_actor_links(Actor5) of
+                                        {ok, Actor6} ->
+                                            nkserver_ot:log(SpanId, <<"actor parsed">>),
+                                            {ok, SrvId, Actor6};
+                                        {error, Error} ->
+                                            nkserver_ot:log(SpanId, <<"error checking links: ~p">>, [Error]),
+                                            {error, Error}
+                                    end;
                                 {error, Error} ->
-                                    nkserver_ot:log(SpanId, <<"error checking links: ~p">>, [Error]),
+                                    nkserver_ot:log(SpanId, <<"error parsing specific actor: ~p">>, [Error]),
                                     {error, Error}
                             end;
                         {error, Error} ->
-                            nkserver_ot:log(SpanId, <<"error parsing specific actor: ~p">>, [Error]),
+                            nkserver_ot:log(SpanId, <<"error creating initial data: ~p">>, [Error]),
                             {error, Error}
                     end;
                 {error, Error} ->

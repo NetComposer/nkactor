@@ -399,30 +399,34 @@ do_check_links([{Id, Type}|Rest], Acc) ->
 add_creation_fields(SrvId, Actor) ->
     Group = maps:get(group, Actor),
     Res = maps:get(resource, Actor),
-    Module = nkactor_actor:get_module(SrvId, Group, Res),
-    #{camel:=Camel} = nkactor_actor:get_config(SrvId, Module),
-    Meta = maps:get(metadata, Actor, #{}),
-    UID = make_uid(Res),
-    Name1 = maps:get(name, Actor, <<>>),
-    %% Add Name if not present
-    Name2 = case normalized_name(to_bin(Name1)) of
-        <<>> ->
-            make_name(UID);
-        <<"undefined">> ->
-            make_name(UID);
-        NormName ->
-            NormName
-    end,
-    Time = nklib_date:now_3339(usecs),
-    Actor2 = Actor#{
-        name => Name2,
-        uid => UID,
-        metadata => Meta#{
-            kind => Camel,
-            creation_time => Time
-        }
-    },
-    update(Actor2, Time).
+    case nkactor_actor:get_module(SrvId, Group, Res) of
+        undefined ->
+            {error, {resource_invalid, <<Group/binary, $/, Res/binary>>}};
+        Module ->
+            #{camel:=Camel} = nkactor_actor:get_config(SrvId, Module),
+            Meta = maps:get(metadata, Actor, #{}),
+            UID = make_uid(Res),
+            Name1 = maps:get(name, Actor, <<>>),
+            %% Add Name if not present
+            Name2 = case normalized_name(to_bin(Name1)) of
+                <<>> ->
+                    make_name(UID);
+                <<"undefined">> ->
+                    make_name(UID);
+                NormName ->
+                    NormName
+            end,
+            Time = nklib_date:now_3339(usecs),
+            Actor2 = Actor#{
+                name => Name2,
+                uid => UID,
+                metadata => Meta#{
+                    kind => Camel,
+                    creation_time => Time
+                }
+            },
+            {ok, update(Actor2, Time)}
+    end.
 
 
 %% @private

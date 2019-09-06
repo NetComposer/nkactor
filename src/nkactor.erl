@@ -26,7 +26,7 @@
 -export([find/1, activate/1, is_activated/1, update/3, create/2, delete/1, delete/2]).
 -export([get_actor/1, get_actor/2, get_path/1, is_enabled/1, enable/2, stop/1, stop/2]).
 -export([activate_actors/1, search_groups/2, search_resources/3]).
--export([search_label/3, search_linked_to/3, search_fts/3, search_actors/3, delete_multi/3, delete_old/5]).
+-export([search_label/3, search_label_range/4, search_linked_to/3, search_fts/3, search_actors/3, delete_multi/3, delete_old/5]).
 -export([search_active/2, search_expired/2, truncate/1]).
 -export([base_namespace/1, find_label/4, find_linked/3]).
 -export([sync_op/2, sync_op/3, async_op/2]).
@@ -445,13 +445,14 @@ search_resources(SrvId, Group, Opts) ->
         value => nkactor_search:value(),
         from => pos_integer(),
         size => pos_integer(),
+        only_uid => boolean(),      % If true, Key and Value will be empty
         order => asc | desc
     } | search_opts().
 
 
 %% @doc Gets objects having a label
 -spec search_label(nkservice:id(), binary(), search_labels_opts()) ->
-    {ok, [uid()]} | {error, actor_not_found|term()}.
+    {ok, [{uid(), Key::binary(), Value::binary()}]} | {error, actor_not_found|term()}.
 
 search_label(SrvId, Label, Opts) ->
     Label2 = nklib_util:to_binary(Label),
@@ -474,7 +475,7 @@ search_label(SrvId, Label, Opts) ->
     Opts3 = Opts2#{
         filter => Filter,
         sort => Sort,
-        only_uid => true
+        only_uid => maps:get(only_uid, Opts, false)
     },
     Opts4 = case maps:is_key(namespace, Opts3) of
         true ->
@@ -484,10 +485,70 @@ search_label(SrvId, Label, Opts) ->
     end,
     case nkactor_backend:search(SrvId, actors_search_labels, Opts4) of
         {ok, Result, _Meta} ->
-            {ok, [UID || #{uid:=UID}<-Result]};
+            {ok, [UID || {UID, _, _} <- Result]};
         {error, Error} ->
             {error, Error}
     end.
+
+
+-type search_labels_range_opts() ::
+    #{
+        namespace => namespace(),
+        deep => boolean(),
+        include_first => boolean(),
+        include_last => boolean(),
+        size => pos_integer(),
+        only_uid => boolean(),      % If true, Key and Value will be empty
+        order => asc | desc
+    } | search_opts().
+
+
+%% @doc Gets objects having a label
+-spec search_label_range(nkservice:id(), binary(), binary(), search_labels_range_opts()) ->
+    {ok, [{uid(), Key::binary(), Value::binary()}]} | {error, actor_not_found|term()}.
+
+search_label_range(SrvId, Start, Stop, Opts) ->
+    Label1 = nklib_util:to_binary(Start),
+    Label2 = nklib_util:to_binary(Stop),
+    Filter = #{
+        'and' => [
+            #{
+                field => <<"label:", Label1/binary>>,
+                op => case Opts of #{include_first:=true} -> first; _ -> top end,
+                value => <<>>
+            },
+            #{
+                field => <<"label:", Label2/binary>>,
+                op => case Opts of #{include_last:=true} -> last; _ -> bottom end,
+                value => <<>>
+            }
+        ]
+
+    },
+    Order = maps:get(order, Opts, asc),
+    Sort = [
+        #{field => <<"label_key">>, order=>Order},
+        #{field => <<"label_value">>, order=>Order}
+    ],
+    Opts2 = maps:with([namespace, deep, from, size], Opts),
+    Opts3 = Opts2#{
+        filter => Filter,
+        sort => Sort,
+        only_uid => maps:get(only_uid, Opts, false)
+    },
+    Opts4 = case maps:is_key(namespace, Opts3) of
+        true ->
+            Opts3;
+        false ->
+            Opts3#{namespace => base_namespace(SrvId)}
+    end,
+    case nkactor_backend:search(SrvId, actors_search_labels, Opts4) of
+        {ok, Result, _Meta} ->
+            {ok, Result};
+        {error, Error} ->
+            {error, Error}
+    end.
+
 
 
 -type search_linked_opts() ::
@@ -659,7 +720,7 @@ find_label(SrvId, Namespace, Key, Value) ->
                 %ot_span_id=>Parent
             },
             case search_label(SrvId, Key, Opts) of
-                {ok, [UID|_]} ->
+                {ok, [{UID, _, _}|_]} ->
                     case is_activated(UID) of
                         {true, Pid} ->
                             nklib_proc:put({?MODULE, label, SrvId, Key2, Value2}, UID, Pid),
