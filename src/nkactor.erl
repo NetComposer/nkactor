@@ -485,7 +485,7 @@ search_label(SrvId, Label, Opts) ->
     end,
     case nkactor_backend:search(SrvId, actors_search_labels, Opts4) of
         {ok, Result, _Meta} ->
-            {ok, [UID || {UID, _, _} <- Result]};
+            {ok, Result};
         {error, Error} ->
             {error, Error}
     end.
