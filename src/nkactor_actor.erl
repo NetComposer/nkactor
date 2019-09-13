@@ -55,9 +55,9 @@
 %% @doc Called to validate an actor, on create and on update
 %% Do not add labels, links or anything on metadata, do it on
 %% init/2 or update/2
-%% Use request to see the verb (get, create, update, patch)
+%% Use request to see the verb (get, create, update)
 
--callback parse(map(), request()) ->
+-callback parse(verb(), map(), request()) ->
     continue | {ok, map()} | {syntax, nkactor:vsn(), nklib_syntax:syntax()} | {error, term()}.
 
 
@@ -175,7 +175,7 @@
 
 %% @doc
 -optional_callbacks([
-    parse/2, request/4, save/2,
+    parse/3, request/4, save/2,
     init/2, get/2, update/2, delete/1, sync_op/3, async_op/2, enabled/2, heartbeat/1,
     event/2, link_event/4, next_status_timer/1,
     handle_call/3, handle_cast/2, handle_info/2, stop/2, terminate/2]).
@@ -342,7 +342,7 @@ to_field(Field) ->
 -spec parse(nkserver:id(), actor(), request()) ->
     {ok, actor()} | {error, nkserver:status()}.
 
-parse(SrvId, Actor, Req) ->
+parse(SrvId, Actor, #{verb:=Verb}=Req) ->
     Group = case Actor of
         #{group:=ActorGroup} ->
             ActorGroup;
@@ -358,7 +358,7 @@ parse(SrvId, Actor, Req) ->
     % See nkactor_callback in nkactor_plugin
     SpanId = maps:get(ot_span_id, Req, undefined),
     nkserver_ot:log(SpanId, <<"calling actor parse">>),
-    Args = [parse, Group, Res, [Actor, Req]],
+    Args = [parse, Group, Res, [Verb, Actor, Req]],
     case ?CALL_SRV(SrvId, nkactor_callback, Args) of
         continue ->
             nkserver_ot:log(SpanId, <<"default syntax">>),
@@ -366,12 +366,12 @@ parse(SrvId, Actor, Req) ->
         {ok, Actor2} ->
             nkserver_ot:log(SpanId, <<"actor is custom parsed">>),
             {ok, Actor2};
-        {syntax, Vsn, Syntax} when is_map(Syntax) ->
+        {syntax, Vsn, Syntax, Req} when is_map(Syntax) ->
             nkserver_ot:log(SpanId, <<"actor has custom syntax">>),
-            nkactor_lib:parse_actor_data(Actor, Vsn, Syntax);
-        {syntax, Vsn, Syntax, Actor2} when is_map(Syntax) ->
+            nkactor_lib:parse_actor_data(Actor, Vsn, Syntax, Req);
+        {syntax, Vsn, Syntax, Req, Actor2} when is_map(Syntax) ->
             nkserver_ot:log(SpanId, <<"actor has custom syntax and actor">>),
-            nkactor_lib:parse_actor_data(Actor2, Vsn, Syntax);
+            nkactor_lib:parse_actor_data(Actor2, Vsn, Syntax, Req);
         {error, Error} ->
             nkserver_ot:log(SpanId, <<"error parsing actor: ~p">>, [Error]),
             {error, Error}

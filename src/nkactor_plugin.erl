@@ -233,7 +233,7 @@ gen_actor_callbacks(_SrvId, _Group, [], Acc) ->
 gen_actor_callbacks(SrvId, Group, [Module|Rest], Acc) ->
     #{resource:=Res} = Module:config(),
     FunList = [
-        {parse, 2},
+        {parse, 3},
         {unparse, 2},
         {request, 4},
         {save, 2},

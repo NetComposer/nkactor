@@ -211,14 +211,8 @@ pre_update(SrvId, ActorId, Actor, Opts) ->
             Actor3 = maps:merge(Base, Actor2),
             nkserver_ot:log(SpanId, <<"actor parsed">>),
             Req1 = maps:get(request, Opts, #{}),
-            Verb = case Opts of
-                #{do_patch:=true} ->
-                    patch;
-                _ ->
-                    update
-            end,
             Req2 = Req1#{
-                verb => Verb,
+                verb => update,
                 srv => SrvId
             },
             case nkactor_actor:parse(SrvId, Actor3, Req2) of
