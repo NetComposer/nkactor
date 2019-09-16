@@ -60,7 +60,7 @@ actor_syntax(Base) ->
         group => binary,
         resource => binary,
         name => name(),
-        namespace => binary, %name(),
+        namespace => binary,
         uid => binary,
         data => map,
         metadata => meta_syntax(),
@@ -128,16 +128,17 @@ event_syntax() ->
 
 
 %% @doc
+%% - If request has an uid, find it and fill all data
 %% - If request has group, resource, namespace and name, ok
-%% - If not, but have uid, find it and fill all data
 %% - If not, but has group, resource and namespace, ok (no name)
 %% - If not, find id from body and merge
 parse_request(Req) ->
     Syntax = request_syntax(),
     case nklib_syntax:parse(Req, Syntax) of
         {ok, #{uid:=UID}=Req2, _} ->
+            OptSrvId = maps:get(srv, Req2, undefined),
             ?REQ_DEBUG("reading UID: ~s", [UID]),
-            case nkactor:find(UID) of
+            case nkactor:find({OptSrvId, UID}) of
                 {ok, ActorId} ->
                     ?REQ_DEBUG("UID resolved", []),
                     #actor_id{
@@ -146,13 +147,24 @@ parse_request(Req) ->
                         name = Name,
                         namespace = Namespace
                     } = ActorId,
-                    Req3 = Req2#{
-                        group => Group,
-                        resource => Res,
-                        name => Name,
-                        namespace => Namespace
-                    },
-                    {ok, Req3};
+                    case Req2 of
+                        #{group:=ReqGroup} when ReqGroup /= Group ->
+                            {error, {field_invalid, <<"group">>}};
+                        #{resource:=ReqRes} when ReqRes /= Res ->
+                            {error, {field_invalid, <<"resource">>}};
+                        #{name:=ReqName} when ReqName /= Name ->
+                            {error, {field_invalid, <<"name">>}};
+                        #{namespace:=ReqNamespace} when ReqNamespace /= Namespace ->
+                            {error, {field_invalid, <<"namespace">>}};
+                        _ ->
+                            Req3 = Req2#{
+                                group => Group,
+                                resource => Res,
+                                name => Name,
+                                namespace => Namespace
+                            },
+                            {ok, Req3}
+                    end;
                 {error, Error} ->
                     {error, Error}
             end;
@@ -184,7 +196,7 @@ parse_request_body(#{verb:=Verb, body:=Body}=Req) when Verb==create; Verb==updat
                     {error, {field_invalid, <<"metadata.vsn">>}};
                 _ ->
                     case maps:merge(Req, BodyFields2) of
-                        #{group:=_, resource:=_}=Req2 ->
+                        #{group:=_, resource:=_, namespace:=_}=Req2 ->
                             case ReqVsn of
                                 <<>> ->
                                     {ok, Req2};
@@ -199,7 +211,7 @@ parse_request_body(#{verb:=Verb, body:=Body}=Req) when Verb==create; Verb==updat
             {error, Error}
     end;
 
-parse_request_body(#{group:=_, resource:=_}=Req) ->
+parse_request_body(#{group:=_, resource:=_, namespace:=_}=Req) ->
     {ok, Req};
 
 parse_request_body(Req) ->
@@ -219,7 +231,6 @@ parse_request_missing(Req) ->
                     {error, {field_missing, <<"namespace">>}}
             end
     end.
-
 
 
 %% @private
@@ -242,8 +253,7 @@ request_syntax() ->
         ot_span_id => any,
         external_url => binary,
         callback => atom,
-        meta => map,
-        '__mandatory' => [srv]
+        meta => map
     }.
 
 

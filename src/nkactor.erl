@@ -180,11 +180,15 @@
 
 -type get_opts() ::
     #{
+        % False to avoid activating actor
         activate => boolean(),
+        % True to delete the actor on read
         consume => boolean(),
+        % Use this TTL (if actor is not already loaded)
         ttl => pos_integer(),
-        % If provided, request will be used if provided for parsing the actor
-        % calling nkactor_actor:parse()
+        % Do not parse actor's data
+        no_data_parse => boolean(),
+        % Request will be used when calling actor's parse if provided
         request => nkactor_request:request(),
         % If ot_span_is defined, logs will be added, and it will be used
         % as parent for new spans that could be created
@@ -246,14 +250,6 @@ find(Id) ->
 -spec is_activated(id()) ->
     {true, pid()} | false.
 
-%%is_activated(Id) ->
-%%    case find(Id) of
-%%        {ok, #actor_id{pid=Pid}} when is_pid(Pid) ->
-%%            {true, Pid};
-%%        _ ->
-%%            false
-%%    end.
-
 is_activated(Id) ->
     case nkactor_namespace:find_actor(Id) of
         {true, _SrvId, #actor_id{pid=Pid}} when is_pid(Pid) ->
@@ -261,7 +257,6 @@ is_activated(Id) ->
         _ ->
             false
     end.
-
 
 
 %% @doc Finds an actors's pid or loads it from storage and activates it

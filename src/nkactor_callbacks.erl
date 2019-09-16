@@ -22,7 +22,7 @@
 -module(nkactor_callbacks).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -export([status/1]).
--export([actor_authorize/1, actor_config/1, actor_fields_filter/1, actor_fields_sort/1,
+-export([actor_req_authorize/1, actor_config/1, actor_fields_filter/1, actor_fields_sort/1,
          actor_fields_trans/1, actor_fields_type/1, actor_fields_static/1,
          actor_create/2, actor_activate/2, actor_external_event/3]).
 -export([actor_id/2]).
@@ -115,10 +115,10 @@ status(_) -> continue.
 
 
 %% @doc Called when processing a request to be authorized or not
--spec actor_authorize(nkactor_request:request()) ->
+-spec actor_req_authorize(nkactor_request:request()) ->
     {true, nkactor_request:request()} | false | continue().
 
-actor_authorize(_Req) ->
+actor_req_authorize(_Req) ->
     false.
 
 

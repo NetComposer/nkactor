@@ -50,7 +50,6 @@
 
 -type request() ::
     #{
-        srv => nkserver:id(),            % Service managing namespace
         verb => nkactor:verb(),
         namespace => nkactor:namespace(),
         group => nkactor:group(),
@@ -67,7 +66,7 @@
         class => class(),
         % Used to decode the body
         content_type => binary(),
-        % If the body has a group, resource, namespace, uid,  or metadata
+        % If the body has a group, resource, namespace, uid, or metadata
         % fields, they must be the same of the request
         body => binary() | map(),
         auth => map(),
@@ -81,6 +80,7 @@
         % - search_field_trans
         meta => map(),
         %% added by system:
+        srv => nkserver:id(),            % Service managing namespace
         start_time => nklib_date:epoch(usecs)
     }.
 
@@ -110,7 +110,7 @@
 
 %% @doc Launches an Request
 %% - A new span will be created. If ot_span_id is defined, it will be used as parent
-%% - Calls actor_authorize/1 for authorization of the request
+%% - Calls actor_req_authorize/1 for authorization of the request
 %% - Finds service managing namespace, and adds srv and start_time
 
 -spec request(request()) ->
@@ -131,12 +131,11 @@ pre_request(Req) ->
     ParentSpan = maps:get(ot_span_id, Req, undefined),
     nkserver_ot:new(?REQ_SPAN, undefined, <<"Actor::Request">>, ParentSpan),
     case nkactor_syntax:parse_request(Req) of
-        {ok, Req2} ->
-            case pre_request_namespace(Req2) of
-                {ok, Req3} ->
-                    #{group:=Group, resource:=Res, namespace:=Namespace, srv:=SrvId} = Req3,
-                    Verb = maps:get(verb, Req3, get),
-                    SubRes = maps:get(subresource, Req3, <<>>),
+        {ok, #{group:=Group, resource:=Res, namespace:=Namespace}=Req2} ->
+            case get_srv_id(Req2) of
+                {ok, SrvId} ->
+                    Verb = maps:get(verb, Req2, get),
+                    SubRes = maps:get(subresource, Re23, <<>>),
                     SpanName = <<
                         "Actor::Request ",
                         " ", (nklib_util:to_upper(Verb))/binary, " ",
@@ -151,26 +150,26 @@ pre_request(Req) ->
                         <<"req.group">> => Group,
                         <<"req.resource">> => Res,
                         <<"req.namespace">> => Namespace,
-                        <<"req.name">> => maps:get(name, Req3, <<>>),
+                        <<"req.name">> => maps:get(name, Req2, <<>>),
                         <<"req.srv">> => SrvId,
                         <<"req.subresource">> => SubRes
                     }),
                     % Add uid later
                     set_debug(SrvId),
                     ?REQ_DEBUG("incoming request for ~s", [Namespace]),
-                    Req4 = Req3#{
+                    Req3 = Req2#{
                         srv => SrvId,
                         verb => Verb,
                         subresource => SubRes,
                         start_time => nklib_date:epoch(usecs),
                         ot_span_id => ?REQ_SPAN
                     },
-                    case authorize(SrvId, Req4) of
+                    case authorize(SrvId, Req3) of
                         {true, Req5} ->
                             {ok, Req5};
                         false ->
                             nkserver_ot:finish(?REQ_SPAN),
-                            {error, unauthorized, Req4}
+                            {error, unauthorized, Req3}
                     end;
                 {error, Error} ->
                     nkserver_ot:delete(?REQ_SPAN),
@@ -182,20 +181,12 @@ pre_request(Req) ->
     end.
 
 
-pre_request_namespace(Req) ->
-    case Req of
-        #{namespace:=Namespace} ->
-            case nkactor_namespace:find_service(Namespace) of
-                {ok, SrvId} ->
-                    {ok, Req#{srv:=SrvId}};
-                {error, Error} ->
-                    {error, Error}
-            end;
-        _ ->
-            #{srv:=SrvId} = Req,
-            {ok, Req#{namespace => nkactor:base_namespace(SrvId)}}
-    end.
+%% @private
+get_srv_id(#{srv:=SrvId}) ->
+    {ok, SrvId};
 
+get_srv_id(#{namespace:=Namespace}) ->
+    nkactor_namespace:find_service(Namespace).
 
 %% @doc
 post_request(Reply, Req) ->
@@ -253,7 +244,7 @@ do_request(Req) ->
             name = maps:get(name, Req, undefined),
             namespace = Namespace
         },
-        Config = case catch nkactor_actor:get_config(ActorId) of
+        Config = case catch nkactor_actor:get_config(SrvId, ActorId) of
             {ok, SrvId, Config0} ->
                 Config0;
             {error, ConfigError} ->
@@ -271,7 +262,7 @@ do_request(Req) ->
             continue when SubRes == <<>> ->
                 nkserver_ot:log(?REQ_SPAN, <<"processing default">>),
                 ?REQ_DEBUG("processing default", [], Req),
-                    default_request(Verb, ActorId, Config, Req);
+                default_request(Verb, ActorId, Config, Req);
             continue ->
                 nkserver_ot:log(?REQ_SPAN, <<"invalid subresource: ~s">>, [SubRes]),
                 ?REQ_LOG(notice, "Invalid subresource (~p)", [{Verb, SubRes, ActorId}]),
@@ -309,10 +300,6 @@ default_request(create, ActorId, Config, Req) ->
 default_request(update, #actor_id{name=Name}=ActorId, Config, Req) when is_binary(Name) ->
     check_version(Config, Req),
     update(ActorId, false, Config, Req);
-
-default_request(patch, #actor_id{name=Name}=ActorId, Config, Req) when is_binary(Name) ->
-    check_version(Config, Req),
-    update(ActorId, true, Config, Req);
 
 default_request(delete, #actor_id{name=Name}=ActorId, Config, Req) when is_binary(Name) ->
     delete(ActorId, Config, Req);
@@ -618,7 +605,7 @@ set_activate_opts(_Config, Params) ->
 %% @private
 authorize(SrvId, Req) ->
     nkserver_ot:log(?REQ_SPAN, <<"calling authorize">>),
-    case ?CALL_SRV(SrvId, actor_authorize, [Req]) of
+    case ?CALL_SRV(SrvId, actor_req_authorize, [Req]) of
         true ->
             nkserver_ot:log(?REQ_SPAN, <<"request is authorized">>),
             ?REQ_DEBUG("request is authorized", []),

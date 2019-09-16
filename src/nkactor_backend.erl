@@ -66,12 +66,15 @@
 %% - If not, and we have a persistence module, it will be loaded from disk
 %% - We then check if it is activated, once we have the namespace
 %%
+%% If an 'OptSrvId' is used, it will be used to focus the search on that
+%% service if namespace is not found
+%%
 %% If 'ot_span_id' is defined, logs will be added
 
 -spec find(nkactor:id(), map()) ->
     {ok, nkserver:id(), #actor_id{}, Meta::map()} | {error, actor_not_found|term()}.
 
-find(Id, Opts) ->
+find({OptSrvId, Id}, Opts) when is_atom(OptSrvId) ->
     SpanId = maps:get(ot_span_id, Opts, undefined),
     nkserver_ot:log(SpanId, <<"calling find actor">>),
     ActorId = nkactor_lib:id_to_actor_id(Id),
@@ -82,10 +85,15 @@ find(Id, Opts) ->
             {ok, SrvId, ActorId2, #{}};
         {false, SrvId} ->
             do_find([SrvId], ActorId, SpanId);
-        false ->
+        false when OptSrvId==undefined ->
             SrvIds = nkactor:get_services(),
-            do_find(SrvIds, ActorId, SpanId)
-    end.
+            do_find(SrvIds, ActorId, SpanId);
+        false ->
+            do_find([OptSrvId], ActorId, SpanId)
+    end;
+
+find(Id, Opts) ->
+    find({undefined, Id}, Opts).
 
 
 %% @private
@@ -684,14 +692,18 @@ do_read(SrvId, ActorId, Opts) ->
             },
             Req3 = maps:merge(#{ot_span_id=>SpanId}, Req2),
             nkserver_ot:log(SpanId, <<"calling actor parse">>),
-            % Should nc
-            case nkactor_actor:parse(SrvId, Actor, Req3) of
-                {ok, Actor2} ->
-                    nkserver_ot:log(SpanId, <<"actor is valid">>),
-                    {ok, Actor2, Meta};
-                {error, Error} ->
-                    nkserver_ot:log(SpanId, <<"error parsing actor: ~p">>, [Error]),
-                    {error, Error}
+            case Opts of
+                #{no_data_parse:=true} ->
+                    {ok, Actor, Meta};
+                _ ->
+                    case nkactor_actor:parse(SrvId, Actor, Req3) of
+                        {ok, Actor2} ->
+                            nkserver_ot:log(SpanId, <<"actor is valid">>),
+                            {ok, Actor2, Meta};
+                        {error, Error} ->
+                            nkserver_ot:log(SpanId, <<"error parsing actor: ~p">>, [Error]),
+                            {error, Error}
+                    end
             end;
         {error, Error} ->
             nkserver_ot:log(SpanId, <<"error readinf actor: ~p">>, [Error]),

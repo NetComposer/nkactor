@@ -208,6 +208,14 @@ get_config(SrvId, Module) when is_atom(SrvId), is_atom(Module) ->
             Config;
         Config when is_map(Config) ->
             Config
+    end;
+
+get_config(SrvId, #actor_id{group=Group, resource=Resource}) ->
+    case get_module(SrvId, Group, Resource) of
+        undefined ->
+            {error, resource_invalid};
+        Module when is_atom(Module) ->
+            {ok, SrvId, get_config(SrvId, Module)}
     end.
 
 
@@ -215,15 +223,10 @@ get_config(SrvId, Module) when is_atom(SrvId), is_atom(Module) ->
 -spec get_config(#actor_id{}) ->
     {ok, nkserver:id(), map()} | {error, term()}.
 
-get_config(#actor_id{group=Group, resource=Resource, namespace=Namespace}) ->
+get_config(#actor_id{namespace=Namespace}=ActorId) ->
     case nkactor_namespace:find_service(Namespace) of
         {ok, SrvId} ->
-            case get_module(SrvId, Group, Resource) of
-                undefined ->
-                    {error, resource_invalid};
-                Module ->
-                    {ok, SrvId, get_config(SrvId, Module)}
-            end;
+            get_config(SrvId, ActorId);
         {error, Error} ->
             {error, Error}
     end.
