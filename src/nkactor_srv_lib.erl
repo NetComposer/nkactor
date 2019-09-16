@@ -126,14 +126,16 @@ remove_link(Link, #actor_st{links = Links} = State) ->
 
 %% @doc
 %% It will create an 'operation span' if ot_span_id option is used
-update(UpdActor, Opts, #actor_st{actor_id = ActorId, actor = Actor} = State) ->
+update(UpdActor, Opts, #actor_st{actor_id=ActorId, actor=Actor}=State) ->
     UpdActorId = nkactor_lib:actor_to_actor_id(UpdActor),
-    #actor_id{uid = UID, namespace = Namespace, group = Class, resource = Res, name = Name} = ActorId,
+    #actor_id{
+        uid = UID,
+        namespace = Namespace,
+        group = Class,
+        resource = Res,
+        name = Name
+    } = ActorId,
     try
-        case UpdActorId#actor_id.namespace of
-            Namespace -> ok;
-            _ -> throw({updated_invalid_field, namespace})
-        end,
         case UpdActorId#actor_id.uid of
             undefined -> ok;
             UID -> ok;
@@ -147,112 +149,119 @@ update(UpdActor, Opts, #actor_st{actor_id = ActorId, actor = Actor} = State) ->
             Res -> ok;
             _ -> throw({updated_invalid_field, resource})
         end,
-        case UpdActorId#actor_id.name of
-            Name -> ok;
-            _ -> throw({updated_invalid_field, name})
+        UpdNamespace = UpdActorId#actor_id.namespace,
+        UpdName = UpdActorId#actor_id.name,
+        case Opts of
+            #{allow_name_change:=true} ->
+                case
+                    UpdNamespace /= Namespace andalso
+                        nkactor_namespace:find_service(UpdNamespace) of
+                    false ->
+                        ok;
+                    {ok, _} ->
+                        ?ACTOR_LOG(notice, "updated namespace ~s -> ~s", [Namespace, UpdNamespace]),
+                        ok;
+                    _ ->
+                        throw({updated_namespace_invalid, UpdNamespace})
+                end,
+                ActorId2 = ActorId#{
+                    namespace => UpdNamespace,
+                    name => UpdName,
+                    uid => undefined
+                },
+                case nkactor:find(ActorId2) of
+                    {ok, _} ->
+                        throw(updated_name_exists);
+                    _ ->
+                        ok
+                end;
+            _ ->
+                case UpdNamespace of
+                    Namespace -> ok;
+                    _ -> throw({updated_invalid_field, namespace})
+                end,
+                case UpdName of
+                    Name -> ok;
+                    _ -> throw({updated_invalid_field, name})
+                end
+        end,
+        IsCoreUpdated = (UpdNamespace /= Namespace) orelse (UpdName /= Name),
+        case IsCoreUpdated of
+            true ->
+                nkactor:stop(self(), updated_name);
+            false ->
+                ok
         end,
         Data = maps:get(data, Actor, #{}),
         UpdData1 = maps:get(data, UpdActor, #{}),
-%%        DataFields = maps:get(data_fields, Opts, all),
-%%        UpdData2 = case DataFields of
-%%            all ->
-%%                UpdData1;
-%%            _ ->
-%%                maps:with(DataFields, UpdData1)
-%%        end,
-        NewData = case maps:get(do_patch, Opts, false) of
+        DoDataMerge = maps:get(merge_data, Opts, false),
+        NewData = case DoDataMerge of
             false ->
                 UpdData1;
             true ->
-%%                Data2 = case DataFields of
-%%                    all ->
-%%                        Data1;
-%%                    _ ->
-%%                        maps:with(DataFields, Data1)
-%%                end,
-                nklib_util:map_merge(UpdData1, Data)
+                nkactor_lib:map_merge(Data, UpdData1)
         end,
         IsDataUpdated = NewData /= Data,
-        UpdMeta = maps:get(metadata, UpdActor),
-        Meta = maps:get(metadata, Actor),
-        CT = maps:get(creation_time, Meta),
-        case maps:get(creation_time, UpdMeta, CT) of
-            CT -> ok;
-            _ -> throw({updated_invalid_field, metadata})
+        Meta = maps:get(metadata, Actor, #{}),
+        UpdMeta1 = maps:get(metadata, UpdActor),
+        MetaSyntax = #{
+            vsn => binary,                  % Added by parse
+            subtype => binary,
+            is_enabled => boolean,
+            expires_time => [date_3339, {binary, [<<>>]}],
+            labels => #{'__map_binary' => binary},
+            annotations => #{'__map_binary' => binary},
+            links => #{'__map_binary' => binary},
+            fts => #{'__map_binary' => binary},
+            description => binary,
+            updated_by => binary
+        },
+        UpdMeta2 = case nklib_syntax:parse(UpdMeta1, MetaSyntax, #{path=><<"metadata">>}) of
+            {ok, UpdMeta2_0, []} ->
+                UpdMeta2_0;
+            {ok, _, [Field|_]} ->
+                throw({updated_invalid_field, Field})
         end,
-        Kind = maps:get(kind, Meta, <<>>),
-        case maps:get(kind, Meta, <<>>) of
-            Kind -> ok;
-            _ -> throw({updated_invalid_field, kind})
-        end,
-        SubType = maps:get(subtype, Meta, <<>>),
-        case maps:get(subtype, UpdMeta, <<>>) of
-            SubType -> ok;
-            _ -> throw({updated_invalid_field, subtype})
-        end,
-        Links = maps:get(links, Meta, #{}),
-        UpdLinks1 = maps:get(links, UpdMeta, #{}),
-        UpdLinks2 = maps:merge(Links, UpdLinks1),
-        UpdMeta2 = case UpdLinks2 == Links of
+        NewMeta1 = nkactor_lib:map_merge(Meta, UpdMeta2),
+        Links1 = maps:get(links, Meta, #{}),
+        Links2 = maps:get(links, NewMeta1, #{}),
+        NewMeta2 = case Links1 == Links2 of
             true ->
-                UpdMeta;
+                NewMeta1;
             false ->
-                case nkactor_lib:check_links(UpdLinks2) of
-                    {ok, UpdLinks3} ->
-                        UpdMeta#{links => UpdLinks3};
+                case nkactor_lib:check_links(Links2) of
+                    {ok, Links3} ->
+                        NewMeta1#{links => Links3};
                     {error, Error} ->
                         throw(Error)
                 end
         end,
-        Labels = maps:get(labels, Meta, #{}),
-        UpdLabels1 = maps:get(labels, UpdMeta2, #{}),
-        UpdLabels2 = maps:merge(Labels, UpdLabels1),
-        UpdMeta3 = case UpdLabels2 == Labels of
-            true ->
-                UpdMeta2;
-            false ->
-                UpdLabels3 = maps:filter(fun(_, V) -> V /= <<>> end, UpdLabels2),
-                UpdMeta2#{labels => UpdLabels3}
+        NewMeta3 = case NewMeta2 of
+            #{is_enabled:=true} ->
+                maps:remove(is_enabled, NewMeta2);
+            _ ->
+                NewMeta2
         end,
-        Annotations = maps:get(annotations, Meta, #{}),
-        UpdAnnotations1 = maps:get(annotations, UpdMeta3, #{}),
-        UpdAnnotations2 = maps:merge(Annotations, UpdAnnotations1),
-        UpdMeta4 = case UpdAnnotations2 == Annotations of
-            true ->
-                UpdMeta3;
-            false ->
-                UpdAnnotations3 = maps:filter(fun(_, V) -> V /= <<>> end, UpdAnnotations2),
-                UpdMeta3#{annotations => UpdAnnotations3}
-        end,
-        Enabled = maps:get(is_enabled, Meta, true),
-        UpdEnabled = maps:get(is_enabled, UpdMeta4, true),
-        UpdMeta5 = case maps:get(is_enabled, UpdMeta4, true) of
-            true ->
-                maps:remove(is_enabled, UpdMeta4);
-            false ->
-                UpdMeta4
-        end,
-        NewMeta = maps:merge(Meta, UpdMeta5),
-        IsMetaUpdated = (Meta /= NewMeta) orelse (Enabled /= UpdEnabled),
-        case IsDataUpdated orelse IsMetaUpdated of
+        IsMetaUpdated = (Meta /= NewMeta3),
+        case IsCoreUpdated orelse IsDataUpdated orelse IsMetaUpdated of
             true ->
                 % At this point, we create main span and operation span
                 State2 = op_span_check_create(update, Opts, State),
                 %lager:error("NKLOG UPDATE Data:~p, Meta:~p", [IsDataUpdated, IsMetaUpdated]),
-                NewMeta2 = case UpdEnabled of
-                    true ->
-                        maps:remove(is_enabled, NewMeta);
-                    false ->
-                        NewMeta#{is_enabled=>false}
-                end,
-                NewActor1 = Actor#{data=>NewData, metadata:=NewMeta2},
+                NewActor1 = Actor#{
+                    namespace => Namespace,
+                    name => UpdName,
+                    data => NewData,
+                    metadata := NewMeta3
+                },
                 case nkactor_lib:update_check_fields(NewActor1, State2) of
                     ok ->
                         op_span_log(<<"calling actor_srv_update">>, State2),
                         case handle(actor_srv_update, [NewActor1], State2) of
                             {ok, NewActor2, State3} ->
                                 State4 = set_dirty(State3#actor_st{actor=NewActor2}),
-                                State5 = enabled(UpdEnabled, State4),
+                                NewEnabled = maps:get(is_enabled, NewMeta3, true),
+                                State5 = enabled(NewEnabled, State4),
                                 State6 = set_unload_policy(State5),
                                 self() ! nkactor_check_expired,
                                 op_span_log(<<"calling do_save">>, State6),

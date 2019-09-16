@@ -101,7 +101,9 @@ meta_syntax() ->
         description => binary,
         created_by => binary,
         updated_by => binary,
-        trace_id => integer
+        trace_id => integer,
+        '__private_data' => map,
+        '__private_indices' => #{'__map_binary' => binary}
     }.
 
 %% @private

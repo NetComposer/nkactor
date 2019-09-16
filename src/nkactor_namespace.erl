@@ -419,7 +419,7 @@ init([Namespace]) ->
                         master_pid = MasterPid,
                         register_ets = ets:new(nkactor_register, [])
                     },
-                    ?LLOG(notice, "started (~p)", [self()], State),
+                    ?LLOG(info, "started (~p)", [self()], State),
                     case Permanent of
                         true ->
                             {ok, State};
@@ -504,7 +504,7 @@ handle_cast(Msg, State) ->
 handle_info(timeout, #state{counters=Counters}=State) ->
     case map_size(Counters) of
         0 ->
-            ?LLOG(notice, "has no childs, stopping", [], State),
+            ?LLOG(info, "has no childs, stopping", [], State),
             {stop, normal, State};
         _ ->
             % ?LLOG(info, "has childs, not stopping", [], State),

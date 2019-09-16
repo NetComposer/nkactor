@@ -34,12 +34,12 @@
 -export([add_creation_fields/2, update/2, check_actor_links/1, check_meta_links/1, check_links/1]).
 -export([add_labels/4, add_label/3, rm_label_re/2]).
 -export([actor_id_to_path/1]).
--export([parse/2, parse/3, parse_actor_data/3, parse_request_params/2]).
+-export([parse/3, parse/4, parse_actor_data/4, parse_request_params/2]).
 -export([make_rev_path/1, make_rev_parts/1]).
 -export([make_plural/1, make_singular/1, normalized_name/1]).
 -export([add_fts/3, fts_normalize_word/1, fts_normalize_multi/1]).
 -export([update_check_fields/2]).
--export([maybe_set_ttl/2, set_ttl/2]).
+-export([maybe_set_ttl/2, set_ttl/2, map_merge/2]).
 -type actor() :: nkactor:actor().
 
 %% ===================================================================
@@ -272,24 +272,30 @@ rm_label_re(Bin, #{metadata:=Meta}=Actor) ->
 
 
 %% @private Generic parse with standard errors
--spec parse(map(), nklib_syntax:syntax()) ->
+-spec parse(map(), nklib_syntax:syntax(), AllowUnknown::boolean()) ->
     {ok, map()} | nklib_syntax:error().
 
-parse(Data, Syntax) ->
-    parse(Data, Syntax, #{}).
+parse(Data, Syntax, AllowUnknown) ->
+    parse(Data, Syntax, AllowUnknown, #{}).
 
 
 %% @private Generic parse with standard errors
--spec parse(map(), nklib_syntax:syntax(), nklib_syntax:parse_opts()) ->
+-spec parse(map(), nklib_syntax:syntax(), boolean(), nklib_syntax:parse_opts()) ->
     {ok, map()} | nklib_syntax:error().
 
-parse(Data, Syntax, Opts) ->
+parse(Data, Syntax, AllowUnknown, Opts) ->
     %lager:error("NKLOG SYN Data:~p\n Syntax:~p", [Data, Syntax]),
     case nklib_syntax:parse(Data, Syntax, Opts) of
         {ok, Data2, []} ->
             {ok, Data2};
-        {ok, _, [Field | _]} ->
-            {error, {field_unknown, Field}};
+        {ok, Data2, [Field | _]} ->
+            case AllowUnknown of
+                true ->
+                    lager:warning("Extra field '~s' parsing ~p", [Field, Data]),
+                    {ok, Data2};
+                false ->
+                    {error, {field_unknown, Field}}
+            end;
         {error, {syntax_error, Field}} ->
             % lager:error("NKLOG Data ~p Syntax ~p", [Data, Syntax]),
             {error, {field_invalid, Field}};
@@ -302,11 +308,17 @@ parse(Data, Syntax, Opts) ->
 
 
 %% @private
--spec parse_actor_data(actor(), nkactor:vsn(), nklib_syntax:syntax()) ->
+-spec parse_actor_data(actor(), nkactor:vsn(), nklib_syntax:syntax(), nkactor_request:request()) ->
     {ok, actor()} | nklib_syntax:error().
 
-parse_actor_data(#{data:=Data, metadata:=Meta}=Actor, Vsn, Syntax) ->
-    case parse(Data, Syntax, #{path=><<"data">>}) of
+parse_actor_data(#{data:=Data, metadata:=Meta}=Actor, Vsn, Syntax, #{verb:=Verb}) ->
+    AllowUnknown = case Verb of
+        get ->
+            true;
+        _ ->
+            false
+    end,
+    case parse(Data, Syntax, AllowUnknown, #{path=><<"data">>}) of
         {ok, Data2} ->
             {ok, Actor#{data:=Data2, metadata:=Meta#{vsn=>Vsn}}};
         {error, Error} ->
@@ -592,6 +604,33 @@ set_ttl(#{metadata:=Meta}=Actor, MSecs) ->
     {ok, Expires} = nklib_date:to_3339(Now+1000*MSecs, usecs),
     Meta2 = Meta#{expires_time => Expires},
     Actor#{metadata := Meta2}.
+
+
+
+%% @private
+map_merge(Map, Update) ->
+    do_map_merge(maps:to_list(Update), Map).
+
+
+%% @private
+do_map_merge([], Map) ->
+    Map;
+
+do_map_merge([{Key, '__op_remove'} | Rest], Map) ->
+    do_map_merge(Rest, maps:remove(Key, Map));
+
+do_map_merge([{Key, <<"__op_remove">>} | Rest], Map) ->
+    do_map_merge(Rest, maps:remove(Key, Map));
+
+do_map_merge([{Key, Val} | Rest], Map) when is_map(Val) ->
+    Val2 = maps:get(Key, Map, #{}),
+    Map2 = map_merge(Val2, Val),
+    do_map_merge(Rest, Map#{Key=>Map2});
+
+do_map_merge([{Key, Val} | Rest], Map) ->
+    do_map_merge(Rest, Map#{Key=>Val}).
+
+
 
 
 %% @private

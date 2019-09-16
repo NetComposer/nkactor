@@ -751,7 +751,12 @@ do_async_op({stop, Reason}, State) ->
 
 do_async_op({raw_stop, Reason}, State) ->
     % We don't send the deleted event here, since we may not be active at all
-    ?ACTOR_LOG(info, "received raw_stop: ~p", [Reason], State),
+    case Reason of
+        backend_deleted ->
+            ok;
+        _ ->
+            ?ACTOR_LOG(info, "received raw_stop: ~p", [Reason], State)
+    end,
     {_, State2} = nkactor_srv_lib:handle(actor_srv_stop, [Reason], State),
     State3 = nkactor_srv_lib:event({stopped, Reason}, State2),
     {stop, normal, State3#actor_st{stop_reason=raw_stop}};

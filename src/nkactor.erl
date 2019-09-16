@@ -69,7 +69,7 @@
             is_active => boolean(),
             expires_time => binary(),       % Use <<>> to disable
             % If value is empty it is removed
-            labels => #{binary() => binary() | integer() | boolean()},
+            labels => #{binary() => binary()},
             fts => #{binary() => [binary()]},
             % If value is empty it is removed
             links => #{uid() => binary()},
@@ -210,10 +210,10 @@
 
 -type update_opts() ::
     #{
-        %data_fields => [binary()],          % If used, fields not defined here will not be updated
-        do_patch => boolean(),               % Default false, merges data instead of replace
+        merge_data => boolean(),
         request => nkactor_request:request(),
-        get_actor => boolean()
+        get_actor => boolean(),
+        allow_name_change => boolean()
     }.
 
 
@@ -336,6 +336,32 @@ create(Actor, Opts) ->
 
 
 %% @doc Updates an actor, activating it
+%% For 'data' field, the full field is replaced, unless option 'merge_data'
+%% is used, in that case:
+%% - a deep merge is performed
+%% - if a key has the value '__op_remove', it is deleted
+%%
+%% For 'metadata' field, by default all fields remain the same.
+%% Some fields can however be updated:
+%% - subtype
+%% - is_enabled
+%% - expires_time (<<>> to remove it)
+%% - description
+%% - updated_by
+%% - labels, annotations, links, fts:
+%%      - new values are add or overwrite existing ones
+%%      - use value '__op_remove' to remove that key
+%%
+%% If option 'allow_name_change' is true:
+%% - name and namespace can be updated
+%% - actor will stop
+%% - a check is made so the new name does not conflict, but on non-transactional
+%%   databases, an actor could be created in the middle and conflict
+%%
+%% TODO: Add patch support
+%% https://williamdurand.fr/2014/02/14/please-do-not-patch-like-an-idiot/
+%% http://erosb.github.io/post/json-patch-vs-merge-patch/
+
 -spec update(id()|pid(), actor(), update_opts()) ->
     {ok, actor()} | {error, term()}.
 
