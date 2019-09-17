@@ -159,11 +159,6 @@ pre_create(Actor, Opts) ->
             case nkactor_namespace:find_service(Namespace) of
                 {ok, SrvId} ->
                     nkserver_ot:log(SpanId, <<"actor namespace found: ~s">>, [SrvId]),
-                    Req1 = maps:get(request, Opts, #{}),
-                    Req2 = Req1#{
-                        verb => create,
-                        srv => SrvId
-                    },
                     case nkactor_lib:add_creation_fields(SrvId, Actor2) of
                         {ok, Actor3} ->
                             Actor4 = case Opts of
@@ -172,7 +167,9 @@ pre_create(Actor, Opts) ->
                                 _ ->
                                     Actor3
                             end,
-                            case nkactor_actor:parse(SrvId, Actor4, Req2) of
+                            Req1 = maps:get(request, Opts, #{}),
+                            Req2 = Req1#{srv => SrvId},
+                            case nkactor_actor:parse(SrvId, create, Actor4, Req2) of
                                 {ok, Actor5} ->
                                     case nkactor_lib:check_actor_links(Actor5) of
                                         {ok, Actor6} ->
@@ -211,11 +208,8 @@ pre_update(SrvId, ActorId, Actor, Opts) ->
             Actor3 = maps:merge(Base, Actor2),
             nkserver_ot:log(SpanId, <<"actor parsed">>),
             Req1 = maps:get(request, Opts, #{}),
-            Req2 = Req1#{
-                verb => update,
-                srv => SrvId
-            },
-            case nkactor_actor:parse(SrvId, Actor3, Req2) of
+            Req2 = Req1#{srv => SrvId},
+            case nkactor_actor:parse(SrvId, update, Actor3, Req2) of
                 {ok, Actor4} ->
                     case nkactor_lib:check_actor_links(Actor4) of
                         {ok, Actor5} ->
@@ -233,55 +227,6 @@ pre_update(SrvId, ActorId, Actor, Opts) ->
             nkserver_ot:log(SpanId, <<"error parsing generic actor: ~p">>, [Error]),
             {error, Error}
     end.
-
-
-
-
-
-
-%%%% @private
-%%pre_update(Actor, Opts) ->
-%%    SpanId = maps:get(ot_span_id, Opts, undefined),
-%%    Syntax = #{'__mandatory' => [group, resource, namespace]},
-%%    case nkactor_syntax:parse_actor(Actor, Syntax) of
-%%        {ok, #{namespace:=Namespace}=Actor2} ->
-%%            nkserver_ot:log(SpanId, <<"actor parsed">>),
-%%            case nkactor_namespace:find_service(Namespace) of
-%%                {ok, SrvId} ->
-%%                    nkserver_ot:log(SpanId, <<"actor namespace found: ~s">>, [SrvId]),
-%%                    Req1 = maps:get(request, Opts, #{}),
-%%                    Req2 = Req1#{
-%%                        verb => update,
-%%                        srv => SrvId
-%%                    },
-%%                    case nkactor_actor:parse(SrvId, Actor2, Req2) of
-%%                        {ok, Actor3} ->
-%%                            case nkactor_lib:check_actor_links(Actor3) of
-%%                                {ok, Actor4} ->
-%%                                    nkserver_ot:log(SpanId, <<"actor parsed">>),
-%%                                    {ok, SrvId, Actor4};
-%%                                {error, Error} ->
-%%                                    nkserver_ot:log(SpanId, <<"error checking links: ~p">>, [Error]),
-%%                                    {error, Error}
-%%                            end;
-%%                        {error, Error} ->
-%%                            nkserver_ot:log(SpanId, <<"error parsing specific actor: ~p">>, [Error]),
-%%                            {error, Error}
-%%                    end;
-%%                {error, Error} ->
-%%                    nkserver_ot:log(SpanId, <<"error getting namespace: ~p">>, [Error]),
-%%                    {error, Error}
-%%            end;
-%%        {error, Error} ->
-%%            nkserver_ot:log(SpanId, <<"error parsing generic actor: ~p">>, [Error]),
-%%            {error, Error}
-%%    end.
-
-
-
-%%%% @private
-%%to_bin(Term) when is_binary(Term) -> Term;
-%%to_bin(Term) -> nklib_util:to_binary(Term).
 
 
 

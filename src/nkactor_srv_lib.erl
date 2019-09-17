@@ -387,10 +387,10 @@ save(Reason, SaveOpts, #actor_st{is_dirty = true} = State) ->
     #actor_st{op_span_ids=[SpanId|_]} = State3,
     {SaveFun, SaveOpts2} = case Reason of
         create ->
-            CheckUnique = maps:get(create_check_unique, Config, true),
+            NoCheckUnique = not maps:get(create_check_unique, Config, true),
             {
                 actor_db_create,
-                SaveOpts#{check_unique=>CheckUnique, ot_span_id=>SpanId}
+                SaveOpts#{no_unique_check=>NoCheckUnique, ot_span_id=>SpanId}
             };
         _ ->
             {
@@ -411,7 +411,7 @@ save(Reason, SaveOpts, #actor_st{is_dirty = true} = State) ->
                                 {ok, _DbMeta} ->
                                     Span3 = nkserver_ot:log(Span2, <<"actor saved">>),
                                     nkserver_ot:finish(Span3),
-                                    nkactor_srv:async_op(Self, {send_event, saved});
+                                    nkactor:async_op(Self, {send_event, saved});
                                 {error, Error} ->
                                     Span3 = nkserver_ot:log(Span2, "save error: ~p", [Error]),
                                     Span4 = nkserver_ot:tag_error(Span3, Error),

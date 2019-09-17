@@ -59,6 +59,7 @@
         vsn => nkactor:vsn(),
         resource => nkactor:resource(),
         name => nkactor:name(),
+        % If uid is used, found actor must match namespace, group, resource, name
         uid => nkactor:uid(),
         subresource => nkactor:subresource(),
         params => #{binary() => binary()},
@@ -135,7 +136,7 @@ pre_request(Req) ->
             case get_srv_id(Req2) of
                 {ok, SrvId} ->
                     Verb = maps:get(verb, Req2, get),
-                    SubRes = maps:get(subresource, Re23, <<>>),
+                    SubRes = maps:get(subresource, Req2, <<>>),
                     SpanName = <<
                         "Actor::Request ",
                         " ", (nklib_util:to_upper(Verb))/binary, " ",

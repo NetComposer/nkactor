@@ -308,16 +308,11 @@ parse(Data, Syntax, AllowUnknown, Opts) ->
 
 
 %% @private
--spec parse_actor_data(actor(), nkactor:vsn(), nklib_syntax:syntax(), nkactor_request:request()) ->
+-spec parse_actor_data(read|create|update, actor(), nkactor:vsn(), nklib_syntax:syntax()) ->
     {ok, actor()} | nklib_syntax:error().
 
-parse_actor_data(#{data:=Data, metadata:=Meta}=Actor, Vsn, Syntax, #{verb:=Verb}) ->
-    AllowUnknown = case Verb of
-        get ->
-            true;
-        _ ->
-            false
-    end,
+parse_actor_data(Op, #{data:=Data, metadata:=Meta}=Actor, Vsn, Syntax) ->
+    AllowUnknown = (Op == read),
     case parse(Data, Syntax, AllowUnknown, #{path=><<"data">>}) of
         {ok, Data2} ->
             {ok, Actor#{data:=Data2, metadata:=Meta#{vsn=>Vsn}}};
@@ -328,7 +323,7 @@ parse_actor_data(#{data:=Data, metadata:=Meta}=Actor, Vsn, Syntax, #{verb:=Verb}
 
 
 %% @private
--spec parse_request_params(nkactor_request:request(), nklib_syntax:syntax()) ->
+-spec parse_request_params(nkactor:request(), nklib_syntax:syntax()) ->
     {ok, map()} | nklib_syntax:error().
 
 parse_request_params(Req, Syntax) ->
@@ -408,9 +403,7 @@ do_check_links([{Id, Type}|Rest], Acc) ->
 %% - uid is added
 %% - name is added (if not present)
 %% - metas kind, creationTime, updateTime, generation and resourceVersion are added
-add_creation_fields(SrvId, Actor) ->
-    Group = maps:get(group, Actor),
-    Res = maps:get(resource, Actor),
+add_creation_fields(SrvId, #{group:=Group, resource:=Res}=Actor) ->
     case nkactor_actor:get_module(SrvId, Group, Res) of
         undefined ->
             {error, {resource_invalid, <<Group/binary, $/, Res/binary>>}};

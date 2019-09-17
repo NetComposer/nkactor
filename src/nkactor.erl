@@ -23,7 +23,8 @@
 -module(nkactor).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([find/1, activate/1, is_activated/1, update/3, create/2, delete/1, delete/2]).
+-export([request/1]).
+-export([find/1, activate/1, is_activated/1, update/2, update/3, create/1, create/2, delete/1, delete/2]).
 -export([get_actor/1, get_actor/2, get_path/1, is_enabled/1, enable/2, stop/1, stop/2]).
 -export([activate_actors/1, search_groups/2, search_resources/3]).
 -export([search_label/3, search_label_range/4, search_linked_to/3, search_fts/3, search_actors/3, delete_multi/3, delete_old/5]).
@@ -189,7 +190,7 @@
         % Do not parse actor's data
         no_data_parse => boolean(),
         % Request will be used when calling actor's parse if provided
-        request => nkactor_request:request(),
+        request => nkactor:request(),
         % If ot_span_is defined, logs will be added, and it will be used
         % as parent for new spans that could be created
         ot_span_id => nkserver_ot:span_id() | nkserver_ot:parent()
@@ -198,12 +199,17 @@
 
 -type create_opts() ::
     #{
+        % False to avoid activating actor
         activate => boolean(),
+        % True to get full actor instead of actor_id
         get_actor => boolean(),
+        % Use this TTL (if actor is not already loaded)
         ttl => pos_integer(),
-        check_unique => boolean(),          % Default true
-        forced_uid => binary(),             % Use it only for non-persistent actors!
-        request => nkactor_request:request(),               % See get_opts()
+        % If true, no unique check is performed
+        no_unique_check => boolean(),
+        % Use it only for non-persistent actors, or if sure it is really unique
+        forced_uid => binary(),
+        request => nkactor:request(),
         ot_span_id => nkserver_ot:span_id() | nkserver_ot:parent()
     }.
 
@@ -211,7 +217,7 @@
 -type update_opts() ::
     #{
         merge_data => boolean(),
-        request => nkactor_request:request(),
+        request => nkactor:request(),
         get_actor => boolean(),
         allow_name_change => boolean()
     }.
@@ -222,14 +228,28 @@
         activate => boolean()
     }.
 
+-type request() :: nkactor_request:request().
+
+-type reply() :: nkactor_request:reply().
+
+
 
 %% ===================================================================
 %% Public
 %% ===================================================================
 
-%% These functions provide the direct Erlang API to work with actors
-%% Also, an RPC mechanism is provided in nkactor_request, that offers many of
-%% the same capabilities, along with a more elaborated security, tracing scheme
+
+
+%% @doc Launches an Request
+%% - A new span will be created. If ot_span_id is defined, it will be used as parent
+%% - Calls actor_req_authorize/1 for authorization of the request
+%% - Finds service managing namespace, and adds srv and start_time
+
+-spec request(request()) ->
+    reply().
+
+request(Req) ->
+    nkactor_request:request(Req).
 
 
 %% @doc Finds and actor from UUID or Path, in memory or disk
@@ -298,7 +318,7 @@ get_actor(Id, Opts) ->
     {ok, path()} | {error, term()}.
 
 get_path(Id) ->
-    case nkactor_srv:sync_op(Id, get_actor_id, infinity) of
+    case nkactor:sync_op(Id, get_actor_id, infinity) of
         {ok, ActorId} ->
             {ok, nkactor_lib:actor_id_to_path(ActorId)};
         {error, Error} ->
@@ -311,7 +331,7 @@ get_path(Id) ->
     {ok, boolean()} | {error, term()}.
 
 is_enabled(Id) ->
-    nkactor_srv:sync_op(Id, is_enabled, infinity).
+    nkactor:sync_op(Id, is_enabled, infinity).
 
 
 %% @doc Enables/disabled an object, activates first
@@ -319,7 +339,15 @@ is_enabled(Id) ->
     ok | {error, term()}.
 
 enable(Id, Enable) ->
-    nkactor_srv:sync_op(Id, {enable, Enable}, infinity).
+    nkactor:sync_op(Id, {enable, Enable}, infinity).
+
+
+%% @doc Creates a new actor
+-spec create(actor()) ->
+    {ok, actor_id()|actor()} | {error, term()}.
+
+create(Actor) ->
+    create(Actor, #{}).
 
 
 %% @doc Creates a new actor
@@ -361,6 +389,13 @@ create(Actor, Opts) ->
 %% TODO: Add patch support
 %% https://williamdurand.fr/2014/02/14/please-do-not-patch-like-an-idiot/
 %% http://erosb.github.io/post/json-patch-vs-merge-patch/
+
+-spec update(id()|pid(), actor()) ->
+    {ok, actor()} | {error, term()}.
+
+update(Id, Update) ->
+    update(Id, Update, #{}).
+
 
 -spec update(id()|pid(), actor(), update_opts()) ->
     {ok, actor()} | {error, term()}.
@@ -408,7 +443,7 @@ stop(Id) ->
     ok | {error, term()}.
 
 stop(Pid, Reason) when is_pid(Pid) ->
-    nkactor_srv:async_op(Pid, {stop, Reason});
+    nkactor:async_op(Pid, {stop, Reason});
 
 stop(Id, Reason) ->
     case find(Id) of

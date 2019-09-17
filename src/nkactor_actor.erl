@@ -23,7 +23,7 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([get_module/3, get_config/1, get_config/2, get_common_config/1]).
--export([parse/3, unparse/3, request/3]).
+-export([parse/4, unparse/3, request/3]).
 
 -include("nkactor.hrl").
 -include("nkactor_debug.hrl").
@@ -38,7 +38,7 @@
 -type actor() :: nkactor:actor().
 -type actor_id() :: nkactor:actor_id().
 -type config() :: nkactor:config().
--type request() :: nkactor_request:request().
+-type request() :: nkactor:request().
 -type response() :: nkactor_request:response().
 -type verb() :: nkactor:verb().
 -type actor_st() :: nkactor:actor_st().
@@ -52,19 +52,24 @@
 -callback config() -> config().
 
 
-%% @doc Called to validate an actor, on create and on update
+%% @doc Called to validate an actor, on read, create and on update
 %% Do not add labels, links or anything on metadata, do it on
 %% init/2 or update/2
-%% Use request to see the verb (get, create, update)
+%% - read is used after reading object from db
+%% - create is used on actor creation
+%% - update is used on the provided user's version of the modification
+%%
+%% Request will be the one provided by caller to
+%% nkactor:get_actor/2 or a barebones one (only srv)
 
--callback parse(verb(), map(), request()) ->
-    continue | {ok, map()} | {syntax, nkactor:vsn(), nklib_syntax:syntax()} | {error, term()}.
+-callback parse(read|create|update, map(), request()) ->
+    continue | {ok, Actor::map()} | {syntax, nkactor:vsn(), nklib_syntax:syntax()} | {error, term()}.
 
 
-%% @doc Called to process an incoming API
+%% @doc Called to process an incoming actor request
 %% SrvId will be the service supporting the domain in Req
 %% If not implemented, or 'continue' is returned, standard processing will apply
--callback request(verb(), [binary()], actor_id(), request()) ->
+-callback request(verb(), SubRes::binary(), actor_id(), request()) ->
     response() | continue.
 
 
@@ -342,10 +347,10 @@ to_field(Field) ->
 %% - It is included in actor's body (metadata.vsn)
 
 %% If ot_span_id is used, logs will be added
--spec parse(nkserver:id(), actor(), request()) ->
+-spec parse(nkserver:id(), read|create|update, actor(), request()) ->
     {ok, actor()} | {error, nkserver:status()}.
 
-parse(SrvId, Actor, #{verb:=Verb}=Req) ->
+parse(SrvId, Op, Actor, Req) ->
     Group = case Actor of
         #{group:=ActorGroup} ->
             ActorGroup;
@@ -361,7 +366,7 @@ parse(SrvId, Actor, #{verb:=Verb}=Req) ->
     % See nkactor_callback in nkactor_plugin
     SpanId = maps:get(ot_span_id, Req, undefined),
     nkserver_ot:log(SpanId, <<"calling actor parse">>),
-    Args = [parse, Group, Res, [Verb, Actor, Req]],
+    Args = [parse, Group, Res, [Op, Actor, Req]],
     case ?CALL_SRV(SrvId, nkactor_callback, Args) of
         continue ->
             nkserver_ot:log(SpanId, <<"default syntax">>),
@@ -369,12 +374,12 @@ parse(SrvId, Actor, #{verb:=Verb}=Req) ->
         {ok, Actor2} ->
             nkserver_ot:log(SpanId, <<"actor is custom parsed">>),
             {ok, Actor2};
-        {syntax, Vsn, Syntax, Req} when is_map(Syntax) ->
+        {syntax, Vsn, Syntax} when is_map(Syntax) ->
             nkserver_ot:log(SpanId, <<"actor has custom syntax">>),
-            nkactor_lib:parse_actor_data(Actor, Vsn, Syntax, Req);
-        {syntax, Vsn, Syntax, Req, Actor2} when is_map(Syntax) ->
+            nkactor_lib:parse_actor_data(Op, Actor, Vsn, Syntax);
+        {syntax, Vsn, Syntax, Actor2} when is_map(Syntax) ->
             nkserver_ot:log(SpanId, <<"actor has custom syntax and actor">>),
-            nkactor_lib:parse_actor_data(Actor2, Vsn, Syntax, Req);
+            nkactor_lib:parse_actor_data(Op, Actor2, Vsn, Syntax);
         {error, Error} ->
             nkserver_ot:log(SpanId, <<"error parsing actor: ~p">>, [Error]),
             {error, Error}

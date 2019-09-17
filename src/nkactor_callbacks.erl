@@ -115,8 +115,8 @@ status(_) -> continue.
 
 
 %% @doc Called when processing a request to be authorized or not
--spec actor_req_authorize(nkactor_request:request()) ->
-    {true, nkactor_request:request()} | false | continue().
+-spec actor_req_authorize(nkactor:request()) ->
+    {true, nkactor:request()} | false | continue().
 
 actor_req_authorize(_Req) ->
     false.
@@ -500,7 +500,7 @@ actor_srv_terminate(Reason, ActorSt) ->
 
 %% @doc Called when an 'isActivated' actor is read
 %% If 'removed' is returned the actor will not load
--spec actor_do_active(nkactor_srv:actor()) ->
+-spec actor_do_active(nkactor:actor()) ->
     ok | removed.
 
 actor_do_active(_Actor) ->
@@ -541,7 +541,7 @@ actor_do_expired(_Actor) ->
         % If ot_span_id is defined, it will be used as parent for new created spans
         ot_span_id => nkserver_ot:span_id() | nkserver_ot:parent(),
         % Default true
-        check_unique => boolean(),
+        no_unique_check => boolean(),
         % For deletions, default false
         cascade => boolean()
     }.

@@ -186,7 +186,7 @@ read(Id, Opts) ->
                 false ->
                     get_actor
             end,
-            case nkactor_srv:sync_op(ActorId2, Op, infinity) of
+            case nkactor:sync_op(ActorId2, Op, infinity) of
                 {ok, Actor} ->
                     {ok, SrvId, Actor, Meta2};
                 {error, Error} ->
@@ -224,7 +224,7 @@ create(Actor, #{activate:=false}=Opts) ->
             }),
             % Non recommended for non-relational databases, if name is not
             % randomly generated
-            Config1 = maps:with([check_unique], Opts),
+            Config1 = maps:with([no_unique_check], Opts),
             Config2 = Config1#{ot_span_id=>span_id(create)},
             span_log(create, <<"calling actor_db_create">>),
             case ?CALL_SRV(SrvId, actor_db_create, [SrvId, Actor2, Config2]) of
@@ -260,7 +260,7 @@ create(Actor, Opts) ->
             % registered with leader, so you cannot have two with same
             % name even on non-relational databases
             % The process will send the 'create' event in-server
-            Config1 = maps:with([ttl, check_unique], Opts),
+            Config1 = maps:with([ttl, no_unique_check], Opts),
             Config2 = Config1#{ot_span_id=>span_id(create)},
             span_log(create, <<"calling actor create">>),
             case ?CALL_SRV(SrvId, actor_create, [Actor2, Config2]) of
@@ -285,7 +285,7 @@ create(Actor, Opts) ->
                     case Opts of
                         #{get_actor:=true} ->
                             span_log(create, <<"calling get_actor">>),
-                            case nkactor_srv:sync_op(ActorId, get_actor, infinity) of
+                            case nkactor:sync_op(ActorId, get_actor, infinity) of
                                 {ok, Actor3} ->
                                     span_finish(create),
                                     {ok, SrvId, Actor3, #{}};
@@ -349,7 +349,7 @@ update(Id, Actor, Opts) ->
             span_log(update, <<"calling update actor">>),
             case nkactor_util:pre_update(SrvId, ActorId, Actor, Opts#{ot_span_id=>span_id(update)}) of
                 {ok, Actor2} ->
-                    case nkactor_srv:sync_op(ActorId, {update, Actor2, Opts2}, infinity) of
+                    case nkactor:sync_op(ActorId, {update, Actor2, Opts2}, infinity) of
                         {ok, Actor3} ->
                             span_finish(update),
                             {ok, SrvId, Actor3, #{}};
@@ -394,7 +394,7 @@ update(Id, Actor, Opts) ->
 %%                    }),
 %%                    Opts2 = Opts#{ot_span_id=>span_id(update)},
 %%                    span_log(update, <<"calling update actor">>),
-%%                    case nkactor_srv:sync_op(ActorId2, {update, Actor2, Opts2}, infinity) of
+%%                    case nkactor:sync_op(ActorId2, {update, Actor2, Opts2}, infinity) of
 %%                        {ok, Actor3} ->
 %%                            span_finish(update),
 %%                            {ok, SrvId, Actor3, #{}};
@@ -451,7 +451,7 @@ delete(Id, Opts) ->
             case is_pid(Pid) of
                 true ->
                     span_log(delete, <<"calling actor delete">>),
-                    case nkactor_srv:sync_op(ActorId2, delete, infinity) of
+                    case nkactor:sync_op(ActorId2, delete, infinity) of
                         ok ->
                             % The object is loaded, and it will perform the delete
                             % itself, including sending the event (a full event)
@@ -536,7 +536,7 @@ delete_multi(SrvId, ActorIds) ->
 %%                    span_log(<<"cascade: false (active)">>),
 %%                    span_log(<<"calling actor_delete">>),
 %%                    lager:error("NKLOG DELETE3"),
-%%                    case nkactor_srv:sync_op(ActorId2, delete, infinity) of
+%%                    case nkactor:sync_op(ActorId2, delete, infinity) of
 %%                        ok ->
 %%                            % The object is loaded, and it will perform the delete
 %%                            % itself, including sending the event (a full event)
@@ -686,17 +686,14 @@ do_read(SrvId, ActorId, Opts) ->
             % Now we check specific syntax
             % If request option is provided, it is used for parsing
             Req1 = maps:get(request, Opts, #{}),
-            Req2 = Req1#{
-                verb => get,
-                srv => SrvId
-            },
+            Req2 = Req1#{srv => SrvId},
             Req3 = maps:merge(#{ot_span_id=>SpanId}, Req2),
             nkserver_ot:log(SpanId, <<"calling actor parse">>),
             case Opts of
                 #{no_data_parse:=true} ->
                     {ok, Actor, Meta};
                 _ ->
-                    case nkactor_actor:parse(SrvId, Actor, Req3) of
+                    case nkactor_actor:parse(SrvId, read, Actor, Req3) of
                         {ok, Actor2} ->
                             nkserver_ot:log(SpanId, <<"actor is valid">>),
                             {ok, Actor2, Meta};

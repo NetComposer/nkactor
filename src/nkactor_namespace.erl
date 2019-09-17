@@ -716,5 +716,5 @@ to_bin(Term) -> nklib_util:to_binary(Term).
 %%stop_all_childs(#state{register_ets=Ets}) ->
 %%    Pids = [Pid || {{pid, Pid}, _, _, _} <- ets:tab2list(Ets)],
 %%    lists:foreach(
-%%        fun(Pid) -> nkactor_srv:async_op(Pid, {raw_stop, namespace_stop}) end,
+%%        fun(Pid) -> nkactor:async_op(Pid, {raw_stop, namespace_stop}) end,
 %%        Pids).
