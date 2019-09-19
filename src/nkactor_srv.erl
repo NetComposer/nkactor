@@ -690,10 +690,9 @@ do_sync_op(get_alarms, _From, #actor_st{actor=Actor}=State) ->
     reply({ok, Alarms}, State);
 
 do_sync_op({set_alarm, Alarm}, _From, State) ->
-    Syntax = nkactor_syntax:alarm_syntax(),
-    case nklib_syntax:parse(Alarm, Syntax) of
-        {ok, Alarm2, _} ->
-            reply(ok, do_add_alarm(Alarm2, State));
+    case nkactor_srv_lib:add_actor_alarm(Alarm, State) of
+        {ok, State2} ->
+            reply(ok, do_refresh_ttl(State2));
         {error, Error} ->
             reply({error, Error}, State)
     end;
@@ -762,17 +761,17 @@ do_async_op({raw_stop, Reason}, State) ->
     {stop, normal, State3#actor_st{stop_reason=raw_stop}};
 
 do_async_op({set_alarm, Alarm}, State) ->
-    Syntax = nkactor_syntax:alarm_syntax(),
-    case nklib_syntax:parse(Alarm, Syntax) of
-        {ok, Alarm2, _} ->
-            noreply(do_add_alarm(Alarm2, State));
+    case nkactor_srv_lib:add_actor_alarm(Alarm, State) of
+        {ok, State2} ->
+            noreply(do_refresh_ttl(State2));
         {error, _} ->
             ?ACTOR_LOG(error, "invalid alarm: ~p", [Alarm], State),
             noreply(State)
     end;
 
 do_async_op(clear_all_alarms, State) ->
-    noreply(do_clear_all_alarms(State));
+    State2 = nkactor_srv_lib:clear_all_alarms(State),
+    noreply(do_refresh_ttl(State2));
 
 do_async_op(Op, State) ->
     ?ACTOR_LOG(notice, "unknown async op: ~p", [Op], State),
@@ -968,38 +967,6 @@ do_heartbeat(State) ->
             noreply(State2);
         {error, Error} ->
             do_stop(Error, State)
-    end.
-
-
-%% @private
-do_add_alarm(#{class:=Class}=Alarm, #actor_st{actor=Actor}=State) ->
-    Alarm2 = case maps:is_key(last_time, Alarm) of
-        true ->
-            Alarm;
-        false ->
-            Alarm#{last_time => nklib_date:now_3339(secs)}
-    end,
-    #{metadata:=Meta} = Actor,
-    Alarms = maps:get(alarms, Meta, []),
-    Alarms2 = [A || A <- Alarms, maps:get(class, A) /= Class],
-    Alarms3 = [Alarm2 | Alarms2],
-    Meta2 = Meta#{in_alarm => true, alarms => Alarms3},
-    Actor2 = Actor#{metadata:=Meta2},
-    State2 = nkactor_srv_lib:set_dirty(State#actor_st{actor=Actor2}),
-    do_refresh_ttl(nkactor_srv_lib:event({alarm_fired, Alarm}, State2)).
-
-
-%% @private
-do_clear_all_alarms(#actor_st{actor=Actor}=State) ->
-    #{metadata := Meta} = Actor,
-    case Meta of
-        #{in_alarm:=true} ->
-            Meta2 = maps:without([in_alarm, alarms], Meta),
-            Actor2 = Actor#{metadata := Meta2},
-            State2 = nkactor_srv_lib:set_dirty(State#actor_st{actor=Actor2}),
-            do_refresh_ttl(nkactor_srv_lib:event(alarms_all_cleared, State2));
-        _ ->
-            State
     end.
 
 

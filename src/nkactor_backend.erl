@@ -364,7 +364,9 @@ update(Id, Actor, Opts) ->
                     span_error(update, Error),
                     span_finish(update),
                     {error, Error}
-            end
+            end;
+        {error, Error} ->
+            {error, Error}
     end.
 
 

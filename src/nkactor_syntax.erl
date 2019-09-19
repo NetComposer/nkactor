@@ -185,19 +185,25 @@ parse_request_body(#{verb:=Verb, body:=Body}=Req) when Verb==create; Verb==updat
             Metadata = maps:get(metadata, BodyFields, #{}),
             BodyVsn = maps:get(vsn, Metadata, ReqVsn),
             BodyFields2 = maps:remove(metadata, BodyFields),
+            AllowChange = case Verb==update andalso Req of
+                #{params:=#{allow_name_change:=true}} ->
+                    true;
+                _ ->
+                    false
+            end,
             case {BodyFields2, Req} of
                 {#{group:=G1}, #{group:=G2}} when G1 /= G2 ->
                     {error, {field_invalid, <<"group">>}};
                 {#{resource:=R1}, #{resource:=R2}} when R1 /= R2 ->
                     {error, {field_invalid, <<"resource">>}};
-                {#{name:=N1}, #{name:=N2}} when N1 /= N2 ->
+                {#{name:=N1}, #{name:=N2}} when N1 /= N2, not AllowChange ->
                     {error, {field_invalid, <<"name">>}};
-                {#{namespace:=S1}, #{namespace:=S2}} when S1 /= S2 ->
+                {#{namespace:=S1}, #{namespace:=S2}} when S1 /= S2, not AllowChange ->
                     {error, {field_invalid, <<"namespace">>}};
                 _ when BodyVsn /= ReqVsn ->
                     {error, {field_invalid, <<"metadata.vsn">>}};
                 _ ->
-                    case maps:merge(Req, BodyFields2) of
+                    case maps:merge(BodyFields2, Req) of
                         #{group:=_, resource:=_, namespace:=_}=Req2 ->
                             case ReqVsn of
                                 <<>> ->

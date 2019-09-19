@@ -150,6 +150,8 @@
         async_save => boolean(),
         %% Max number of events stored in actor, default 10
         max_actor_events => integer(),
+        %% Max number of alarms stored in actor, default 10
+        max_actor_alarms => integer(),
         create_check_unique => boolean(),               %% Default true
         dont_update_on_disabled => boolean(),           %% Default false
         dont_delete_on_disabled => boolean(),           %% Default false

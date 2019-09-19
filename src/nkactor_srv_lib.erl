@@ -25,7 +25,7 @@
 -export([event/2, event_link/2, update/3, delete/1, set_next_status_time/2,
          unset_next_status_time/1, get_links/1, add_link/3, remove_link/2,
          save/2, set_active/2, remove_all_links/1, add_actor_event/4, set_dirty/1,
-         update_status/2, update_status/3]).
+         update_status/2, update_status/3, add_actor_alarm/2, clear_all_alarms/1]).
 -export([handle/3, set_unload_policy/1]).
 -export([op_span_check_create/3, op_span_force_create/2, op_span_finish/1,
          op_span_log/2, op_span_log/3, op_span_tags/2, op_span_error/2]).
@@ -164,10 +164,10 @@ update(UpdActor, Opts, #actor_st{actor_id=ActorId, actor=Actor}=State) ->
                     _ ->
                         throw({updated_namespace_invalid, UpdNamespace})
                 end,
-                ActorId2 = ActorId#{
-                    namespace => UpdNamespace,
-                    name => UpdName,
-                    uid => undefined
+                ActorId2 = ActorId#actor_id{
+                    namespace = UpdNamespace,
+                    name = UpdName,
+                    uid = undefined
                 },
                 case nkactor:find(ActorId2) of
                     {ok, _} ->
@@ -249,7 +249,7 @@ update(UpdActor, Opts, #actor_st{actor_id=ActorId, actor=Actor}=State) ->
                 State2 = op_span_check_create(update, Opts, State),
                 %lager:error("NKLOG UPDATE Data:~p, Meta:~p", [IsDataUpdated, IsMetaUpdated]),
                 NewActor1 = Actor#{
-                    namespace => Namespace,
+                    namespace => UpdNamespace,
                     name => UpdName,
                     data => NewData,
                     metadata := NewMeta3
@@ -297,6 +297,7 @@ update(UpdActor, Opts, #actor_st{actor_id=ActorId, actor=Actor}=State) ->
         throw:Throw ->
             {error, Throw, State}
     end.
+
 
 %% @doc Copy fields from 'data.status' from old actor to new
 update_status(Actor, #actor_st{actor=OldActor}) ->
@@ -373,7 +374,7 @@ save(Reason, State) ->
 
 
 %% @doc
-save(Reason, SaveOpts, #actor_st{is_dirty = true} = State) ->
+save(Reason, SaveOpts, #actor_st{actor=Actor, is_dirty = true} = State) ->
     #actor_st{
         srv = SrvId,
         actor = Actor,
@@ -539,6 +540,52 @@ add_actor_event(Class, Type, Data, ActorSt) ->
     % We don't call set_dirty, the actor is no really modified by user,
     % and many actors can insert a 'created' event, and would start with generation=1, etc.
     ActorSt#actor_st{actor=Actor2, is_dirty=true}.
+
+
+%% @private
+add_actor_alarm(Alarm, #actor_st{actor=Actor, config=Config}=State) ->
+    Syntax = nkactor_syntax:alarm_syntax(),
+    case nklib_syntax:parse(Alarm, Syntax) of
+        {ok, #{class:=Class}=Alarm2, _} ->
+            Alarm3 = case maps:is_key(last_time, Alarm) of
+                true ->
+                    Alarm2;
+                false ->
+                    Alarm2#{last_time => nklib_date:now_3339(usecs)}
+            end,
+            #{metadata:=Meta} = Actor,
+            Alarms = maps:get(alarms, Meta, []),
+            Alarms2 = [A || A <- Alarms, maps:get(class, A) /= Class],
+            MaxAlarms = maps:get(max_actor_alarms, Config, 10),
+            Alarms3 = case length(Alarms2) >= MaxAlarms of
+                true ->
+                    lists:sublist(Alarms2, MaxAlarms-1);
+                false ->
+                    Alarms2
+            end,
+            Alarms4 = [Alarm3 | Alarms3],
+            Meta2 = Meta#{in_alarm => true, alarms => Alarms4},
+            Actor2 = Actor#{metadata:=Meta2},
+            State2 = nkactor_srv_lib:set_dirty(State#actor_st{actor=Actor2}),
+            {ok, event({alarm_fired, Alarm}, State2)};
+        {error, Error} ->
+            {error, Error}
+    end.
+
+
+%% @private
+clear_all_alarms(#actor_st{actor=Actor}=State) ->
+    #{metadata := Meta} = Actor,
+    case Meta of
+        #{in_alarm:=true} ->
+            Meta2 = maps:without([in_alarm, alarms], Meta),
+            Actor2 = Actor#{metadata := Meta2},
+            State2 = nkactor_srv_lib:set_dirty(State#actor_st{actor=Actor2}),
+            nkactor_srv_lib:event(alarms_all_cleared, State2);
+        _ ->
+            State
+    end.
+
 
 
 

@@ -412,6 +412,7 @@ create(ActorId, Config, Req) ->
 %% @doc
 update(ActorId, Config, Req) ->
     ParamsSyntax = #{
+        allow_name_change => boolean
     },
     case parse_params(Req, ParamsSyntax) of
         {ok, Params} ->
@@ -530,6 +531,12 @@ parse_body(_) ->
 %% @doc Checks that fields in req are not different in body:
 check_actor(Actor, ActorId, Req) ->
     #actor_id{group=Group, resource=Res, name=Name, namespace=Namespace} = ActorId,
+    AllowChange = case Req of
+        #{verb:=update, params:=#{allow_name_change:=true}} ->
+            true;
+        _ ->
+            false
+    end,
     try
         case Actor of
             #{group:=ObjGroup} when ObjGroup /= Group ->
@@ -543,23 +550,28 @@ check_actor(Actor, ActorId, Req) ->
             _ ->
                 ok
         end,
-        case Actor of
-            #{namespace:=ObjNamespace} when ObjNamespace /= Namespace ->
-                throw({field_invalid, <<"namespace">>});
+        UpdNamespace = case Actor of
+            #{namespace:=ObjNamespace} ->
+                if
+                    ObjNamespace /= Namespace, not AllowChange ->
+                        throw({field_invalid, <<"namespace3">>});
+                    true ->
+                        ObjNamespace
+                end;
             _ ->
-                ok
+                Namespace
         end,
-        case Actor of
+        UpdName = case Actor of
             #{name:=ObjName} ->
                 % If name is in body, it has been already read, so there is a name
                 if
-                    is_binary(Name) andalso Name /= ObjName ->
+                    is_binary(Name) andalso Name /= ObjName, not AllowChange ->
                         throw({field_invalid, <<"name">>});
                     true ->
-                        ok
+                        ObjName
                 end;
             _ ->
-                ok
+                Name
         end,
         case Actor of
             #{metadata:=#{vsn:=ObjVsn}} ->
@@ -572,7 +584,7 @@ check_actor(Actor, ActorId, Req) ->
             _ ->
                 ok
         end,
-        {ok, Actor#{group=>Group, resource=>Res, name=>Name, namespace=>Namespace}}
+        {ok, Actor#{group=>Group, resource=>Res, name=>UpdName, namespace=>UpdNamespace}}
     catch
         throw:Throw ->
             {error, Throw}
@@ -580,25 +592,11 @@ check_actor(Actor, ActorId, Req) ->
 
 
 %% @private
-set_activate_opts(#{activable:=false}, _Params) ->
-    #{activate=>false, ot_span_id=>?REQ_SPAN};
+set_activate_opts(#{activable:=false}, Params) ->
+    Params#{activate=>false, ot_span_id=>?REQ_SPAN};
 
 set_activate_opts(_Config, Params) ->
-    Activate = maps:get(activate, Params, true),
-    Opts1 = case Activate of
-        true ->
-            #{activate=>true, consume=>maps:get(consume, Params, false)};
-        false ->
-            #{activate=>false}
-    end,
-    Opts2 = case maps:find(ttl, Params) of
-        {ok, TTL} ->
-            Opts1#{ttl=>TTL};
-        error ->
-            Opts1
-    end,
-    Opts2#{ot_span_id=>?REQ_SPAN}.
-
+    Params#{ot_span_id=>?REQ_SPAN}.
 
 
 %% @private
