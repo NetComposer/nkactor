@@ -133,7 +133,7 @@ pre_request(Req) ->
     nkserver_ot:new(?REQ_SPAN, undefined, <<"Actor::Request">>, ParentSpan),
     case nkactor_syntax:parse_request(Req) of
         {ok, #{group:=Group, resource:=Res, namespace:=Namespace}=Req2} ->
-            case get_srv_id(Req2) of
+            case add_srv_id(Req2) of
                 {ok, SrvId} ->
                     Verb = maps:get(verb, Req2, get),
                     SubRes = maps:get(subresource, Req2, <<>>),
@@ -183,11 +183,15 @@ pre_request(Req) ->
 
 
 %% @private
-get_srv_id(#{srv:=SrvId}) ->
+add_srv_id(#{namespace:=Namespace}) ->
+    nkactor_namespace:find_service(Namespace);
+
+add_srv_id(#{srv:=SrvId}) ->
     {ok, SrvId};
 
-get_srv_id(#{namespace:=Namespace}) ->
-    nkactor_namespace:find_service(Namespace).
+add_srv_id(_) ->
+    {error, {field_missing, <<"namespace">>}}.
+
 
 %% @doc
 post_request(Reply, Req) ->
