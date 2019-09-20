@@ -25,11 +25,14 @@
 -export([find/2, activate/2, read/2]).
 -export([create/2, update/3, delete/2, delete_multi/2]).
 -export([search/3, aggregation/3, truncate/2]).
+-export([search_activate_actors/3]).
 %% -export([check_service/4]).
 %%-export_type([search_obj/0, search_objs_opts/0]).
 
 -include_lib("nkserver/include/nkserver.hrl").
 -include("nkactor.hrl").
+
+-define(ACTIVATE_SPAN, auto_activate).
 
 
 -define(LLOG(Type, Txt, Args), lager:Type("NkACTOR DB "++Txt, Args)).
@@ -179,8 +182,7 @@ read(Id, Opts) ->
     SpanId = maps:get(ot_span_id, Opts, undefined),
     case do_activate(Id, Opts#{ot_span_id=>SpanId}) of
         {ok, SrvId, ActorId2, Meta2} ->
-            Consume = maps:get(consume, Opts, false),
-            Op = case Consume of
+            Op = case maps:get(consume, Opts, false) of
                 true ->
                     consume_actor;
                 false ->
@@ -761,6 +763,35 @@ make_fake_actor(ActorId) ->
     }.
 
 
+%% @doc Performs an query on database for actors due for activation
+-spec search_activate_actors(nkserver:id(), Date::binary(), PageSize::pos_integer()) ->
+    {ok, [nkactor:uid()]} | {error, term()}.
+
+search_activate_actors(SrvId, Date, PageSize) ->
+    nkserver_ot:new(?ACTIVATE_SPAN, SrvId, <<"Actor::auto-activate">>),
+    Res = search_activate_actors(SrvId, #{last_time=>Date, size=>PageSize}, 100, []),
+    nkserver_ot:finish(?ACTIVATE_SPAN),
+    Res.
+
+
+%% @private
+search_activate_actors(SrvId, Opts, Iters, Acc) when Iters > 0 ->
+    nkserver_ot:log(?ACTIVATE_SPAN, {"starting cursor: ~s", [maps:get(last_time, Opts, <<>>)]}),
+    ParentSpan = nkserver_ot:make_parent(?ACTIVATE_SPAN),
+    Opts2 =  Opts#{ot_span_id=>ParentSpan},
+    case search(SrvId, actors_activate, Opts2) of
+        {ok, [], _} ->
+            nkserver_ot:log(?ACTIVATE_SPAN, <<"no more actors">>),
+            {ok, lists:flatten(Acc)};
+        {ok, ActorIds, #{last_time:=LastDate}} ->
+            nkserver_ot:log(?ACTIVATE_SPAN, {"found '~p' actors", [length(ActorIds)]}),
+            search_activate_actors(SrvId, Opts#{last_time=>LastDate}, Iters-1, [ActorIds|Acc]);
+        {error, Error} ->
+            {error, Error}
+    end;
+
+search_activate_actors(_SrvId, _Opts, _Iters, _Acc) ->
+    {error, too_many_iterations}.
 
 
 %% @private

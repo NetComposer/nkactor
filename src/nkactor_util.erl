@@ -96,42 +96,29 @@ fold_actors(SrvId, NextUID, SearchFun, FoldFun, FoldAcc) ->
     {ok, [#actor_id{}]} | {error, term()}.
 
 activate_actors(SrvId) ->
-    nkserver_ot:new(?ACTIVATE_SPAN, SrvId, <<"Actor::auto-activate">>),
-    Res = activate_actors(SrvId, <<>>, []),
-    nkserver_ot:finish(?ACTIVATE_SPAN),
-    Res.
-
-
-%% @private
-activate_actors(SrvId, StartCursor, Acc) ->
-    nkserver_ot:log(?ACTIVATE_SPAN, {"starting cursor: ~s", [StartCursor]}),
-    ParentSpan = nkserver_ot:make_parent(?ACTIVATE_SPAN),
-    case nkactor:search_active(SrvId, #{last_cursor=>StartCursor, ot_span_id=>ParentSpan, size=>10}) of
-        {ok, [], _} ->
-            nkserver_ot:log(?ACTIVATE_SPAN, <<"no more actors">>),
-            {ok, lists:reverse(Acc)};
-        {ok, ActorIds, #{last_cursor:=LastDate}} ->
-            nkserver_ot:log(?ACTIVATE_SPAN, {"found '~p' actors", [length(ActorIds)]}),
-            Acc2 = do_activate_actors(ActorIds, Acc),
-            activate_actors(SrvId, LastDate, Acc2);
+    case nkactor:search_activate(SrvId) of
+        {ok, List} ->
+            activate_actors(List, 0);
         {error, Error} ->
             {error, Error}
     end.
 
+
+
 %% @private
-do_activate_actors([], Acc) ->
+activate_actors([], Acc) ->
     Acc;
 
-do_activate_actors([ActorId|Rest], Acc) ->
+activate_actors([ActorId|Rest], Acc) ->
     Acc2 = case nkactor_namespace:find_registered_actor(ActorId) of
         {true, _, _} ->
             Acc;
         _ ->
             case nkactor:activate(ActorId) of
                 {ok, ActorId2} ->
-                    nkserver_ot:log(?ACTIVATE_SPAN, {"activated actor ~p", [ActorId]}),
-                    lager:notice("NkACTOR auto-activating ~p", [ActorId]),
-                    [ActorId2|Acc];
+                    nkserver_ot:log(?ACTIVATE_SPAN, {"activated actor ~p", [ActorId2]}),
+                    lager:notice("NkACTOR auto-activating ~p", [ActorId2]),
+                    Acc+1;
                 {error, actor_not_found} ->
                     nkserver_ot:log(?ACTIVATE_SPAN, {"could not activated actor ~p: not_found",
                          [ActorId]}),
@@ -145,7 +132,7 @@ do_activate_actors([ActorId|Rest], Acc) ->
                     Acc
             end
     end,
-    do_activate_actors(Rest, Acc2).
+    activate_actors(Rest, Acc2).
 
 
 %% @private

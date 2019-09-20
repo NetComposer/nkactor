@@ -29,8 +29,8 @@
 
 -export([actor_to_actor_id/1, id_to_actor_id/1]).
 -export([send_external_event/3]).
--export([get_linked_type/2, get_linked_uids/2, add_link/3, add_checked_link/4, add_checked_link/5,
-         rm_link/2, rm_links/3, rm_links/2, link_type/2]).
+-export([get_linked_type/2, get_linked_uids/2, add_link/3, add_checked_link/5,
+         rm_link/2, rm_links/2]).
 -export([add_creation_fields/2, update/2, check_actor_links/1, check_meta_links/1, check_links/1]).
 -export([add_labels/4, add_label/3, rm_label_re/2]).
 -export([actor_id_to_path/1]).
@@ -171,12 +171,6 @@ add_link(UID, #{metadata:=Meta}=Actor, LinkType) when is_binary(UID), is_binary(
     Actor#{metadata:=Meta#{links => Links2}}.
 
 
-%% @doc Links checking destination type, generates type
-add_checked_link(Target, Group, Resource, #{}=Actor) when is_binary(Group), is_binary(Resource) ->
-    LinkType = link_type(Group, Resource),
-    add_checked_link(Target, Group, Resource, Actor, LinkType).
-
-
 %% @doc Links checking destination type
 add_checked_link(Target, Group, Resource, #{}=Actor, LinkType)
         when is_binary(Group), is_binary(Resource), is_binary(LinkType) ->
@@ -212,22 +206,11 @@ get_linked_uids(Type, #{metadata:=Meta}) ->
         maps:get(links, Meta, #{})).
 
 
-%% @doc
-link_type(Group, Resource) ->
-    <<"io.netk.", Group/binary, $., Resource/binary>>.
-
-
 %% @doc Removes a link
 rm_link(#{metadata:=Meta}=Actor, Target) when is_binary(Target) ->
     Links1 = maps:get(links, Meta, #{}),
     Links2 = maps:remove(Target, Links1),
     Actor#{metadata:=Meta#{links=>Links2}}.
-
-
-%% @doc Removes all links for a type
-rm_links(Group, Resource, #{}=Actor) ->
-    LinkType = link_type(Group, Resource),
-    rm_links(Actor, LinkType).
 
 
 %% @doc Removes all links for a type
@@ -597,7 +580,6 @@ set_ttl(#{metadata:=Meta}=Actor, MSecs) ->
     {ok, Expires} = nklib_date:to_3339(Now+1000*MSecs, usecs),
     Meta2 = Meta#{expires_time => Expires},
     Actor#{metadata := Meta2}.
-
 
 
 %% @private

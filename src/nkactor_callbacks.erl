@@ -31,7 +31,7 @@
          actor_srv_event/2,
          actor_srv_link_event/4, actor_srv_link_down/3, actor_srv_save/2,
          actor_srv_sync_op/3, actor_srv_async_op/2,
-         actor_srv_enabled/2, actor_srv_next_status_timer/1,
+         actor_srv_enabled/2, actor_srv_activate_timer/2, actor_srv_expired/2,
          actor_srv_alarms/1, actor_srv_heartbeat/1,
          actor_srv_handle_call/3, actor_srv_handle_cast/2, actor_srv_handle_info/2]).
 -export([actor_do_active/1, actor_do_expired/1]).
@@ -253,7 +253,6 @@ actor_srv_get(Actor, ActorSt) ->
     end.
 
 
-
 %%  @doc Called after approving an update, to change the updated actor  (callback update/2 in actor)
 -spec actor_srv_update(nkactor:actor(), actor_st()) ->
     {ok, nkactor:actor(), actor_st()} | {error, nkserver:status(), actor_st()} |continue().
@@ -391,12 +390,26 @@ actor_srv_link_down(Link, Data, ActorSt) ->
 
 
 %% @doc Called when the timer in next_status_time is fired
--spec actor_srv_next_status_timer(actor_st()) ->
+-spec actor_srv_activate_timer(Time::binary(), actor_st()) ->
     {ok, actor_st()} | continue().
 
-actor_srv_next_status_timer(ActorSt) ->
+actor_srv_activate_timer(Time, ActorSt) ->
     #actor_st{srv=SrvId, actor_id=#actor_id{group=Group, resource=Res}} = ActorSt,
-    case ?CALL_SRV(SrvId, nkactor_callback, [next_status_timer, Group, Res, [ActorSt]]) of
+    case ?CALL_SRV(SrvId, nkactor_callback, [activate_timer, Group, Res, [Time, ActorSt]]) of
+        continue ->
+            {ok, ActorSt};
+        Other ->
+            Other
+    end.
+
+
+%% @doc Called when the actor is expired
+-spec actor_srv_expired(Time::binary(), actor_st()) ->
+    {ok, actor_st()} | continue().
+
+actor_srv_expired(Time, ActorSt) ->
+    #actor_st{srv=SrvId, actor_id=#actor_id{group=Group, resource=Res}} = ActorSt,
+    case ?CALL_SRV(SrvId, nkactor_callback, [expired, Group, Res, [Time, ActorSt]]) of
         continue ->
             {ok, ActorSt};
         Other ->

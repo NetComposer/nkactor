@@ -26,9 +26,9 @@
 -export([request/1]).
 -export([find/1, activate/1, is_activated/1, update/2, update/3, create/1, create/2, delete/1, delete/2]).
 -export([get_actor/1, get_actor/2, get_path/1, is_enabled/1, enable/2, stop/1, stop/2]).
--export([activate_actors/1, search_groups/2, search_resources/3]).
+-export([search_groups/2, search_resources/3]).
 -export([search_label/3, search_label_range/4, search_linked_to/3, search_fts/3, search_actors/3, delete_multi/3, delete_old/5]).
--export([search_active/2, search_expired/2, truncate/1]).
+-export([search_activate/1, truncate/1]).
 -export([base_namespace/1, find_label/4, find_linked/3]).
 -export([sync_op/2, sync_op/3, async_op/2]).
 -export([get_services/0, call_services/2]).
@@ -65,10 +65,13 @@
             generation => integer(),
             creation_time => binary(),
             update_time => binary(),
-            % If this flag is set, actor will be re-activated automatically
-            % when calling nkactor:activate_actors/1
-            is_active => boolean(),
-            expires_time => binary(),       % Use <<>> to disable
+            % If set, this actor will expire and will be deleted on this date
+            % Use <<>> to disable
+            expires_time => binary(),
+            % If set, this actor will be activated and callback will be called
+            % Use <<>> to disable
+            % System can set it to "0" for a permanent-activated actor
+            activate_time => binary(),
             % If value is empty it is removed
             labels => #{binary() => binary()},
             fts => #{binary() => [binary()]},
@@ -80,7 +83,6 @@
             in_alarm => boolean(),
             alarms => [alarm()],
             events => [event()],
-            next_status_time => binary(),
             description => binary(),
             trace_id => binary()
         }
@@ -146,7 +148,7 @@
         heartbeat_time => integer(),                    %% msecs for heartbeat
         save_time => integer(),                         %% msecs for auto-save
         activable => boolean(),                         %% Default true
-        auto_activate => boolean(),                     %% Periodic automatic activation
+        auto_activate => boolean(),                     %% Auto activate from DB
         async_save => boolean(),
         %% Max number of events stored in actor, default 10
         max_actor_events => integer(),
@@ -456,15 +458,6 @@ stop(Id, Reason) ->
     end.
 
 
-%% @doc Performs an query on database for actors marked as 'active' and tries
-%% to active them if not already activated
--spec activate_actors(nkserver:id()) ->
-    {ok, [actor_id()]} | {error, term()}.
-
-activate_actors(SrvId) ->
-    nkactor_util:activate_actors(SrvId).
-
-
 -type search_opts() :: #{namespace=>namespace(), deep=>boolean()}.
 
 %% @doc Counts classes and objects of each class
@@ -703,21 +696,27 @@ delete_old(SrvId, Group, Res, Date, Opts) ->
     nkactor_backend:search(SrvId, actors_delete_old, Params).
 
 
-%% @doc
--spec search_active(nkactor:id(), #{last_cursor=>binary, size=>integer()}) ->
-    {ok, [uid()], #{last_cursor=>binary()}}.
+%% @doc Find actors with activation date < current date + 2h (or use last_time)
+%% If 2 actors share the exact same activation date (in usecs) and pagination
+%% stops on it, some could be lost
+%% Since we are activating 2h in advance, next time should't happen
+-spec search_activate(nkactor:id()) ->
+    {ok, [#actor_id{}]} | {error, term()}.
 
-search_active(SrvId, Opts) ->
-    nkactor_backend:search(SrvId, actors_active, Opts).
+search_activate(SrvId) ->
+    Now = nklib_date:epoch(usecs),
+    Time1 = Now + 2 * 60 * 60 * 1000 * 1000,
+    {ok, Time2} = nklib_date:to_3339(Time1, usecs),
+    nkactor_backend:search_activate_actors(SrvId, Time2, 1000).
 
 
-%% @doc
-%% Use last_cursor as initial date to expire
--spec search_expired(nkactor:id(), #{last_cursor=>binary, size=>integer()}) ->
-    {ok, [uid()], #{last_cursor=>binary()}}.
-
-search_expired(SrvId, Opts) ->
-    nkactor_backend:search(SrvId, actors_expired, Opts).
+%%%% @doc
+%%%% Use last_cursor as initial date to expire
+%%-spec search_expired(nkactor:id(), #{last_cursor=>binary, size=>integer()}) ->
+%%    {ok, [uid()], #{last_cursor=>binary()}}.
+%%
+%%search_expired(SrvId, Opts) ->
+%%    nkactor_backend:search(SrvId, actors_expired, Opts).
 
 
 %% @doc

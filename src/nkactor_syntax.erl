@@ -88,8 +88,8 @@ meta_syntax() ->
         creation_time => date_3339,
         update_time => date_3339,
         is_enabled => boolean,
-        is_active => boolean,
         expires_time => [date_3339, {binary, [<<>>]}],
+        activate_time => [date_3339, {binary, [<<"1">>, <<>>]}],
         labels => #{'__map_binary' => binary},
         annotations => #{'__map_binary' => binary},
         links => #{'__map_binary' => binary},
@@ -97,7 +97,6 @@ meta_syntax() ->
         in_alarm => boolean,
         alarms => {list, alarm_syntax()},
         events => {list, event_syntax()},
-        next_status_time => date_3339,
         description => binary,
         created_by => binary,
         updated_by => binary,
@@ -299,11 +298,10 @@ actor_fields_filter() ->
         'metadata.generation',
         'metadata.creation_time',
         'metadata.update_time',
-        'metadata.is_active',
         'metadata.expires_time',
         'metadata.is_enabled',
         'metadata.in_alarm',
-        'metadata.next_status_time'
+        'metadata.activate_time'
     ].
 
 
@@ -322,11 +320,10 @@ actor_fields_sort() ->
         'metadata.generation',
         'metadata.creation_time',
         'metadata.update_time',
-        'metadata.is_active',
         'metadata.expires_time',
         'metadata.is_enabled',
         'metadata.in_alarm',
-        'metadata.next_status_time'
+        'metadata.activate_time'
     ].
 
 
@@ -337,11 +334,10 @@ actor_fields_trans() ->
         kind => 'metadata.kind',
         'metadata.creationTime' => 'metadata.creation_time',
         'metadata.updateTime' => 'metadata.update_time',
-        'metadata.isActive' => 'metadata.is_active',
         'metadata.expiresTime'=> 'metadata.expires_time',
         'metadata.isEnabled' => 'metadata.is_enabled',
         'metadata.inAlaram' => 'metadata.in_alarm',
-        'metadata.nextStatusTime' => 'metadata.next_status_time'
+        'metadata.activateTime' => 'metadata.activate_time'
     }.
 
 
@@ -349,7 +345,6 @@ actor_fields_trans() ->
 actor_fields_type() ->
     #{
         'metadata.generation' => integer,
-        'metadata.is_active' => boolean,
         'metadata.is_enabled' => boolean,
         'metadata.in_alarm' => boolean
     }.
