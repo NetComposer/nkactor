@@ -548,6 +548,8 @@ search_label(SrvId, Label, Opts) ->
         deep => boolean(),
         include_first => boolean(),
         include_last => boolean(),
+        start_value => binary(),
+        stop_value => binary(),
         size => pos_integer(),
         only_uid => boolean(),      % If true, Key and Value will be empty
         order => asc | desc
@@ -566,12 +568,12 @@ search_label_range(SrvId, Start, Stop, Opts) ->
             #{
                 field => <<"label:", Label1/binary>>,
                 op => case Opts of #{include_first:=true} -> first; _ -> top end,
-                value => <<>>
+                value => maps:get(start_value, Opts, <<>>)
             },
             #{
                 field => <<"label:", Label2/binary>>,
                 op => case Opts of #{include_last:=true} -> last; _ -> bottom end,
-                value => <<>>
+                value => maps:get(stop_value, Opts, <<>>)
             }
         ]
 
