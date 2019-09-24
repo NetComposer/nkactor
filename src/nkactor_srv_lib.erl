@@ -626,7 +626,6 @@ set_unload_policy(#actor_st{actor=Actor, config=Config}=State) ->
                     % A TTL reseated after each operation
                     TTL = maps:get(ttl, Config, ?DEFAULT_TTL),
                     ?ACTOR_DEBUG("unload policy is TTL ~p", [TTL], State),
-                    lager:error("NKLOG TTL ~p", [TTL]),
                     State#actor_st{unload_policy={ttl, TTL}}
             end
     end.
