@@ -434,12 +434,12 @@ handle_call({nkactor_sync_op, Op}, From, State) ->
         {reply, Reply, #actor_st{} = State2} ->
             reply(Reply, do_refresh_ttl(State2));
         {reply_and_save, Reply, #actor_st{} = State2} ->
-            {_, State3} = nkactor_srv_lib:save(user_op, nkactor_srv_lib:set_dirty(State2)),
+            {_, State3} = nkactor_srv_lib:save(user_op, nkactor_srv_lib:set_updated(State2)),
             reply(Reply, do_refresh_ttl(State3));
         {noreply, #actor_st{} = State2} ->
             noreply(do_refresh_ttl(State2));
         {noreply_and_save, #actor_st{} = State2} ->
-            {_, State3} = nkactor_srv_lib:save(user_op, nkactor_srv_lib:set_dirty(State2)),
+            {_, State3} = nkactor_srv_lib:save(user_op, nkactor_srv_lib:set_updated(State2)),
             noreply(do_refresh_ttl(State3));
         {stop, Reason, Reply, #actor_st{} = State2} ->
             gen_server:reply(From, Reply),
@@ -468,7 +468,7 @@ handle_cast({nkactor_async_op, Op}, State) ->
         {noreply, #actor_st{} = State2} ->
             noreply(do_refresh_ttl(State2));
         {noreply_and_save, #actor_st{} = State2} ->
-            {_, State3} = nkactor_srv_lib:save(user_op, nkactor_srv_lib:set_dirty(State2)),
+            {_, State3} = nkactor_srv_lib:save(user_op, nkactor_srv_lib:set_updated(State2)),
             noreply(do_refresh_ttl(State3));
         {stop, Reason, #actor_st{} = State2} ->
             do_stop(Reason, State2);
@@ -609,7 +609,7 @@ do_sync_op(save, _From, State) ->
     reply(Reply, do_refresh_ttl(State2));
 
 do_sync_op(force_save, _From, State) ->
-    {Reply, State2} = nkactor_srv_lib:save(user_order, nkactor_srv_lib:set_dirty(State)),
+    {Reply, State2} = nkactor_srv_lib:save(user_order, nkactor_srv_lib:set_updated(State)),
     reply(Reply, do_refresh_ttl(State2));
 
 do_sync_op(get_timers, _From, State) ->
@@ -730,7 +730,7 @@ do_async_op({set_activate_time, Time}, State) ->
     noreply(nkactor_srv_lib:set_activate_time(Time, State));
 
 do_async_op({set_dirty, true}, State) ->
-    noreply(do_refresh_ttl(nkactor_srv_lib:set_dirty(State)));
+    noreply(do_refresh_ttl(nkactor_srv_lib:set_updated(State)));
 
 do_async_op({set_dirty, false}, State) ->
     noreply(do_refresh_ttl(State#actor_st{is_dirty = false}));

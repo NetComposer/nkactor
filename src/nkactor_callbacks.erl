@@ -25,7 +25,7 @@
 -export([actor_req_authorize/1, actor_config/1, actor_fields_filter/1, actor_fields_sort/1,
          actor_fields_trans/1, actor_fields_type/1, actor_fields_static/1,
          actor_create/2, actor_activate/2, actor_external_event/3]).
--export([actor_id/2]).
+-export([actor_path_to_id/2]).
 -export([actor_srv_init/2, actor_srv_terminate/2,
          actor_srv_stop/2, actor_srv_get/2, actor_srv_update/2, actor_srv_delete/1,
          actor_srv_event/2,
@@ -174,10 +174,10 @@ actor_fields_static(List) ->
 %% @doc Called when an external id must be decoded, starting with "/"
 %% Service will be detected is [..., <<"namespaces">>, Namespace, ...] is present
 %% Otherwise, first actor service will be called
--spec actor_id(nkserver:id(), [binary()]) ->
+-spec actor_path_to_id(nkserver:id(), [binary()]) ->
     #actor_id{} | continue.
 
-actor_id(_SrvId, _Parts) ->
+actor_path_to_id(_SrvId, _Parts) ->
     continue.
 
 

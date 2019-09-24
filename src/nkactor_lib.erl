@@ -51,8 +51,6 @@
 actor_id_to_path(#actor_id{namespace=Namespace, group=Group, resource=Res, name=Name}) ->
     list_to_binary([Group, $:, Res, $:, Name, $., Namespace]).
 
-
-
 %% @doc
 -spec actor_to_actor_id(actor()) ->
     #actor_id{}.
@@ -84,7 +82,7 @@ actor_to_actor_id(Actor) ->
 %% @doc Canonizes id to #actor_id{}
 %% Id can be:
 %% - If it starts with "/" it is assumed external and called actor_id/2 on guessed service
-%%   (if a 'namespaces' part in the url is found, otherwhise any service)
+%%   (if a 'namespaces' part in the url is found, otherwise any service)
 %% - Group:Resource:Name.Namespace
 %% - Resource:Name.Namespace (group will be undefined, some backends will not support it)
 %% - Name.Namespace (group and resource will be undefined, some backends will not support it)
@@ -104,7 +102,7 @@ id_to_actor_id(Path) ->
                 {ok, Namespace} ->
                     case nkactor_namespace:find_service(Namespace) of
                         {ok, SrvId} ->
-                            case ?CALL_SRV(SrvId, actor_id, [SrvId, Parts]) of
+                            case ?CALL_SRV(SrvId, actor_path_to_id, [SrvId, Parts]) of
                                 #actor_id{} = ActorId ->
                                     ActorId;
                                 continue ->
@@ -526,14 +524,22 @@ fts_normalize_multi(Text) ->
     nklib_parse:normalize_words(Text, #{unrecognized=>keep}).
 
 
+%%%% @doc
+%%update_check_fields(NewActor, ActorSt) ->
+%%    #{data:=NewData} = NewActor,
+%%    #actor_st{actor=OldActor, config=Config} = ActorSt,
+%%    #{data:=OldData} = OldActor,
+%%    Fields1 = maps:get(fields_static, Config, []),
+%%    Fields2 = [F || <<"data.", F/binary>> <- Fields1],
+%%    do_update_check_fields(Fields2, NewData, OldData).
+
+
 %% @doc
 update_check_fields(NewActor, ActorSt) ->
-    #{data:=NewData} = NewActor,
     #actor_st{actor=OldActor, config=Config} = ActorSt,
-    #{data:=OldData} = OldActor,
-    Fields1 = maps:get(fields_static, Config, []),
-    Fields2 = [F || <<"data.", F/binary>> <- Fields1],
-    do_update_check_fields(Fields2, NewData, OldData).
+    Fields = maps:get(fields_static, Config, []),
+    do_update_check_fields(Fields, NewActor, OldActor).
+
 
 
 %% @private
@@ -550,7 +556,8 @@ do_update_check_fields([Field|Rest], NewData, OldData) ->
                 ok ->
                     do_update_check_fields(Rest, NewData, OldData);
                 {error, {updated_invalid_field, _}} ->
-                    {error, {updated_invalid_field, <<"data.", Field/binary>>}}
+                    %{error, {updated_invalid_field, <<"data.", Field/binary>>}}
+                    {error, {updated_invalid_field, Field}}
             end;
         [_] ->
             Field2 = binary_to_existing_atom(Field, utf8),
@@ -558,7 +565,8 @@ do_update_check_fields([Field|Rest], NewData, OldData) ->
                 true ->
                     do_update_check_fields(Rest, NewData, OldData);
                 false ->
-                    {error, {updated_invalid_field, <<"data.", Field/binary>>}}
+                    %{error, {updated_invalid_field, <<"data.", Field/binary>>}}
+                    {error, {updated_invalid_field, Field}}
             end
     end.
 

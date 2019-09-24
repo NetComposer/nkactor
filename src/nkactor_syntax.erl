@@ -24,7 +24,7 @@
 -export([name/0, parse_actor/1, parse_actor/2, parse_request/1]).
 -export([actor_fields_filter/0, actor_fields_sort/0, actor_fields_trans/0,
          actor_fields_type/0, actor_fields_static/0]).
--export([alarm_syntax/0]).
+-export([meta_syntax/0, alarm_syntax/0]).
 -include("nkactor.hrl").
 -include("nkactor_request.hrl").
 
@@ -90,7 +90,7 @@ meta_syntax() ->
         is_enabled => boolean,
         expire_time => [date_3339, {binary, [<<>>]}],
         auto_activate => boolean,
-        activate_time => [date_3339, {binary, [<<"1">>, <<>>]}],
+        activate_time => [date_3339, {binary, [<<>>]}],
         labels => #{'__map_binary' => binary},
         annotations => #{'__map_binary' => binary},
         links => #{'__map_binary' => binary},
@@ -358,7 +358,17 @@ actor_fields_type() ->
 
 %% @private Called from nkactor_callbacks
 actor_fields_static() ->
-    [].
+    [
+        'metadata.kind',
+        'metadata.vsn',
+        'metadata.hash',
+        'metadata.generation',
+        'metadata.creation_time',
+        'metadata.update_time',
+        'metadata.alarms',
+        'metadata.events',
+        'metadata.created_by'
+    ].
 
 
 %%%% @private

@@ -24,7 +24,7 @@
 
 -export([event/2, event_link/2, update/3, delete/1, set_auto_activate/2, set_activate_time/2,
          set_expire_time/3, get_links/1, add_link/3, remove_link/2, save/2,
-         remove_all_links/1, add_actor_event/4, set_dirty/1,
+         remove_all_links/1, add_actor_event/4, set_updated/1,
          update_status/2, update_status/3, add_actor_alarm/2, clear_all_alarms/1]).
 -export([handle/3, set_times/1]).
 -export([op_span_check_create/3, op_span_force_create/2, op_span_finish/1,
@@ -71,11 +71,11 @@ set_auto_activate(Bool, #actor_st{actor=#{metadata:=Meta}=Actor}=State) ->
         _ when Bool ->
             Meta2 = Meta#{auto_activate => true},
             Actor2 = Actor#{metadata:=Meta2},
-            set_dirty(State#actor_st{actor=Actor2});
+            set_updated(State#actor_st{actor=Actor2});
         _ ->
             Meta2 = maps:remove(auto_activate, Meta),
             Actor2 = Actor#{metadata:=Meta2},
-            set_dirty(State#actor_st{actor=Actor2})
+            set_updated(State#actor_st{actor=Actor2})
     end.
 
 
@@ -86,7 +86,7 @@ set_activate_time(<<>>, #actor_st{actor=Actor, activate_timer=Timer}=State) ->
         #{metadata:=#{activate_time:=_}=Meta} ->
             Meta2 = maps:remove(activate_time, Meta),
             Actor2 = Actor#{metadata:=Meta2},
-            set_dirty(State#actor_st{actor=Actor2});
+            set_updated(State#actor_st{actor=Actor2});
         _ ->
             State
     end;
@@ -99,7 +99,7 @@ set_activate_time(Time, #actor_st{actor=#{metadata:=Meta}=Actor}=State) ->
     % To avoid it to be the same (probably 0) in several requests
     Actor2 = Actor#{metadata:=Meta#{activate_time => Time3}},
     self() ! nkactor_check_activate_time,
-    set_dirty(State#actor_st{actor=Actor2}).
+    set_updated(State#actor_st{actor=Actor2}).
 
 
 %% @doc Sets an expiration date
@@ -110,7 +110,7 @@ set_expire_time(<<>>, _Activate, #actor_st{actor=Actor, expire_timer=Timer}=Stat
         #{metadata:=#{expire_time:=_}=Meta} ->
             Meta2 = maps:remove(expire_time, Meta),
             Actor2 = Actor#{metadata:=Meta2},
-            set_dirty(State#actor_st{actor=Actor2});
+            set_updated(State#actor_st{actor=Actor2});
         _ ->
             State
     end;
@@ -125,7 +125,7 @@ set_expire_time(Time, Activate, #actor_st{actor=Actor}=State) when is_boolean(Ac
             Actor#{metadata:=Meta#{expire_time => Time2}}
     end,
     self() ! nkactor_check_expire_time,
-    State2 = set_dirty(State#actor_st{actor=Actor2}),
+    State2 = set_updated(State#actor_st{actor=Actor2}),
     case Activate of
         true ->
             set_activate_time(Time, State2);
@@ -251,25 +251,14 @@ update(UpdActor, Opts, #actor_st{actor_id=ActorId, actor=Actor}=State) ->
         IsDataUpdated = NewData /= Data,
         Meta = maps:get(metadata, Actor, #{}),
         UpdMeta1 = maps:get(metadata, UpdActor),
-        MetaSyntax = #{
-            vsn => binary,                  % Added by parse
-            subtype => binary,
-            is_enabled => boolean,
-            expire_time => [date_3339, {binary, [<<>>]}],
-            activate_time => [date_3339, {binary, [<<>>]}],
-            labels => #{'__map_binary' => binary},
-            annotations => #{'__map_binary' => binary},
-            links => #{'__map_binary' => binary},
-            fts => #{'__map_binary' => binary},
-            description => binary,
-            updated_by => binary
-        },
+        MetaSyntax = nkactor_syntax:meta_syntax(),
         UpdMeta2 = case nklib_syntax:parse(UpdMeta1, MetaSyntax, #{path=><<"metadata">>}) of
             {ok, UpdMeta2_0, []} ->
                 UpdMeta2_0;
             {ok, _, [Field|_]} ->
                 throw({updated_invalid_field, Field})
         end,
+        % We will check later that no important fields has been modified
         NewMeta1 = nkactor_lib:map_merge(Meta, UpdMeta2),
         Links1 = maps:get(links, Meta, #{}),
         Links2 = maps:get(links, NewMeta1, #{}),
@@ -307,7 +296,7 @@ update(UpdActor, Opts, #actor_st{actor_id=ActorId, actor=Actor}=State) ->
                         op_span_log(<<"calling actor_srv_update">>, State2),
                         case handle(actor_srv_update, [NewActor1], State2) of
                             {ok, NewActor2, State3} ->
-                                State4 = set_dirty(State3#actor_st{actor=NewActor2}),
+                                State4 = set_updated(State3#actor_st{actor=NewActor2}),
                                 NewEnabled = maps:get(is_enabled, NewMeta3, true),
                                 State5 = enabled(NewEnabled, State4),
                                 State6 = set_times(State5),
@@ -391,7 +380,7 @@ delete(#actor_st{srv = SrvId, actor_id = ActorId, actor = Actor} = State) ->
 
 
 %% @doc
-set_dirty(#actor_st{actor=Actor}=State) ->
+set_updated(#actor_st{actor=Actor}=State) ->
     Actor2 = nkactor_lib:update(Actor, nklib_date:now_3339(usecs)),
     State#actor_st{actor = Actor2, is_dirty = true}.
 
@@ -578,7 +567,7 @@ add_actor_alarm(Alarm, #actor_st{actor=Actor, config=Config}=State) ->
             Alarms4 = [Alarm3 | Alarms3],
             Meta2 = Meta#{in_alarm => true, alarms => Alarms4},
             Actor2 = Actor#{metadata:=Meta2},
-            State2 = nkactor_srv_lib:set_dirty(State#actor_st{actor=Actor2}),
+            State2 = nkactor_srv_lib:set_updated(State#actor_st{actor=Actor2}),
             {ok, event({alarm_fired, Alarm}, State2)};
         {error, Error} ->
             {error, Error}
@@ -592,7 +581,7 @@ clear_all_alarms(#actor_st{actor=Actor}=State) ->
         #{in_alarm:=true} ->
             Meta2 = maps:without([in_alarm, alarms], Meta),
             Actor2 = Actor#{metadata := Meta2},
-            State2 = nkactor_srv_lib:set_dirty(State#actor_st{actor=Actor2}),
+            State2 = nkactor_srv_lib:set_updated(State#actor_st{actor=Actor2}),
             nkactor_srv_lib:event(alarms_all_cleared, State2);
         _ ->
             State
