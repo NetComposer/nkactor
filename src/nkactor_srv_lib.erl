@@ -80,6 +80,17 @@ set_auto_activate(Bool, #actor_st{actor=#{metadata:=Meta}=Actor}=State) ->
 
 
 %% @doc
+set_activate_time(<<>>, #actor_st{actor=Actor, activate_timer=Timer}=State) ->
+    nklib_util:cancel_timer(Timer),
+    case Actor of
+        #{metadata:=#{activate_time:=_}=Meta} ->
+            Meta2 = maps:remove(activate_time, Meta),
+            Actor2 = Actor#{metadata:=Meta2},
+            set_dirty(State#actor_st{actor=Actor2});
+        _ ->
+            State
+    end;
+
 set_activate_time(Time, #actor_st{actor=#{metadata:=Meta}=Actor}=State) ->
     {ok, Time1} = nklib_date:to_epoch(Time, usecs),
     Time2 = Time1 + nklib_util:rand(0, 999),
@@ -93,6 +104,17 @@ set_activate_time(Time, #actor_st{actor=#{metadata:=Meta}=Actor}=State) ->
 
 %% @doc Sets an expiration date
 %% If Activate, actor will be activated on that date to perform the deletion
+set_expire_time(<<>>, _Activate, #actor_st{actor=Actor, expire_timer=Timer}=State) ->
+    nklib_util:cancel_timer(Timer),
+    case Actor of
+        #{metadata:=#{expire_time:=_}=Meta} ->
+            Meta2 = maps:remove(expire_time, Meta),
+            Actor2 = Actor#{metadata:=Meta2},
+            set_dirty(State#actor_st{actor=Actor2});
+        _ ->
+            State
+    end;
+
 set_expire_time(Time, Activate, #actor_st{actor=Actor}=State) when is_boolean(Activate)->
     {ok, Time2} = nklib_date:to_3339(Time, usecs),
     #{metadata:=Meta} = Actor,
