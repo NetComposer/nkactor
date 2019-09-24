@@ -27,7 +27,7 @@
 -include("nkactor_debug.hrl").
 -include_lib("nkserver/include/nkserver.hrl").
 
--export([fold_actors/7, activate_actors/1]).
+-export([fold_actors/7, activate_actors/2]).
 -export([pre_create/2, pre_update/4]).
 
 -define(ACTIVATE_SPAN, auto_activate).
@@ -92,24 +92,23 @@ fold_actors(SrvId, NextUID, SearchFun, FoldFun, FoldAcc) ->
 
 %% @doc Performs an query on database for actors marked as 'active' and tries
 %% to active them if not already activated
--spec activate_actors(nkserver:id()) ->
-    {ok, [#actor_id{}]} | {error, term()}.
+-spec activate_actors(nkserver:id(), Time::integer()) ->
+    {ok, integer()} | {error, term()}.
 
-activate_actors(SrvId) ->
-    case nkactor:search_activate(SrvId) of
+activate_actors(SrvId, Time) ->
+    case nkactor:search_activate(SrvId, Time) of
         {ok, List} ->
-            activate_actors(List, 0);
+            do_activate_actors(List, 0);
         {error, Error} ->
             {error, Error}
     end.
 
 
-
 %% @private
-activate_actors([], Acc) ->
-    Acc;
+do_activate_actors([], Acc) ->
+    {ok, Acc};
 
-activate_actors([ActorId|Rest], Acc) ->
+do_activate_actors([ActorId|Rest], Acc) ->
     Acc2 = case nkactor_namespace:find_registered_actor(ActorId) of
         {true, _, _} ->
             Acc;
@@ -119,10 +118,10 @@ activate_actors([ActorId|Rest], Acc) ->
                     nkserver_ot:log(?ACTIVATE_SPAN, {"activated actor ~p", [ActorId2]}),
                     lager:notice("NkACTOR auto-activating ~p", [ActorId2]),
                     Acc+1;
-                {error, actor_not_found} ->
-                    nkserver_ot:log(?ACTIVATE_SPAN, {"could not activated actor ~p: not_found",
-                         [ActorId]}),
-                    Acc;
+                {error, actor_expired} ->
+                    nkserver_ot:log(?ACTIVATE_SPAN, {"activated actor ~p", [ActorId]}),
+                    lager:info("NkACTOR expired actor ~p", [ActorId]),
+                    Acc+1;
                 {error, Error} ->
                     nkserver_ot:log(?ACTIVATE_SPAN, {"could not activated actor ~p: ~p",
                         [ActorId, Error]}),
@@ -132,7 +131,7 @@ activate_actors([ActorId|Rest], Acc) ->
                     Acc
             end
     end,
-    activate_actors(Rest, Acc2).
+    do_activate_actors(Rest, Acc2).
 
 
 %% @private

@@ -262,7 +262,7 @@ check_auto_activate(SrvId, #{next_auto_activate:=Next}=State) when Next > 0 ->
     Now = nklib_date:epoch(msecs),
     case Now > Next of
         true ->
-            spawn(fun() -> nkactor_util:activate_actors(SrvId) end),
+            spawn(fun() -> nkactor_util:activate_actors(SrvId, 2*60*60*1000) end),
             #{auto_activate_actors_period:=Time} = nkserver:get_config(SrvId),
             State#{next_auto_activate := Now+Time};
         false ->

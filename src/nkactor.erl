@@ -28,7 +28,7 @@
 -export([get_actor/1, get_actor/2, get_path/1, is_enabled/1, enable/2, stop/1, stop/2]).
 -export([search_groups/2, search_resources/3]).
 -export([search_label/3, search_label_range/4, search_linked_to/3, search_fts/3, search_actors/3, delete_multi/3, delete_old/5]).
--export([search_activate/1, truncate/1]).
+-export([search_activate/2, truncate/1]).
 -export([base_namespace/1, find_label/4, find_linked/3]).
 -export([sync_op/2, sync_op/3, async_op/2]).
 -export([get_services/0, call_services/2]).
@@ -65,13 +65,17 @@
             generation => integer(),
             creation_time => binary(),
             update_time => binary(),
-            % If set, this actor will expire and will be deleted on this date
-            % Use <<>> to disable
-            expires_time => binary(),
+            auto_activate => boolean(),
             % If set, this actor will be activated and callback will be called
             % Use <<>> to disable
-            % System can set it to "0" for a permanent-activated actor
+            % Serve will modify the usecs part to be random
             activate_time => binary(),
+            % If set, this actor will expire and will be deleted on this date,
+            % only when activated. You should set auto_activate or an
+            % activation_time equal to the expire_time if you really want to
+            % be deleted on that date
+            expire_time => binary(),
+            % If true, actor will be automatically activated from db at each check
             % If value is empty it is removed
             labels => #{binary() => binary()},
             fts => #{binary() => [binary()]},
@@ -146,7 +150,7 @@
         permanent => boolean(),                         %% Do not unload
         ttl => integer(),                               %% Unload after msecs
         heartbeat_time => integer(),                    %% msecs for heartbeat
-        save_time => integer(),                         %% msecs for auto-save
+        save_time => integer(),                         %% msecs for auto-save (default no auto save)
         activable => boolean(),                         %% Default true
         auto_activate => boolean(),                     %% Auto activate from DB
         async_save => boolean(),
@@ -189,7 +193,7 @@
         activate => boolean(),
         % True to delete the actor on read
         consume => boolean(),
-        % Use this TTL (if actor is not already loaded)
+        % Use this TTL (if actor is not already loaded, msecs)
         ttl => pos_integer(),
         % Do not parse actor's data
         no_data_parse => boolean(),
@@ -207,7 +211,7 @@
         activate => boolean(),
         % True to get full actor instead of actor_id
         get_actor => boolean(),
-        % Use this TTL (if actor is not already loaded)
+        % Use this TTL (if actor is not already loaded, msecs)
         ttl => pos_integer(),
         % If true, no unique check is performed
         no_unique_check => boolean(),
@@ -377,7 +381,7 @@ create(Actor, Opts) ->
 %% Some fields can however be updated:
 %% - subtype
 %% - is_enabled
-%% - expires_time (<<>> to remove it)
+%% - expire_time (<<>> to remove it)
 %% - description
 %% - updated_by
 %% - labels, annotations, links, fts:
@@ -698,16 +702,16 @@ delete_old(SrvId, Group, Res, Date, Opts) ->
     nkactor_backend:search(SrvId, actors_delete_old, Params).
 
 
-%% @doc Find actors with activation date < current date + 2h (or use last_time)
+%% @doc Find actors with activation date < current date + Time
 %% If 2 actors share the exact same activation date (in usecs) and pagination
 %% stops on it, some could be lost
 %% Since we are activating 2h in advance, next time should't happen
--spec search_activate(nkactor:id()) ->
+-spec search_activate(nkactor:id(), Time::integer()) ->
     {ok, [#actor_id{}]} | {error, term()}.
 
-search_activate(SrvId) ->
+search_activate(SrvId, Time) ->
     Now = nklib_date:epoch(usecs),
-    Time1 = Now + 2 * 60 * 60 * 1000 * 1000,
+    Time1 = Now + 1000*Time + nklib_util:rand(0, 999),
     {ok, Time2} = nklib_date:to_3339(Time1, usecs),
     nkactor_backend:search_activate_actors(SrvId, Time2, 1000).
 

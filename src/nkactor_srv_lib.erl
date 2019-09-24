@@ -22,11 +22,11 @@
 -module(nkactor_srv_lib).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([event/2, event_link/2, update/3, delete/1, set_activate/2, set_activate_time/2,
-         set_expires_time/2, get_links/1, add_link/3, remove_link/2, save/2,
-        remove_all_links/1, add_actor_event/4, set_dirty/1,
+-export([event/2, event_link/2, update/3, delete/1, set_auto_activate/2, set_activate_time/2,
+         set_expire_time/3, get_links/1, add_link/3, remove_link/2, save/2,
+         remove_all_links/1, add_actor_event/4, set_dirty/1,
          update_status/2, update_status/3, add_actor_alarm/2, clear_all_alarms/1]).
--export([handle/3, set_unload_policy/1]).
+-export([handle/3, set_times/1]).
 -export([op_span_check_create/3, op_span_force_create/2, op_span_finish/1,
          op_span_log/2, op_span_log/3, op_span_tags/2, op_span_error/2]).
 
@@ -64,44 +64,52 @@ event_link(Event, #actor_st{links = Links} = State) ->
 
 
 %% @doc
-set_activate(true, #actor_st{actor=Actor}=State) ->
-    case Actor of
-        #{metadata:=#{activate_time:=<<"1">>}} ->
+set_auto_activate(Bool, #actor_st{actor=#{metadata:=Meta}=Actor}=State) ->
+    case maps:get(auto_activate, Meta, false) of
+        Bool ->
             State;
-        #{metadata:=Meta} ->
-            Meta2 = Meta#{activate_time=><<"1">>},
-            Actor2 = Actor#{metadata:=Meta2},
-            set_dirty(State#actor_st{actor=Actor2})
-    end;
-
-set_activate(false, #actor_st{actor=Actor, activate_timer =Timer}=State) ->
-    nklib_util:cancel_timer(Timer),
-    #{metadata:=Meta} = Actor,
-    case maps:is_key(activate_time, Meta) of
-        true ->
-            Meta2 = maps:remove(activate_time, Meta),
+        _ when Bool ->
+            Meta2 = Meta#{auto_activate => true},
             Actor2 = Actor#{metadata:=Meta2},
             set_dirty(State#actor_st{actor=Actor2});
-        false ->
-            State
+        _ ->
+            Meta2 = maps:remove(auto_activate, Meta),
+            Actor2 = Actor#{metadata:=Meta2},
+            set_dirty(State#actor_st{actor=Actor2})
     end.
 
 
 %% @doc
-set_activate_time(NextTime, #actor_st{actor=Actor}=State) ->
-    {ok, NextTime2} = nklib_date:to_3339(NextTime, usecs),
-    #{metadata:=Meta} = Actor,
-    Meta2 = Meta#{activate_time => NextTime2},
-    Actor2 = Actor#{metadata:=Meta2},
+set_activate_time(Time, #actor_st{actor=#{metadata:=Meta}=Actor}=State) ->
+    {ok, Time1} = nklib_date:to_epoch(Time, usecs),
+    Time2 = Time1 + nklib_util:rand(0, 999),
+    {ok, Time3} = nklib_date:to_3339(Time2, usecs),
+    % Make sure we have usecs resolution, and random usecs
+    % To avoid it to be the same (probably 0) in several requests
+    Actor2 = Actor#{metadata:=Meta#{activate_time => Time3}},
     self() ! nkactor_check_activate_time,
     set_dirty(State#actor_st{actor=Actor2}).
 
 
-%% @doc
-set_expires_time(Time, #actor_st{actor=Actor}=State) ->
+%% @doc Sets an expiration date
+%% If Activate, actor will be activated on that date to perform the deletion
+set_expire_time(Time, Activate, #actor_st{actor=Actor}=State) when is_boolean(Activate)->
+    {ok, Time2} = nklib_date:to_3339(Time, usecs),
     #{metadata:=Meta} = Actor,
-    Meta2 = Meta#{expires_time => Time},
-    set_unload_policy(State#actor_st{actor=Actor#{metadata:=Meta2}}).
+    Actor2 = case Meta of
+        #{expire_time:=Time} ->
+            Actor;
+        _ ->
+            Actor#{metadata:=Meta#{expire_time => Time2}}
+    end,
+    self() ! nkactor_check_expire_time,
+    State2 = set_dirty(State#actor_st{actor=Actor2}),
+    case Activate of
+        true ->
+            set_activate_time(Time, State2);
+        false ->
+            State2
+    end.
 
 
 %% @doc
@@ -225,8 +233,8 @@ update(UpdActor, Opts, #actor_st{actor_id=ActorId, actor=Actor}=State) ->
             vsn => binary,                  % Added by parse
             subtype => binary,
             is_enabled => boolean,
-            expires_time => [date_3339, {binary, [<<>>]}],
-            activate_time => [date_3339, {binary, [<<"1">>, <<>>]}],
+            expire_time => [date_3339, {binary, [<<>>]}],
+            activate_time => [date_3339, {binary, [<<>>]}],
             labels => #{'__map_binary' => binary},
             annotations => #{'__map_binary' => binary},
             links => #{'__map_binary' => binary},
@@ -280,7 +288,7 @@ update(UpdActor, Opts, #actor_st{actor_id=ActorId, actor=Actor}=State) ->
                                 State4 = set_dirty(State3#actor_st{actor=NewActor2}),
                                 NewEnabled = maps:get(is_enabled, NewMeta3, true),
                                 State5 = enabled(NewEnabled, State4),
-                                State6 = set_unload_policy(State5),
+                                State6 = set_times(State5),
                                 op_span_log(<<"calling do_save">>, State6),
                                 case save(update, #{}, State6) of
                                     {ok, State7} ->
@@ -474,7 +482,6 @@ remove_all_links(#actor_st{actor=#{metadata:=Metadata}=Actor}=ActorSt) ->
     nkactor_srv_lib:update(Actor2, #{}, ActorSt).
 
 
-
 %% @doc
 %% Will call the service's functions
 handle(Fun, Args, State) ->
@@ -484,36 +491,10 @@ handle(Fun, Args, State) ->
 
 
 %% @doc
-set_unload_policy(#actor_st{actor=Actor, config=Config}=State) ->
-    #{metadata:=Meta} = Actor,
-    ExpiresTime = maps:get(expires_time, Meta, <<>>),
-    ActivateTime = maps:get(activate_time, Meta, <<>>),
-    Policy = case Config of
-        #{permanent:=true} ->
-            permanent;
-        #{auto_activate:=true} ->
-            permanent;
-        _ when ActivateTime == <<"1">> ->
-            permanent;
-        _ ->
-            % A TTL reseated after each operation
-            TTL = maps:get(ttl, Config, ?DEFAULT_TTL),
-            ?ACTOR_DEBUG("TTL is ~p", [TTL], State),
-            {ttl, TTL}
-    end,
-    ?ACTOR_DEBUG("unload policy is ~p", [Policy], State),
-    State2 = State#actor_st{unload_policy=Policy},
-    case ExpiresTime of
-        <<>> ->
-            case ActivateTime of
-                <<>> ->
-                    State2;
-                _ ->
-                    set_activate_time(ActivateTime, State2)
-            end;
-        _ ->
-            set_activate_time(ExpiresTime, State2)
-    end.
+set_times(State) ->
+    State2 = set_unload_policy(State),
+    State3 = set_activate_timer(State2),
+    set_expire_timer(State3).
 
 
 %% @doc
@@ -603,6 +584,53 @@ clear_all_alarms(#actor_st{actor=Actor}=State) ->
 %% Internal
 %% ===================================================================
 
+%% @private
+set_unload_policy(#actor_st{actor=Actor, config=Config}=State) ->
+    case Config of
+        #{permanent:=true} ->
+            ?ACTOR_DEBUG("unload policy is config permanent", [], State),
+            State#actor_st{unload_policy=permanent};
+        #{auto_activate:=true} ->
+            ?ACTOR_DEBUG("unload policy is config auto_activate", [], State),
+            State2 = nkactor_srv_lib:set_auto_activate(true, State),
+            State2#actor_st{unload_policy=permanent};
+        _ ->
+            case Actor of
+                #{metadata:=#{auto_activate:=true}} ->
+                    ?ACTOR_DEBUG("unload policy is actor auto_activate", [], State),
+                    State2 = nkactor_srv_lib:set_auto_activate(true, State),
+                    State2#actor_st{unload_policy=permanent};
+                _ ->
+                    % A TTL reseated after each operation
+                    TTL = maps:get(ttl, Config, ?DEFAULT_TTL),
+                    ?ACTOR_DEBUG("unload policy is TTL ~p", [TTL], State),
+                    lager:error("NKLOG TTL ~p", [TTL]),
+                    State#actor_st{unload_policy={ttl, TTL}}
+            end
+    end.
+
+
+%% @private
+set_activate_timer(#actor_st{actor=#{metadata:=Meta}, activate_timer=Timer}=State) ->
+    nklib_util:cancel_timer(Timer),
+    case maps:get(activate_time, Meta, <<>>) of
+        <<>> ->
+            State;
+        Activation ->
+            set_activate_time(Activation, State)
+    end.
+
+
+%% @private
+set_expire_timer(#actor_st{actor=#{metadata:=Meta}, expire_timer=Timer}=State) ->
+    nklib_util:cancel_timer(Timer),
+    case maps:get(expire_time, Meta, <<>>) of
+        <<>> ->
+            State;
+        Expires ->
+            set_expire_time(Expires, false, State)
+    end.
+
 
 %% @private
 op_span_check_create(Op, Config, #actor_st{srv=SrvId, op_span_ids=SpanIds}=State) ->
@@ -627,8 +655,6 @@ op_span_force_create(Op, #actor_st{op_span_ids=SpanIds}=State) ->
     op_span_check_create(Op, #{ot_span_id=>ParentSpan}, State).
 
 
-
-
 %% @private
 op_span_finish(#actor_st{op_span_ids=[]}=State) ->
     State;
@@ -636,7 +662,6 @@ op_span_finish(#actor_st{op_span_ids=[]}=State) ->
 op_span_finish(#actor_st{op_span_ids=[SpanId|Rest]}=State) ->
     nkserver_ot:finish(SpanId),
     State#actor_st{op_span_ids=Rest}.
-
 
 
 %% @private
@@ -653,7 +678,6 @@ op_span_log(Txt, Data, #actor_st{op_span_ids=[SpanId|_]}) ->
 
 op_span_log(_Txt, _Data, #actor_st{op_span_ids=[]}) ->
     ok.
-
 
 
 %% @private

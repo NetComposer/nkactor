@@ -247,7 +247,7 @@ gen_actor_callbacks(SrvId, Group, [Module|Rest], Acc) ->
         {heartbeat, 1},
         {event, 2},
         {link_event, 4},
-        {activate_timer, 2},
+        {activated, 2},
         {expired, 2},
         {handle_call, 3},
         {handle_cast, 2},

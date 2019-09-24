@@ -120,13 +120,13 @@
 
 
 %% @doc Called when activate_timer is fired
--callback activate_timer(Time::binary(), actor_st()) ->
+-callback activated(Time::binary(), actor_st()) ->
     {ok, actor_st()} | continue().
 
 
-%% @doc Called when activate_timer is fired
+%% @doc Called when expire timer is fired
 -callback expired(Time::binary(), actor_st()) ->
-    {ok, actor_st()} | continue().
+    {ok, actor_st()} | {delete, actor_st()} | continue().
 
 
 %% @doc Called when an event is sent, for each registered process to the session
@@ -187,7 +187,7 @@
 -optional_callbacks([
     parse/3, request/4, save/2,
     init/2, get/2, update/2, delete/1, sync_op/3, async_op/2, enabled/2, heartbeat/1,
-    event/2, link_event/4, activate_timer/2, expired/2,
+    event/2, link_event/4, activated/2, expired/2,
     handle_call/3, handle_cast/2, handle_info/2, stop/2, terminate/2]).
 
 

@@ -27,8 +27,8 @@
 %% Unload policy
 %%
 %% - Permanent mode
-%%      - if object has permanent => true in config(), it is not unloaded
-%%      - if activate_time is <<"1">>, it is not unloaded
+%%      - if object has permanent => true in config() it is not unloaded
+%%      - if object has auto_activate in config() or in metadata, it is not unloaded
 %% - TTL mode
 %%      otherwise, property default_ttl in object_info() is used for ttl, default is ?DEFAULT_TTL
 %%      once expired, the object is unloaded if no childs or usages
@@ -391,7 +391,7 @@ init({Op, Actor, StartConfig, Caller, Ref}) ->
                 <<"actor.pid">> => list_to_binary(pid_to_list(self()))
             },
             nkactor_srv_lib:op_span_tags(Tags, State2),
-            case is_expired(State2) of
+            case check_expire_time(State2) of
                 {false, State3} ->
                     nkactor_srv_lib:op_span_log(<<"registering with namespace">>, State3),
                     case do_register(1, State3) of
@@ -399,7 +399,7 @@ init({Op, Actor, StartConfig, Caller, Ref}) ->
                             nkactor_srv_lib:op_span_log(<<"registered with namespace">>, State4),
                             case nkactor_srv_lib:handle(actor_srv_init, [Op], State4) of
                                 {ok, State5} ->
-                                    State6 = nkactor_srv_lib:set_unload_policy(State5),
+                                    State6 = nkactor_srv_lib:set_times(State5),
                                     case do_post_init(Op, State6) of
                                         {ok, State7} ->
                                             {ok, State7};
@@ -417,10 +417,9 @@ init({Op, Actor, StartConfig, Caller, Ref}) ->
                     end;
                 {true, State3} ->
                     nkactor_srv_lib:op_span_log(<<"actor is expired on load">>, State3),
-                    ?ACTOR_LOG(notice, "actor is expired on load", [], State3),
-                    % Call stop functions, probably will delete the actor
+                    ?ACTOR_LOG(info, "actor is expired on load", [], State3),
                     _ = do_stop(actor_expired, State3),
-                    do_init_stop(actor_not_found, Caller, Ref, State3)
+                    do_init_stop(actor_expired, Caller, Ref, State3)
             end
     end.
 
@@ -505,12 +504,14 @@ handle_info(nkactor_timer_save, State) ->
     do_async_op({save, timer}, State);
 
 handle_info(nkactor_check_activate_time, State) ->
-    State2 = check_activate_time(State),
-    case is_expired(State2) of
-        {true, State3} ->
-            do_stop(actor_expired, State3);
-        {false, State3} ->
-            {noreply, State3}
+    {noreply, check_activate_time(State)};
+
+handle_info(nkactor_check_expire_time, State) ->
+    case check_expire_time(State) of
+        {true, State2} ->
+            do_stop(actor_expired, State2);
+        {false, State2} ->
+            {noreply, State2}
     end;
 
 handle_info(nkactor_heartbeat, #actor_st{config = Config} = State) ->
@@ -616,15 +617,17 @@ do_sync_op(get_timers, _From, State) ->
         actor = #{metadata:=Meta},
         ttl_timer = TTL,
         activate_timer = Activate,
+        expire_timer = Expire,
         save_timer = Save,
         unload_policy = Policy
     } = State,
     Data = #{
         policy => Policy,
-        ttl_timer => case is_reference(TTL) of true -> erlang:read_timer(TTL); _ -> 0 end,
-        activate_timer => case is_reference(Activate) of true -> erlang:read_timer(Activate); _ -> 0 end,
-        save_timer => case is_reference(Save) of true -> erlang:read_timer(Save); _ -> 0 end,
-        expires_time => maps:get(expires_time, Meta, <<>>),
+        ttl_timer => case is_reference(TTL) of true -> erlang:read_timer(TTL); _ -> undefined end,
+        activate_timer => case is_reference(Activate) of true -> erlang:read_timer(Activate); _ -> undefined end,
+        expire_timer => case is_reference(Expire) of true -> erlang:read_timer(Expire); _ -> undefined end,
+        save_timer => case is_reference(Save) of true -> erlang:read_timer(Save); _ -> undefined end,
+        expire_time => maps:get(expire_time, Meta, <<>>),
         activate_time => maps:get(activate_time, Meta, <<>>)
     },
     reply({ok, Data}, State);
@@ -694,6 +697,7 @@ do_sync_op(get_alarms, _From, #actor_st{actor=Actor}=State) ->
 do_sync_op({set_alarm, Alarm}, _From, State) ->
     case nkactor_srv_lib:add_actor_alarm(Alarm, State) of
         {ok, State2} ->
+            lager:error("NKLOG SET ALARM"),
             reply(ok, do_refresh_ttl(State2));
         {error, Error} ->
             reply({error, Error}, State)
@@ -723,7 +727,7 @@ do_async_op({send_event, Event}, State) ->
     noreply(nkactor_srv_lib:event(Event, do_refresh_ttl(State)));
 
 do_async_op({set_activate_time, Time}, State) ->
-    noreply(nkactor_srv_lib:set_activate(Time, State));
+    noreply(nkactor_srv_lib:set_activate_time(Time, State));
 
 do_async_op({set_dirty, true}, State) ->
     noreply(do_refresh_ttl(nkactor_srv_lib:set_dirty(State)));
@@ -801,8 +805,9 @@ do_pre_init(ActorId, Actor, Config, SrvId) ->
         is_dirty = false,
         saved_metadata = Meta,
         is_enabled = maps:get(is_enabled, Meta, true),
+        activate_timer = undefined,
+        expire_timer = undefined,
         save_timer = undefined,
-        activated_time = nklib_date:epoch(usecs),
         unload_policy = permanent,           % Updated later
         op_span_ids = []
     }.
@@ -918,30 +923,6 @@ do_refresh_ttl(State) ->
 
 
 %% @private
-is_expired(#actor_st{actor=Actor}=State) ->
-    case Actor of
-        #{metadata:=#{expires_time:=Expires}} ->
-            Now = nklib_date:now_3339(msecs),
-            case Now >= Expires of
-                true ->
-                    ?ACTOR_LOG(info, "actor has expired!", [], State),
-                    case nkactor_srv_lib:handle(actor_srv_expired, [Expires], State) of
-                        {ok, State2} ->
-                            {true, State2};
-                        {delete, State2} ->
-                            {_, State3} = nkactor_srv_lib:delete(State2),
-                            {true, State3}
-                    end;
-                false ->
-                    ?ACTOR_LOG(info, "actor has expires_time but not yet time", [], State),
-                    {false, State}
-            end;
-        _ ->
-            {false, State}
-    end.
-
-
-%% @private
 do_stop(Reason, State) ->
     {stop, normal, do_stop2(Reason, State)}.
 
@@ -988,7 +969,7 @@ do_check_save(State) ->
 
 
 %% @private
-do_ttl_timeout(#actor_st{unload_policy={ttl, _}, links=Links, activate_timer =undefined}=State) ->
+do_ttl_timeout(#actor_st{unload_policy={ttl, _}, links=Links, activate_timer=undefined}=State) ->
     Avoid = nklib_links:fold_values(
         fun
             (_Link, #link_info{avoid_unload=true}, _Acc) -> true;
@@ -1012,32 +993,61 @@ check_activate_time(#actor_st{actor=Actor, activate_timer=Timer1}=State) ->
     nklib_util:cancel_timer(Timer1),
     case Actor of
         #{metadata:=#{activate_time:=ActiveTime}=Meta} ->
-            case ActiveTime of
-                <<"1">> ->
-                    State;
-                _ ->
-                    Now = nklib_date:epoch(msecs),
-                    {ok, ActiveTime2} = nklib_date:to_epoch(ActiveTime, msecs),
-                    case ActiveTime2 - Now of
-                        Step when Step=<0 ->
-                            ?ACTOR_LOG(info, "activation time!", [], State),
-                            Meta2 = maps:remove(activate_time, Meta),
-                            State2 = State#actor_st{
-                                activate_timer = undefined,
-                                actor = Actor#{metadata:=Meta2}
-                            },
-                            {ok, State3} = nkactor_srv_lib:handle(actor_srv_activate_timer, [ActiveTime], State2),
-                            State3;
-                        Step ->
-                            Step2 = min(Step, ?MAX_STATUS_TIME),
-                            ?ACTOR_LOG(info, "no yet activation time, ~pmsecs left (next call in ~pmsecs)", [Step, Step2], State),
-                            Timer2 = erlang:send_after(Step2, self(), nkactor_check_activate_time),
-                            State#actor_st{activate_timer = Timer2}
-                    end
+            Now = nklib_date:epoch(msecs),
+            {ok, ActiveTime2} = nklib_date:to_epoch(ActiveTime, msecs),
+            case ActiveTime2 - Now of
+                Step when Step=<0 ->
+                    ?ACTOR_LOG(info, "activation time!", [], State),
+                    Meta2 = maps:remove(activate_time, Meta),
+                    State2 = State#actor_st{
+                        activate_timer = undefined,
+                        actor = Actor#{metadata:=Meta2}
+                    },
+                    {ok, State3} = nkactor_srv_lib:handle(actor_srv_activate_timer, [ActiveTime], State2),
+                    State3;
+                Step ->
+                    Step2 = min(Step, ?MAX_STATUS_TIME),
+                    ?ACTOR_LOG(info, "no yet activation time, ~pmsecs left (next call in ~pmsecs)", [Step, Step2], State),
+                    Timer2 = erlang:send_after(Step2, self(), nkactor_check_activate_time),
+                    State#actor_st{activate_timer=Timer2}
             end;
         _ ->
             State
     end.
+
+
+%% @private
+check_expire_time(#actor_st{actor=Actor, expire_timer=Timer1}=State) ->
+    nklib_util:cancel_timer(Timer1),
+    case Actor of
+        #{metadata:=#{expire_time:=ExpireTime}=Meta} ->
+            Now = nklib_date:epoch(msecs),
+            {ok, ExpireTime2} = nklib_date:to_epoch(ExpireTime, msecs),
+            case ExpireTime2 - Now of
+                Step when Step=<0 ->
+                    ?ACTOR_LOG(info, "expiration time!", [], State),
+                    Meta2 = maps:remove(expire_time, Meta),
+                    State2 = State#actor_st{
+                        expire_timer = undefined,
+                        actor = Actor#{metadata:=Meta2}
+                    },
+                    case nkactor_srv_lib:handle(actor_srv_expired, [ExpireTime], State2) of
+                        {ok, State3} ->
+                            {true, State3};
+                        {delete, State3} ->
+                            {_, State4} = nkactor_srv_lib:delete(State3),
+                            {true, State4}
+                    end;
+                Step ->
+                    Step2 = min(Step, ?MAX_STATUS_TIME),
+                    ?ACTOR_LOG(info, "no yet expiration time, ~pmsecs left (next call in ~pmsecs)", [Step, Step2], State),
+                    Timer2 = erlang:send_after(Step2, self(), nkactor_check_expire_time),
+                    {false, State#actor_st{expire_timer=Timer2}}
+            end;
+        _ ->
+            {false, State}
+    end.
+
 
 
 %% ===================================================================

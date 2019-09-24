@@ -33,13 +33,13 @@
     is_dirty :: true | false | deleted,
     save_timer :: reference(),
     is_enabled :: boolean(),
-    activated_time :: nklib_util:m_timestamp(),
+    %activated_time :: nklib_util:m_timestamp(),
     links :: nklib_links:links(),
     stop_reason = false :: false | nkserver:status(),
-    unload_policy :: permanent | {ttl, integer()},
+    unload_policy :: permanent | {ttl, Msecs::integer()},
     ttl_timer :: reference() | undefined,
-    %status_timer :: reference() | undefined,
     activate_timer :: reference() | undefined,
+    expire_timer :: reference() | undefined,
     op_span_ids :: [nkserver_ot:span_id()]
 }).
 

@@ -565,8 +565,8 @@ do_update_check_fields([Field|Rest], NewData, OldData) ->
 
 
 %% @private
-%% if expires_time is not set, it is set to now + indicated time
-maybe_set_ttl(#{metadata:=#{expires_time:=_}}=Actor, _MSecs) ->
+%% if expire_time is not set, it is set to now + indicated time
+maybe_set_ttl(#{metadata:=#{expire_time:=_}}=Actor, _MSecs) ->
     Actor;
 
 maybe_set_ttl(Actor, MSecs) ->
@@ -574,11 +574,17 @@ maybe_set_ttl(Actor, MSecs) ->
 
 
 %% @private
-%% sets expires_time to now + indicated time
+%% sets expire_time to now (or activate_time) + indicated time
 set_ttl(#{metadata:=Meta}=Actor, MSecs) ->
-    Now = nklib_date:epoch(usecs),
-    {ok, Expires} = nklib_date:to_3339(Now+1000*MSecs, usecs),
-    Meta2 = Meta#{expires_time => Expires},
+    Base = case Meta of
+        #{activate_time:=Activate} ->
+            {ok, Activate2} = nklib_date:to_epoch(Activate, usecs),
+            Activate2;
+        _ ->
+            nklib_date:epoch(usecs)
+    end,
+    {ok, Expires} = nklib_date:to_3339(Base+1000*MSecs, usecs),
+    Meta2 = Meta#{expire_time => Expires},
     Actor#{metadata := Meta2}.
 
 

@@ -88,7 +88,8 @@ meta_syntax() ->
         creation_time => date_3339,
         update_time => date_3339,
         is_enabled => boolean,
-        expires_time => [date_3339, {binary, [<<>>]}],
+        expire_time => [date_3339, {binary, [<<>>]}],
+        auto_activate => boolean,
         activate_time => [date_3339, {binary, [<<"1">>, <<>>]}],
         labels => #{'__map_binary' => binary},
         annotations => #{'__map_binary' => binary},
@@ -298,9 +299,10 @@ actor_fields_filter() ->
         'metadata.generation',
         'metadata.creation_time',
         'metadata.update_time',
-        'metadata.expires_time',
+        'metadata.expire_time',
         'metadata.is_enabled',
         'metadata.in_alarm',
+        'metadata.auto_activate',
         'metadata.activate_time'
     ].
 
@@ -320,9 +322,10 @@ actor_fields_sort() ->
         'metadata.generation',
         'metadata.creation_time',
         'metadata.update_time',
-        'metadata.expires_time',
+        'metadata.expire_time',
         'metadata.is_enabled',
         'metadata.in_alarm',
+        'metadata.auto_activate',
         'metadata.activate_time'
     ].
 
@@ -334,9 +337,10 @@ actor_fields_trans() ->
         kind => 'metadata.kind',
         'metadata.creationTime' => 'metadata.creation_time',
         'metadata.updateTime' => 'metadata.update_time',
-        'metadata.expiresTime'=> 'metadata.expires_time',
+        'metadata.expireTime'=> 'metadata.expire_time',
         'metadata.isEnabled' => 'metadata.is_enabled',
         'metadata.inAlaram' => 'metadata.in_alarm',
+        'metadata.autoActivate' => 'metadata.auto_activate',
         'metadata.activateTime' => 'metadata.activate_time'
     }.
 
@@ -346,7 +350,8 @@ actor_fields_type() ->
     #{
         'metadata.generation' => integer,
         'metadata.is_enabled' => boolean,
-        'metadata.in_alarm' => boolean
+        'metadata.in_alarm' => boolean,
+        'metadata.auto_activate' => boolean
     }.
 
 

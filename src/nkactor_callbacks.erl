@@ -56,7 +56,7 @@ status(actor_already_registered)    -> "Actor already registered";
 status(actor_deleted)               -> {"Actor has been deleted", #{code=>200}};
 status({actors_deleted, N})         -> {"Actors (~p) have been deleted", [N]};
 status({actor_invalid, A})          -> {"Invalid actor '~s'", [A], #{code=>400, data=>#{actor=>A}}};
-status(actor_expired)	            -> "Actor has expired";
+status(actor_expired)	            -> {"Actor has expired", #{code=>404}};
 status(actor_has_linked_actors)	    -> {"Actor has linked actors", #{code=>422}};
 status(actor_id_invalid)            -> "Actor ID is invalid";
 status(actor_is_not_activable)	    -> {"Actor is not activable", #{code=>422}};
@@ -395,7 +395,7 @@ actor_srv_link_down(Link, Data, ActorSt) ->
 
 actor_srv_activate_timer(Time, ActorSt) ->
     #actor_st{srv=SrvId, actor_id=#actor_id{group=Group, resource=Res}} = ActorSt,
-    case ?CALL_SRV(SrvId, nkactor_callback, [activate_timer, Group, Res, [Time, ActorSt]]) of
+    case ?CALL_SRV(SrvId, nkactor_callback, [activated, Group, Res, [Time, ActorSt]]) of
         continue ->
             {ok, ActorSt};
         Other ->
@@ -405,7 +405,7 @@ actor_srv_activate_timer(Time, ActorSt) ->
 
 %% @doc Called when the actor is expired
 -spec actor_srv_expired(Time::binary(), actor_st()) ->
-    {ok, actor_st()} | continue().
+    {ok, actor_st()} | {delete, actor_st()} | continue().
 
 actor_srv_expired(Time, ActorSt) ->
     #actor_st{srv=SrvId, actor_id=#actor_id{group=Group, resource=Res}} = ActorSt,
