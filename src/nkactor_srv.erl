@@ -697,7 +697,6 @@ do_sync_op(get_alarms, _From, #actor_st{actor=Actor}=State) ->
 do_sync_op({set_alarm, Alarm}, _From, State) ->
     case nkactor_srv_lib:add_actor_alarm(Alarm, State) of
         {ok, State2} ->
-            lager:error("NKLOG SET ALARM"),
             reply(ok, do_refresh_ttl(State2));
         {error, Error} ->
             reply({error, Error}, State)

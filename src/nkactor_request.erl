@@ -652,11 +652,9 @@ get_search_spec(ActorId, Config, Req) ->
 
 %% @private
 parse_params(#{params:=Params}, Syntax) ->
-    case nklib_syntax:parse(Params, Syntax) of
-        {ok, Parsed, []} ->
+    case nklib_syntax:parse_all(Params, Syntax) of
+        {ok, Parsed} ->
             {ok, Parsed};
-        {ok, _, [Field|_]} ->
-            {error, {parameter_invalid, Field}};
         {error, {syntax_error, Field}} ->
             {error, {parameter_invalid, Field}};
         {error, Error} ->
