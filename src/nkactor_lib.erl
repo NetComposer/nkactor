@@ -27,7 +27,7 @@
 -include("nkactor_debug.hrl").
 -include_lib("nkserver/include/nkserver.hrl").
 
--export([actor_to_actor_id/1, id_to_actor_id/1]).
+-export([actor_to_actor_id/1, id_to_actor_id/1, id_to_actor_id/3]).
 -export([send_external_event/3]).
 -export([get_linked_type/2, get_linked_uids/2, add_link/3, add_checked_link/5,
          rm_link/2, rm_links/2]).
@@ -77,6 +77,26 @@ actor_to_actor_id(Actor) ->
             #actor_id{uid = UID}
     end.
 
+
+%% @doc If group and resource are known, we can guess the actor_id if it has a namespace
+-spec id_to_actor_id(nkactor:group(), nkactor:resource(), list()|binary()) ->
+    #actor_id{}.
+
+id_to_actor_id(Group, Res, Target) when is_list(Target); is_binary(Target) ->
+    Target2 = to_bin(Target),
+    case binary:split(Target2, <<":">>) of
+        [_] ->
+            case binary:split(to_bin(Target), <<".">>) of
+                [Name, Namespace] ->
+                    actor_id_to_path(#actor_id{namespace=Namespace, group=Group, resource=Res, name=Name});
+                _ ->
+                    % It should be a UID
+                    #actor_id{uid=Target2}
+            end;
+        _ ->
+            % We have group and maybe resource already
+            id_to_actor_id(Target2)
+    end.
 
 
 %% @doc Canonizes id to #actor_id{}
@@ -172,7 +192,8 @@ add_link(UID, #{metadata:=Meta}=Actor, LinkType) when is_binary(UID), is_binary(
 %% @doc Links checking destination type
 add_checked_link(Target, Group, Resource, #{}=Actor, LinkType)
         when is_binary(Group), is_binary(Resource), is_binary(LinkType) ->
-    case nkactor:find(Target) of
+    Target2 = id_to_actor_id(Group, Resource, Target),
+    case nkactor:find(Target2) of
         {ok, #actor_id{group=Group, resource=Resource, uid=UID}=TargetId} ->
             #{metadata:=Meta} = Actor,
             Links1 = maps:get(links, Meta, #{}),
@@ -305,7 +326,7 @@ parse_actor_data(Op, #{data:=Data, metadata:=Meta}=Actor, Vsn, Syntax) ->
 
 %% @private
 -spec parse_request_params(nkactor:request(), nklib_syntax:syntax()) ->
-    {ok, map()} | nklib_syntax:error().
+    {ok, map()} | {error, nklib_syntax:error()}.
 
 parse_request_params(Req, Syntax) ->
     Params = maps:get(params, Req, #{}),

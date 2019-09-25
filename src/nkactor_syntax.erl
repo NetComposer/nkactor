@@ -178,7 +178,8 @@ parse_request(Req) ->
 
 
 %% @private
-parse_request_body(#{verb:=Verb, body:=Body}=Req) when Verb==create; Verb==update ->
+parse_request_body(#{verb:=Verb, body:=Body}=Req)
+        when (Verb==create orelse Verb==update) andalso is_map(Body) ->
     case nklib_syntax:parse(Body, body_syntax()) of
         {ok, BodyFields, _} ->
             ReqVsn = maps:get(vsn, Req, <<>>),

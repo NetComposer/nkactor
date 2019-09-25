@@ -149,6 +149,7 @@ pre_create(Actor, Opts) ->
                         {ok, Actor3} ->
                             Actor4 = case Opts of
                                 #{forced_uid:=UID} ->
+                                    nomatch = binary:match(UID, <<".">>),
                                     Actor3#{uid := UID};
                                 _ ->
                                     Actor3
