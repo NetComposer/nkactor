@@ -29,7 +29,7 @@
 -type continue() :: continue | {continue, list()}.
 
 -include("nkactor.hrl").
-
+-include_lib("nkserver/include/nkserver.hrl").
 
 
 %% ===================================================================
@@ -104,7 +104,7 @@ plugin_cache(SrvId, Config, _Service) ->
 
 plugin_start(SrvId, #{base_namespace:=Namespace}, _Service) ->
     nklib_config:put(nkactor_namespace, Namespace, SrvId),
-    ok.
+    ?CALL_SRV(SrvId, actor_plugin_init, [SrvId]).
 
 
 plugin_stop(_SrvId, #{base_namespace:=Namespace}, _Service) ->

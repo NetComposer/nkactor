@@ -672,12 +672,12 @@ do_sync_op({update, Actor, Opts}, _From, State) ->
             reply({error, actor_is_disabled}, State);
         _ ->
             case nkactor_srv_lib:update(Actor, Opts, State) of
-                {ok, State2} ->
+                {ok, #actor_st{actor_id=ActorId}=State2} ->
                     ReplyActor = case Opts of
                         #{get_actor:=true} ->
                             State2#actor_st.actor;
                         _ ->
-                            #{}
+                            ActorId
                     end,
                     reply({ok, ReplyActor}, do_refresh_ttl(State2));
                 {error, Error, State2} ->

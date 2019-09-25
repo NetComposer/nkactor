@@ -22,7 +22,8 @@
 -module(nkactor_callbacks).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -export([status/1]).
--export([actor_req_authorize/1, actor_config/1, actor_fields_filter/1, actor_fields_sort/1,
+-export([actor_plugin_init/1, actor_req_authorize/1, actor_config/1,
+         actor_fields_filter/1, actor_fields_sort/1,
          actor_fields_trans/1, actor_fields_type/1, actor_fields_static/1,
          actor_create/2, actor_activate/2, actor_external_event/3]).
 -export([actor_path_to_id/2]).
@@ -112,6 +113,14 @@ status(_) -> continue.
 -type actor_id() :: #actor_id{}.
 -type actor_st() :: #actor_st{}.
 %-type request() :: actor_request:request().
+
+
+%% @doc Called when processing a request to be authorized or not
+-spec actor_plugin_init(nkserver:id()) ->
+    ok.
+
+actor_plugin_init(_SrvId) ->
+    ok.
 
 
 %% @doc Called when processing a request to be authorized or not

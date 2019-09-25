@@ -372,55 +372,6 @@ update(Id, Actor, Opts) ->
     end.
 
 
-%%update(Id, Actor, Opts) ->
-%%    span_create(update, undefined, Opts),
-%%    case nkactor_util:pre_update(Actor, Opts#{ot_span_id=>span_id(update)}) of
-%%        {ok, SrvId, Actor2} ->
-%%            span_update_srv_id(update, SrvId),
-%%            case do_activate(Id, Opts#{ot_span_id=>span_id(update)}) of
-%%                {ok, SrvId, ActorId2, _} ->
-%%                    #actor_id{
-%%                        namespace = Namespace,
-%%                        group = Group,
-%%                        resource = Res,
-%%                        name = Name,
-%%                        uid = UID,
-%%                        pid = Pid
-%%                    } = ActorId2,
-%%                    span_tags(update, #{
-%%                        <<"actor.namespace">> => Namespace,
-%%                        <<"actor.group">> => Group,
-%%                        <<"actor.resource">> => Res,
-%%                        <<"actor.name">> => Name,
-%%                        <<"actor.uid">> => UID,
-%%                        <<"actor.pid">> => list_to_binary(pid_to_list(Pid)),
-%%                        <<"actor.opts.activate">> => true
-%%                    }),
-%%                    Opts2 = Opts#{ot_span_id=>span_id(update)},
-%%                    span_log(update, <<"calling update actor">>),
-%%                    case nkactor:sync_op(ActorId2, {update, Actor2, Opts2}, infinity) of
-%%                        {ok, Actor3} ->
-%%                            span_finish(update),
-%%                            {ok, SrvId, Actor3, #{}};
-%%                        {error, Error} ->
-%%                            span_log(update, <<"error calling actor update actor: ~p">>, [Error]),
-%%                            span_error(update, Error),
-%%                            span_finish(update),
-%%                            {error, Error}
-%%                    end;
-%%                {error, Error} ->
-%%                    span_log(update, <<"error updating actor: ~p">>, [Error]),
-%%                    span_error(update, Error),
-%%                    span_finish(update),
-%%                    {error, Error}
-%%            end;
-%%        {error, Error} ->
-%%            span_delete(update),
-%%            {error, Error}
-%%    end.
-
-
-
 %% @doc Deletes an actor
 -spec delete(nkactor:id(), #{cascade=>boolean()}) ->
     {ok, map()} | {error, actor_not_found|term()}.

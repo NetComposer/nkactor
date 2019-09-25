@@ -24,7 +24,8 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([request/1]).
--export([find/1, activate/1, is_activated/1, update/2, update/3, create/1, create/2, delete/1, delete/2]).
+-export([find/1, activate/1, is_activated/1, update/2, update/3, create/1, create/2,
+         create_or_update/1, create_or_update/2, delete/1, delete/2]).
 -export([get_actor/1, get_actor/2, get_path/1, is_enabled/1, enable/2, stop/1, stop/2]).
 -export([search_groups/2, search_resources/3]).
 -export([search_label/3, search_label_range/4, search_linked_to/3, search_fts/3, search_actors/3, delete_multi/3, delete_old/5]).
@@ -399,19 +400,43 @@ create(Actor, Opts) ->
 %% http://erosb.github.io/post/json-patch-vs-merge-patch/
 
 -spec update(id()|pid(), actor()) ->
-    {ok, actor()} | {error, term()}.
+    {ok, actor_id()|actor()} | {error, term()}.
 
 update(Id, Update) ->
     update(Id, Update, #{}).
 
-
+%% @doc
 -spec update(id()|pid(), actor(), update_opts()) ->
-    {ok, actor()} | {error, term()}.
+    {ok, actor_id()|actor()} | {error, term()}.
 
 update(Id, Update, Opts) ->
     case nkactor_backend:update(Id, Update, Opts) of
         {ok, _SrvId, Actor2, _Meta} ->
             {ok, Actor2};
+        {error, Error} ->
+            {error, Error}
+    end.
+
+
+%% @doc
+-spec create_or_update(actor()) ->
+    {ok, actor_id()|actor()} | {error, term()}.
+
+create_or_update(Actor) ->
+    create_or_update(Actor, #{}).
+
+
+%% @doc
+-spec create_or_update(actor(), update_opts()) ->
+    {ok, actor_id()|actor()} | {error, term()}.
+
+create_or_update(Actor, Opts) ->
+    ActorId = nkactor_lib:actor_to_actor_id(Actor),
+    case find(ActorId) of
+        {ok, ActorId2} ->
+            update(ActorId2, Actor, Opts);
+        {error, actor_not_found} ->
+            create(Actor, Opts);
         {error, Error} ->
             {error, Error}
     end.
