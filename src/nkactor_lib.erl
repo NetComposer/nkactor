@@ -83,19 +83,23 @@ actor_to_actor_id(Actor) ->
     #actor_id{}.
 
 id_to_actor_id(Group, Res, Target) when is_list(Target); is_binary(Target) ->
-    Target2 = to_bin(Target),
-    case binary:split(Target2, <<":">>) of
-        [_] ->
-            case binary:split(to_bin(Target), <<".">>) of
-                [Name, Namespace] ->
-                    actor_id_to_path(#actor_id{namespace=Namespace, group=Group, resource=Res, name=Name});
+    case to_bin(Target) of
+        <<"/", _/binary>> ->
+            id_to_actor_id(Target);
+        Target2 ->
+            case binary:split(Target2, <<":">>) of
+                [_] ->
+                    case binary:split(to_bin(Target), <<".">>) of
+                        [Name, Namespace] ->
+                            actor_id_to_path(#actor_id{namespace=Namespace, group=Group, resource=Res, name=Name});
+                        _ ->
+                            % It should be a UID
+                            #actor_id{uid=Target2}
+                    end;
                 _ ->
-                    % It should be a UID
-                    #actor_id{uid=Target2}
-            end;
-        _ ->
-            % We have group and maybe resource already
-            id_to_actor_id(Target2)
+                    % We have group and maybe resource already
+                    id_to_actor_id(Target2)
+            end
     end.
 
 
