@@ -206,7 +206,7 @@ read(Id, Opts) ->
 
 create(Actor, #{activate:=false}=Opts) ->
     span_create(create, undefined, Opts),
-    case nkactor_util:pre_create(Actor, Opts) of
+    case pre_create(Actor, Opts) of
         {ok, SrvId, Actor2} ->
             #{
                 namespace := Namespace,
@@ -255,7 +255,7 @@ create(Actor, #{activate:=false}=Opts) ->
 
 create(Actor, Opts) ->
     span_create(create, undefined, Opts),
-    case nkactor_util:pre_create(Actor, Opts#{ot_span_id=>span_id(create)}) of
+    case pre_create(Actor, Opts#{ot_span_id=>span_id(create)}) of
         {ok, SrvId, Actor2} ->
             span_update_srv_id(create, SrvId),
             % If we use the activate option, the object is first
@@ -349,7 +349,7 @@ update(Id, Actor, Opts) ->
             }),
             Opts2 = Opts#{ot_span_id=>span_id(update)},
             span_log(update, <<"calling update actor">>),
-            case nkactor_util:pre_update(SrvId, ActorId, Actor, Opts#{ot_span_id=>span_id(update)}) of
+            case pre_update(SrvId, ActorId, Actor, Opts#{ot_span_id=>span_id(update)}) of
                 {ok, Actor2} ->
                     case nkactor:sync_op(ActorId, {update, Actor2, Opts2}, infinity) of
                         {ok, Actor3} ->
@@ -571,10 +571,15 @@ search(SrvId, SearchType, Opts) ->
     span_log(search, "calling actor_db_search"),
     Opts2 = Opts#{ot_span_id=>span_id(search)},
     case ?CALL_SRV(SrvId, actor_db_search, [SrvId, SearchType, Opts2]) of
-        {ok, Result, Meta} ->
+        {ok, Actors, Meta} ->
             span_log(search, "success: ~p", [Meta]),
             span_finish(search),
-            {ok, Result, Meta};
+            case parse_actors(SrvId, Actors, Opts) of
+                {ok, Actors2} ->
+                    {ok, Actors2, Meta};
+                {error, Error} ->
+                    {error, Error}
+            end;
         {error, Error} ->
             span_log(search, <<"error in search: ~p">>, [Error]),
             span_error(search, Error),
@@ -743,6 +748,110 @@ search_activate_actors(SrvId, Opts, Iters, Acc) when Iters > 0 ->
 
 search_activate_actors(_SrvId, _Opts, _Iters, _Acc) ->
     {error, too_many_iterations}.
+
+
+%% @private
+parse_actors(SrvId, Actors, Opts) ->
+    Req = maps:get(request, Opts, #{}),
+    parse_actors(SrvId, Actors, Req, []).
+
+
+%% @private
+parse_actors(_SrvId, [], _Req, Acc) ->
+    {ok, lists:reverse(Acc)};
+
+parse_actors(SrvId, [#{data:=Data, metadata:=Meta}=Actor|Rest], Req, Acc)
+        when map_size(Data) > 0, map_size(Meta) > 0 ->
+    case nkactor_actor:parse(SrvId, read, Actor, Req) of
+        {ok, Actor2} ->
+            parse_actors(SrvId, Rest, Req, [Actor2|Acc]);
+        {error, Error} ->
+            lager:error("NkACTOR error ~p parsing ~p", [Error, Actor]),
+            {error, Error}
+    end;
+
+parse_actors(SrvId, [Actor|Rest], Req, Acc) ->
+    parse_actors(SrvId, Rest, Req, [Actor|Acc]).
+
+%% @private
+pre_create(Actor, Opts) ->
+    SpanId = maps:get(ot_span_id, Opts, undefined),
+    Syntax = #{'__mandatory' => [group, resource, namespace]},
+    case nkactor_syntax:parse_actor(Actor, Syntax) of
+        {ok, Actor2} ->
+            nkserver_ot:log(SpanId, <<"actor parsed">>),
+            #{namespace:=Namespace} = Actor2,
+            case nkactor_namespace:find_service(Namespace) of
+                {ok, SrvId} ->
+                    nkserver_ot:log(SpanId, <<"actor namespace found: ~s">>, [SrvId]),
+                    case nkactor_lib:add_creation_fields(SrvId, Actor2) of
+                        {ok, Actor3} ->
+                            Actor4 = case Opts of
+                                #{forced_uid:=UID} ->
+                                    nomatch = binary:match(UID, <<".">>),
+                                    Actor3#{uid := UID};
+                                _ ->
+                                    Actor3
+                            end,
+                            Req1 = maps:get(request, Opts, #{}),
+                            Req2 = Req1#{srv => SrvId},
+                            case nkactor_actor:parse(SrvId, create, Actor4, Req2) of
+                                {ok, Actor5} ->
+                                    case nkactor_lib:check_actor_links(Actor5) of
+                                        {ok, Actor6} ->
+                                            nkserver_ot:log(SpanId, <<"actor parsed">>),
+                                            {ok, SrvId, Actor6};
+                                        {error, Error} ->
+                                            nkserver_ot:log(SpanId, <<"error checking links: ~p">>, [Error]),
+                                            {error, Error}
+                                    end;
+                                {error, Error} ->
+                                    nkserver_ot:log(SpanId, <<"error parsing specific actor: ~p">>, [Error]),
+                                    {error, Error}
+                            end;
+                        {error, Error} ->
+                            nkserver_ot:log(SpanId, <<"error creating initial data: ~p">>, [Error]),
+                            {error, Error}
+                    end;
+                {error, Error} ->
+                    nkserver_ot:log(SpanId, <<"error getting namespace: ~p">>, [Error]),
+                    {error, Error}
+            end;
+        {error, Error} ->
+            nkserver_ot:log(SpanId, <<"error parsing generic actor: ~p">>, [Error]),
+            {error, Error}
+    end.
+
+
+%% @private
+pre_update(SrvId, ActorId, Actor, Opts) ->
+    SpanId = maps:get(ot_span_id, Opts, undefined),
+    case nkactor_syntax:parse_actor(Actor, #{}) of
+        {ok, Actor2} ->
+            #actor_id{group=Group, resource=Res, name=Name, namespace=Namespace} = ActorId,
+            Base = #{group=>Group, resource=>Res, name=>Name, namespace=>Namespace},
+            Actor3 = maps:merge(Base, Actor2),
+            nkserver_ot:log(SpanId, <<"actor parsed">>),
+            Req1 = maps:get(request, Opts, #{}),
+            Req2 = Req1#{srv => SrvId},
+            case nkactor_actor:parse(SrvId, update, Actor3, Req2) of
+                {ok, Actor4} ->
+                    case nkactor_lib:check_actor_links(Actor4) of
+                        {ok, Actor5} ->
+                            nkserver_ot:log(SpanId, <<"actor parsed">>),
+                            {ok, Actor5};
+                        {error, Error} ->
+                            nkserver_ot:log(SpanId, <<"error checking links: ~p">>, [Error]),
+                            {error, Error}
+                    end;
+                {error, Error} ->
+                    nkserver_ot:log(SpanId, <<"error parsing specific actor: ~p">>, [Error]),
+                    {error, Error}
+            end;
+        {error, Error} ->
+            nkserver_ot:log(SpanId, <<"error parsing generic actor: ~p">>, [Error]),
+            {error, Error}
+    end.
 
 
 %% @private

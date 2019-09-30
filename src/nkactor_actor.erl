@@ -371,7 +371,8 @@ parse(SrvId, Op, Actor, Req) ->
     % See nkactor_callback in nkactor_plugin
     SpanId = maps:get(ot_span_id, Req, undefined),
     nkserver_ot:log(SpanId, <<"calling actor parse">>),
-    Args = [parse, Group, Res, [Op, Actor, Req]],
+    Req2 = maps:merge(#{srv=>SrvId}, Req),
+    Args = [parse, Group, Res, [Op, Actor, Req2]],
     case ?CALL_SRV(SrvId, nkactor_callback, Args) of
         continue ->
             nkserver_ot:log(SpanId, <<"default syntax">>),
@@ -399,7 +400,8 @@ unparse(SrvId, Actor, Req) ->
     #{group:=Group, resource:=Res} = Actor,
     SpanId = maps:get(ot_span_id, Req, undefined),
     nkserver_ot:log(SpanId, <<"calling actor unparse">>),
-    Args = [unparse, Group, Res, [Actor, Req]],
+    Req2 = maps:merge(#{srv=>SrvId}, Req),
+    Args = [unparse, Group, Res, [Actor, Req2]],
     case ?CALL_SRV(SrvId, nkactor_callback, Args) of
         continue ->
             nkserver_ot:log(SpanId, <<"default syntax">>),
@@ -422,7 +424,8 @@ unparse(SrvId, Actor, Req) ->
 request(SrvId, ActorId, Req) ->
     #{verb:=Verb, subresource:=SubRes} = Req,
     #actor_id{group = Group, resource = Res} = ActorId,
-    Args = [request, Group, Res, [Verb, SubRes, ActorId, Req]],
+    Req2 = maps:merge(#{srv=>SrvId}, Req),
+    Args = [request, Group, Res, [Verb, SubRes, ActorId, Req2]],
     % See nkactor_callback in nkactor_plugin
     SpanId = maps:get(ot_span_id, Req, undefined),
     nkserver_ot:log(SpanId, <<"calling actor request">>),

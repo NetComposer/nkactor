@@ -28,7 +28,6 @@
 -include_lib("nkserver/include/nkserver.hrl").
 
 -export([fold_actors/7, activate_actors/2]).
--export([pre_create/2, pre_update/4]).
 
 -define(ACTIVATE_SPAN, auto_activate).
 
@@ -134,86 +133,90 @@ do_activate_actors([ActorId|Rest], Acc) ->
     do_activate_actors(Rest, Acc2).
 
 
-%% @private
-pre_create(Actor, Opts) ->
-    SpanId = maps:get(ot_span_id, Opts, undefined),
-    Syntax = #{'__mandatory' => [group, resource, namespace]},
-    case nkactor_syntax:parse_actor(Actor, Syntax) of
-        {ok, Actor2} ->
-            nkserver_ot:log(SpanId, <<"actor parsed">>),
-            #{namespace:=Namespace} = Actor2,
-            case nkactor_namespace:find_service(Namespace) of
-                {ok, SrvId} ->
-                    nkserver_ot:log(SpanId, <<"actor namespace found: ~s">>, [SrvId]),
-                    case nkactor_lib:add_creation_fields(SrvId, Actor2) of
-                        {ok, Actor3} ->
-                            Actor4 = case Opts of
-                                #{forced_uid:=UID} ->
-                                    nomatch = binary:match(UID, <<".">>),
-                                    Actor3#{uid := UID};
-                                _ ->
-                                    Actor3
-                            end,
-                            Req1 = maps:get(request, Opts, #{}),
-                            Req2 = Req1#{srv => SrvId},
-                            case nkactor_actor:parse(SrvId, create, Actor4, Req2) of
-                                {ok, Actor5} ->
-                                    case nkactor_lib:check_actor_links(Actor5) of
-                                        {ok, Actor6} ->
-                                            nkserver_ot:log(SpanId, <<"actor parsed">>),
-                                            {ok, SrvId, Actor6};
-                                        {error, Error} ->
-                                            nkserver_ot:log(SpanId, <<"error checking links: ~p">>, [Error]),
-                                            {error, Error}
-                                    end;
-                                {error, Error} ->
-                                    nkserver_ot:log(SpanId, <<"error parsing specific actor: ~p">>, [Error]),
-                                    {error, Error}
-                            end;
-                        {error, Error} ->
-                            nkserver_ot:log(SpanId, <<"error creating initial data: ~p">>, [Error]),
-                            {error, Error}
-                    end;
-                {error, Error} ->
-                    nkserver_ot:log(SpanId, <<"error getting namespace: ~p">>, [Error]),
-                    {error, Error}
-            end;
-        {error, Error} ->
-            nkserver_ot:log(SpanId, <<"error parsing generic actor: ~p">>, [Error]),
-            {error, Error}
-    end.
 
 
 
-%% @private
-pre_update(SrvId, ActorId, Actor, Opts) ->
-    SpanId = maps:get(ot_span_id, Opts, undefined),
-    case nkactor_syntax:parse_actor(Actor, #{}) of
-        {ok, Actor2} ->
-            #actor_id{group=Group, resource=Res, name=Name, namespace=Namespace} = ActorId,
-            Base = #{group=>Group, resource=>Res, name=>Name, namespace=>Namespace},
-            Actor3 = maps:merge(Base, Actor2),
-            nkserver_ot:log(SpanId, <<"actor parsed">>),
-            Req1 = maps:get(request, Opts, #{}),
-            Req2 = Req1#{srv => SrvId},
-            case nkactor_actor:parse(SrvId, update, Actor3, Req2) of
-                {ok, Actor4} ->
-                    case nkactor_lib:check_actor_links(Actor4) of
-                        {ok, Actor5} ->
-                            nkserver_ot:log(SpanId, <<"actor parsed">>),
-                            {ok, Actor5};
-                        {error, Error} ->
-                            nkserver_ot:log(SpanId, <<"error checking links: ~p">>, [Error]),
-                            {error, Error}
-                    end;
-                {error, Error} ->
-                    nkserver_ot:log(SpanId, <<"error parsing specific actor: ~p">>, [Error]),
-                    {error, Error}
-            end;
-        {error, Error} ->
-            nkserver_ot:log(SpanId, <<"error parsing generic actor: ~p">>, [Error]),
-            {error, Error}
-    end.
+
+%% ===================================================================
+%% LOAD utility
+%% ===================================================================
+
+%%%% @doc
+%%load_actors_path(Path, Token) ->
+%%    Files = filelib:fold_files(Path, "\\.yaml$", false, fun(F, Acc) -> [F|Acc] end, []),
+%%    load_actor_files(Files, Token).
+%%
+%%
+%%load_actor_data(Data, Token) ->
+%%    case catch nklib_yaml:decode(Data) of
+%%        {error, {yaml_decode_error, Error}} ->
+%%            {error, {yaml_decode_error, Error}};
+%%        Objs ->
+%%            load_actor_objs(Objs, Token, [])
+%%    end.
+%%
+%%
+%%%% @private
+%%load_actor_files([], _Token) ->
+%%    ok;
+%%
+%%load_actor_files([File|Rest], Token) ->
+%%    {ok, Data} = file:read_file(File),
+%%    case catch nklib_yaml:decode(Data) of
+%%        {error, {yaml_decode_error, Error}} ->
+%%            lager:warning("Error processing file '~s': ~p", [File, Error]),
+%%            {error, {yaml_decode_error, Error}};
+%%        Objs ->
+%%            lager:warning("Loading actors in file '~s'", [File]),
+%%            case load_actor_objs(Objs, Token, []) of
+%%                ok ->
+%%                    load_actor_files(Rest, Token);
+%%                {error, Error} ->
+%%                    {error, Error}
+%%            end
+%%    end.
+%%
+%%
+%%%% @private
+%%load_actor_objs([], _Token, Acc) ->
+%%    {ok, lists:reverse(Acc)};
+%%
+%%load_actor_objs([Obj|Rest], Token, Acc) ->
+%%    case Obj of
+%%        #{<<"metadata">> := #{<<"name">>:=Name}} ->
+%%            Op = #{
+%%                verb => update,
+%%                body => Obj,
+%%                auth => #{token => Token}
+%%            },
+%%            Res = case nkdomain_api:request(?ROOT_SRV, Op) of
+%%                {error, Error, _} ->
+%%                    {error, Error};
+%%                {created, Obj2, _} ->
+%%                    #{<<"metadata">>:=#{<<"uid">>:=UID, <<"selfLink">>:=Self}}= Obj2,
+%%                    lager:warning("Actor ~s (~s) create", [Self, UID]),
+%%                    created;
+%%                {ok, Obj2, _} ->
+%%                    #{<<"metadata">>:=#{<<"uid">>:=UID, <<"selfLink">>:=Self}}= Obj2,
+%%                    lager:warning("Actor ~s (~s) update", [Self, UID]),
+%%                    updated
+%%            end,
+%%            load_actor_objs(Rest, Token, [{Name, Res}|Acc]);
+%%        _ ->
+%%            % We don't want automatic generation of names in bulk loading
+%%            {error, {field_missing, <<"metadata.name">>}}
+%%    end.
+
+
+
+
+
+
+
+
+
+
+
 
 
 
