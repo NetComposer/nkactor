@@ -37,11 +37,12 @@
 %% ===================================================================
 
 
+-type fold_fun() :: fun((nkactor:actor(), Acc::term()) -> Acc::term() | {stop, Reason::term()}).
 
 %% @doc Performs an query on database for actors marked as 'active' and tries
 %% to active them if not already activated
 -spec fold_actors(nkserver:id(), nkactor:group(), nkactor:resource(), nkactor:namespace(),
-                  boolean(), function(), term()) ->
+                  boolean(), fold_fun(), term()) ->
     {ok, [#actor_id{}]} | {error, term()}.
 
 fold_actors(SrvId, Group, Res, Namespace, Deep, FoldFun, FoldAcc) ->
@@ -77,14 +78,28 @@ fold_actors(SrvId, NextUID, SearchFun, FoldFun, FoldAcc) ->
         {ok, [], _} ->
             FoldAcc;
         {ok, Actors, _} ->
-            FoldAcc2 = lists:foldl(
-                fun(Actor, Acc) -> FoldFun(Actor, Acc) end,
-                FoldAcc,
-                Actors),
-            [#{uid:=LastUID}|_] = lists:reverse(Actors),
-            fold_actors(SrvId, LastUID, SearchFun, FoldFun, FoldAcc2);
+            case do_fold_actors(Actors, FoldFun, FoldAcc) of
+                {stop, Reason} ->
+                    {stop, Reason};
+                FoldAcc2 ->
+                    [#{uid:=LastUID}|_] = lists:reverse(Actors),
+                    fold_actors(SrvId, LastUID, SearchFun, FoldFun, FoldAcc2)
+            end;
         {error, Error} ->
             {error, Error}
+    end.
+
+
+%% @private
+do_fold_actors([], _FoldFun, FoldAcc) ->
+    FoldAcc;
+
+do_fold_actors([Actor|Rest], FoldFun, FoldAcc) ->
+    case FoldFun(Actor, FoldAcc) of
+        {stop, Reason} ->
+            {stop, Reason};
+        FoldAcc2 ->
+            do_fold_actors(Rest, FoldFun, FoldAcc2)
     end.
 
 
