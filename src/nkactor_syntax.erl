@@ -182,9 +182,6 @@ parse_request_body(#{verb:=Verb, body:=Body}=Req)
         when (Verb==create orelse Verb==update) andalso is_map(Body) ->
     case nklib_syntax:parse(Body, body_syntax()) of
         {ok, BodyFields, _} ->
-            ReqVsn = maps:get(vsn, Req, <<>>),
-            Metadata = maps:get(metadata, BodyFields, #{}),
-            BodyVsn = maps:get(vsn, Metadata, ReqVsn),
             BodyFields2 = maps:remove(metadata, BodyFields),
             AllowChange = case Verb==update andalso Req of
                 #{params:=#{allow_name_change:=true}} ->
@@ -201,17 +198,23 @@ parse_request_body(#{verb:=Verb, body:=Body}=Req)
                     {error, {field_invalid, <<"name">>}};
                 {#{namespace:=S1}, #{namespace:=S2}} when S1 /= S2, not AllowChange ->
                     {error, {field_invalid, <<"namespace">>}};
-                _ when BodyVsn /= ReqVsn ->
+                {#{metadata:=#{vsn:=V1}}, #{vsn:=V2}} when V1 /= V2 ->
                     {error, {field_invalid, <<"metadata.vsn">>}};
                 _ ->
-                    case maps:merge(BodyFields2, Req) of
-                        #{group:=_, resource:=_, namespace:=_}=Req2 ->
-                            case ReqVsn of
-                                <<>> ->
-                                    {ok, Req2};
+                    Req2 = case maps:is_key(vsn, Req) of
+                        true ->
+                            Req;
+                        false ->
+                            case BodyFields of
+                                #{metadata:=#{vsn:=Vsn}} ->
+                                    Req#{vsn=>Vsn};
                                 _ ->
-                                    {ok, Req2#{vsn => ReqVsn}}
-                            end;
+                                    Req
+                            end
+                    end,
+                    case maps:merge(BodyFields2, Req2) of
+                        #{group:=_, resource:=_, namespace:=_}=Req3 ->
+                            {ok, Req3};
                         _ ->
                             parse_request_missing(Req)
                     end

@@ -375,6 +375,7 @@ list(ActorId, Config, Req) ->
 create(ActorId, Config, Req) ->
     ParamsSyntax = #{
         activate => boolean,
+        forced_uid => binary,
         ttl => {integer, 1, none}
     },
     case parse_params(Req, ParamsSyntax) of
