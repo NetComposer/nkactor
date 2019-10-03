@@ -137,6 +137,8 @@ event_syntax() ->
 parse_request(Req) ->
     Syntax = request_syntax(),
     case nklib_syntax:parse(Req, Syntax) of
+        {ok, _, [Field|_]} ->
+            {error, {field_unknown, Field}};
         {ok, #{uid:=UID}=Req2, _} ->
             OptSrvId = maps:get(srv, Req2, undefined),
             ?REQ_DEBUG("reading UID: ~s", [UID]),
