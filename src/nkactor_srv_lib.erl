@@ -86,12 +86,13 @@ set_activate_time(<<>>, #actor_st{actor=Actor, activate_timer=Timer}=State) ->
         #{metadata:=#{activate_time:=_}=Meta} ->
             Meta2 = maps:remove(activate_time, Meta),
             Actor2 = Actor#{metadata:=Meta2},
-            set_updated(State#actor_st{actor=Actor2});
+            State#actor_st{actor=Actor2, is_dirty=true};
         _ ->
             State
     end;
 
-set_activate_time(Time, #actor_st{actor=#{metadata:=Meta}=Actor}=State) ->
+set_activate_time(Time, #actor_st{actor=#{metadata:=Meta}=Actor, activate_timer=Timer}=State) ->
+    nklib_util:cancel_timer(Timer),
     {ok, Time1} = nklib_date:to_epoch(Time, usecs),
     Time2 = Time1 + nklib_util:rand(0, 999),
     {ok, Time3} = nklib_date:to_3339(Time2, usecs),
@@ -99,7 +100,7 @@ set_activate_time(Time, #actor_st{actor=#{metadata:=Meta}=Actor}=State) ->
     % To avoid it to be the same (probably 0) in several requests
     Actor2 = Actor#{metadata:=Meta#{activate_time => Time3}},
     self() ! nkactor_check_activate_time,
-    set_updated(State#actor_st{actor=Actor2}).
+    State#actor_st{actor=Actor2, is_dirty=true}.
 
 
 %% @doc Sets an expiration date
