@@ -529,14 +529,8 @@ add_actor_event(Class, Type, Data, ActorSt) ->
     end,
     Events1 = maps:get(events, Meta, []),
     MaxEvents = maps:get(max_actor_events, Config, 10),
-    Events2 = case length(Events1) >= MaxEvents of
-        true ->
-            lists:sublist(Events1, MaxEvents-1);
-        false ->
-            Events1
-    end,
-    Events3 = [Event3|Events2],
-    Meta2 = Meta#{events => Events3},
+    Events2 = nklib_util:add_to_list(Event3, MaxEvents, Events1),
+    Meta2 = Meta#{events => Events2},
     Actor2 = Actor#{metadata:=Meta2},
     % We don't call set_dirty, the actor is no really modified by user,
     % and many actors can insert a 'created' event, and would start with generation=1, etc.
