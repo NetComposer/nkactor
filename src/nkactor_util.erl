@@ -106,6 +106,8 @@ do_fold_actors([Actor|Rest], FoldFun, FoldAcc) ->
 
 %% @doc Performs an query on database for actors marked as 'active' and tries
 %% to active them if not already activated
+%% Look for actors to be activated from 0 to up to now + Time (msecs)
+
 -spec activate_actors(nkserver:id(), Time::integer()) ->
     {ok, integer()} | {error, term()}.
 

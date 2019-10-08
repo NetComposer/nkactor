@@ -728,10 +728,11 @@ delete_old(SrvId, Group, Res, Date, Opts) ->
 
 
 %% @doc Find actors with activation date < current date + Time
+%% (actors that are to be activated from 0 to Time msecs ahead)
 %% If 2 actors share the exact same activation date (in usecs) and pagination
 %% stops on it, some could be lost
 %% Since we are activating 2h in advance, next time should't happen
--spec search_activate(nkactor:id(), Time::integer()) ->
+-spec search_activate(nkactor:id(), TimeMsecs::integer()) ->
     {ok, [#actor_id{}]} | {error, term()}.
 
 search_activate(SrvId, Time) ->
