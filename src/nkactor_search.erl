@@ -406,7 +406,7 @@ field_type(Field, Filter, Opts) ->
         {ok, UserType} ->
             case maps:get(Field, Types, UserType) of
                 UserType ->
-                    {ok, Filter#{filed=>Field}};
+                    {ok, Filter#{field=>Field}};
                 _ ->
                     {error, {conflicting_field_type, Field}}
             end;
