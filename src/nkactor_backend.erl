@@ -790,7 +790,7 @@ pre_create(Actor, Opts) ->
                                 #{forced_uid:=UID} ->
                                     nomatch = binary:match(UID, <<".">>),
                                     <<First, _/binary>> = UID,
-                                    First /= $/,
+                                    true = (First /= $/),
                                     Actor3#{uid := UID};
                                 _ ->
                                     Actor3
