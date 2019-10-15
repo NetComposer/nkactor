@@ -97,6 +97,7 @@ status(uid_not_found)      		    -> "Unknown UID";
 status(uniqueness_violation)        -> {"Uniqueness violation", #{code=>409}};
 status(upload_server_error)         -> "Upload server error";
 status({updated_invalid_field, F})  -> {"Updated invalid field '~s'", [F], #{code=>422, data=>#{field=>F}}};
+status({updated_static_field, F})  -> {"Updated static field '~s'", [F], #{code=>422, data=>#{field=>F}}};
 status(user_unknown)                -> {"User unknown", #{code=>404}};
 status({user_unknown, U})           -> {"User '~s' unknown", [U], #{code=>404, data=>#{user=>U}}};
 status(url_unknown)      		    -> "Unknown url";

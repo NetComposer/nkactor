@@ -580,9 +580,9 @@ do_update_check_fields([Field|Rest], NewData, OldData) ->
             case do_update_check_fields([Key], SubNew, SubOld) of
                 ok ->
                     do_update_check_fields(Rest, NewData, OldData);
-                {error, {updated_invalid_field, _}} ->
-                    %{error, {updated_invalid_field, <<"data.", Field/binary>>}}
-                    {error, {updated_invalid_field, Field}}
+                {error, {updated_static_field, _}} ->
+                    %{error, {updated_static_field, <<"data.", Field/binary>>}}
+                    {error, {updated_static_field, Field}}
             end;
         [_] ->
             Field2 = binary_to_existing_atom(Field, utf8),
@@ -590,8 +590,8 @@ do_update_check_fields([Field|Rest], NewData, OldData) ->
                 true ->
                     do_update_check_fields(Rest, NewData, OldData);
                 false ->
-                    %{error, {updated_invalid_field, <<"data.", Field/binary>>}}
-                    {error, {updated_invalid_field, Field}}
+                    %{error, {updated_static_field, <<"data.", Field/binary>>}}
+                    {error, {updated_static_field, Field}}
             end
     end.
 

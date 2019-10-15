@@ -187,15 +187,15 @@ update(UpdActor, Opts, #actor_st{actor_id=ActorId, actor=Actor}=State) ->
         case UpdActorId#actor_id.uid of
             undefined -> ok;
             UID -> ok;
-            _ -> throw({updated_invalid_field, uid})
+            _ -> throw({updated_static_field, uid})
         end,
         case UpdActorId#actor_id.group of
             Class -> ok;
-            _ -> throw({updated_invalid_field, group})
+            _ -> throw({updated_static_field, group})
         end,
         case UpdActorId#actor_id.resource of
             Res -> ok;
-            _ -> throw({updated_invalid_field, resource})
+            _ -> throw({updated_static_field, resource})
         end,
         UpdNamespace = UpdActorId#actor_id.namespace,
         UpdName = UpdActorId#actor_id.name,
@@ -210,7 +210,7 @@ update(UpdActor, Opts, #actor_st{actor_id=ActorId, actor=Actor}=State) ->
                         ?ACTOR_LOG(notice, "updated namespace ~s -> ~s", [Namespace, UpdNamespace]),
                         ok;
                     _ ->
-                        throw({updated_namespace_invalid, UpdNamespace})
+                        throw({updated_namespace_static, UpdNamespace})
                 end,
                 ActorId2 = ActorId#actor_id{
                     namespace = UpdNamespace,
@@ -226,11 +226,11 @@ update(UpdActor, Opts, #actor_st{actor_id=ActorId, actor=Actor}=State) ->
             _ ->
                 case UpdNamespace of
                     Namespace -> ok;
-                    _ -> throw({updated_invalid_field, namespace})
+                    _ -> throw({updated_static_field, namespace})
                 end,
                 case UpdName of
                     Name -> ok;
-                    _ -> throw({updated_invalid_field, name})
+                    _ -> throw({updated_static_field, name})
                 end
         end,
         IsCoreUpdated = (UpdNamespace /= Namespace) orelse (UpdName /= Name),
@@ -257,7 +257,7 @@ update(UpdActor, Opts, #actor_st{actor_id=ActorId, actor=Actor}=State) ->
             {ok, UpdMeta2_0, []} ->
                 UpdMeta2_0;
             {ok, _, [Field|_]} ->
-                throw({updated_invalid_field, Field})
+                throw({updated_static_field, Field})
         end,
         % We will check later that no important fields has been modified
         NewMeta1 = nkactor_lib:map_merge(Meta, UpdMeta2),
