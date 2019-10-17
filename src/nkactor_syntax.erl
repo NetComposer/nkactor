@@ -267,7 +267,8 @@ request_syntax() ->
         ot_span_id => any,
         external_url => binary,
         callback => atom,
-        meta => map
+        meta => map,
+        start_time => binary
     }.
 
 

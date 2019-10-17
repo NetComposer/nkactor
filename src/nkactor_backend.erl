@@ -301,10 +301,6 @@ create(Actor, Opts) ->
                             span_finish(create),
                             {ok, SrvId, ActorId, #{}}
                     end;
-                {error, actor_already_registered} ->
-                    span_log(create, <<"uniquess violation">>),
-                    span_finish(create),
-                    {error, uniqueness_violation};
                 {error, Error} ->
                     span_log(create, <<"error creating actor: ~p">>, [Error]),
                     span_error(create, Error),

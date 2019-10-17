@@ -172,7 +172,7 @@ creation | user_op | user_order | unloaded | update | timer.
 %% @private
 %% Call nkactor:create/2 instead calling this directly!
 -spec create(nkactor:actor(), start_opts()) ->
-    {ok, pid()} | {error, term()}.
+    {ok, pid()} | {error, {actor_already_exists, _}|term()}.
 
 create(Actor, Config) ->
     do_start(create, Actor, Config).
@@ -885,7 +885,8 @@ do_register(Tries, #actor_st{actor_id=ActorId, srv=SrvId} = State) ->
             ?ACTOR_DEBUG("registered with namespace (pid:~p)", [Pid]),
             {ok, State2};
         {error, actor_already_registered} ->
-            {error, actor_already_registered};
+            #actor_id{uid=UID} = ActorId,
+            {error, {actor_already_exists, UID}};
         {error, Error} ->
             case Tries > 1 of
                 true ->
