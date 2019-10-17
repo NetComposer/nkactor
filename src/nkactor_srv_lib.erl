@@ -395,7 +395,6 @@ save(Reason, State) ->
 save(Reason, SaveOpts, #actor_st{actor=Actor, is_dirty = true} = State) ->
     #actor_st{
         srv = SrvId,
-        actor_id = #actor_id{uid=UID},
         actor = Actor,
         saved_metadata = SavedMeta,
         save_timer = Timer,
@@ -459,10 +458,10 @@ save(Reason, SaveOpts, #actor_st{actor=Actor, is_dirty = true} = State) ->
                             op_span_log(<<"save not implemented">>, State4),
                             State5 = op_span_finish(State4),
                             {{error, not_implemented}, State5};
-                        {error, uniqueness_violation} ->
+                        {error, Error} when Error==uniqueness_violation; Error==duplicated_name ->
                             op_span_log(<<"uniqueness violation">>, State4),
                             State5 = op_span_finish(State4),
-                            {{error, {actor_already_exists, UID}}, State5};
+                            {{error, actor_already_exists}, State5};
                         {error, Error} ->
                             op_span_log(<<"save error: ~p">>, [Error], State4),
                             op_span_error(Error, State4),
