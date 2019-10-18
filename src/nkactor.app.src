@@ -5,6 +5,7 @@
     {registered, []},
     {mod, {nkactor_app, []}},
     {applications, [
+        nkpubsub,
         nkserver,
         nkserver_ot,
         hackney
