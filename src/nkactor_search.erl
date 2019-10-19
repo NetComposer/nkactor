@@ -85,8 +85,9 @@
 % For JSON fields, the type 'object' can be used for @> operator
 % for example, for field spec.phone.phone => array, the query
 %   #{field => "spec.phone.phone", eq=>"123} generates data->'spec'->'phone' @> '[{"phone": "123456"}]'
+% For array, {"field":["value"]} will be used
 
--type field_type() :: string | boolean | integer | object.
+-type field_type() :: string | boolean | integer | object | array.
 
 
 -type filter_spec() ::
@@ -196,7 +197,7 @@ search_spec_syntax() ->
 search_spec_syntax_filter() ->
     #{
         field => binary,
-        type => {atom, [string, integer, boolean, object]},
+        type => {atom, [string, integer, boolean, object, array]},
         op => {atom, [eq, ne, lt, lte, gt, gte, values, exists, prefix, ignore]},
         value => any,
         '__mandatory' => [field, value]
