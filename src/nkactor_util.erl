@@ -108,7 +108,7 @@ do_fold_actors([Actor|Rest], FoldFun, FoldAcc) ->
 %% to active them if not already activated
 %% Look for actors to be activated from 0 to up to now + Time (msecs)
 
--spec activate_actors(nkserver:id(), Time::integer()) ->
+-spec activate_actors(nkserver:id(), TimeMsecs::integer()) ->
     {ok, integer()} | {error, term()}.
 
 activate_actors(SrvId, Time) ->

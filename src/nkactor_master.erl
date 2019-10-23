@@ -42,8 +42,7 @@
 -export([register_namespace/2, get_namespace/2]).
 -export([get_namespaces/1, get_namespaces/2, get_all_namespaces/0, get_all_namespaces/1]).
 -export([stop_all_namespaces/2]).
--export([srv_master_init/2, srv_master_handle_call/4,
-         srv_master_handle_cast/3, srv_master_handle_info/3,
+-export([srv_master_init/2, srv_master_handle_call/4, srv_master_handle_info/3,
          srv_master_timed_check/3]).
 
 -include("nkactor.hrl").
@@ -51,6 +50,8 @@
 
 -define(LLOG(Type, Txt, Args, State),
     lager:Type("NkACTOR Master (~s) "++Txt, [maps:get(base_namespace, State)|Args])).
+
+-define(ACTIVATE_AHEAD, 5*60*1000).
 
 
 %% ===================================================================
@@ -141,7 +142,7 @@ stop_all_namespaces(Namespace, Reason) ->
         base_namespace := nkactor:namespace(),
         base_namespace_pid := pid() | undefined,
         namespaces := [{[binary()], nkactor:namespace(), pid()}],
-        next_auto_activate := integer()
+        next_auto_activate_time => integer()
     }.
 
 
@@ -150,19 +151,13 @@ stop_all_namespaces(Namespace, Reason) ->
     {continue, [{nkserver:id(), state()}]}.
 
 srv_master_init(SrvId, State) ->
-    NextActivate = case nkserver:get_config(SrvId) of
-        #{auto_activate_actors_period:=Time} ->
-            nklib_date:epoch(msecs) + Time;
-        _ ->
-            0
-    end,
     State2 = State#{
         base_namespace => nkactor:base_namespace(SrvId),
         base_namespace_pid => undefined,
-        namespaces => [],
-        next_auto_activate => NextActivate
+        namespaces => []
     },
-    gen_server:cast(self(), nkactor_check_base_namespace),
+    self() ! nkactor_check_base_namespace,
+    self() ! nkactor_auto_activate,
     {continue, [SrvId, State2]}.
 
 
@@ -196,14 +191,12 @@ srv_master_handle_call(_Msg, _From, _SrvId, _State) ->
 
 
 %% @private
-srv_master_handle_cast(nkactor_check_base_namespace, _SrvId, State) ->
+srv_master_handle_info(nkactor_check_base_namespace, _SrvId, State) ->
     {noreply, check_base_namespace(false, State)};
 
-srv_master_handle_cast(_Msg,  _SrvId, _State) ->
-    continue.
+srv_master_handle_info(nkactor_auto_activate, SrvId, State) ->
+    {noreply, check_auto_activate(SrvId, State)};
 
-
-%% @private
 srv_master_handle_info({'DOWN', _Ref, process, Pid, _Reason}, _SrvId, State) ->
     case State of
         #{base_namespace_pid := Pid} ->
@@ -226,6 +219,9 @@ srv_master_handle_info(_Msg, _SrvId, _State) ->
 
 
 %% @private
+%% Called each 5 seconds at all nodes
+%% If it is a leader node, IsLeader will be true
+%% There could be no leader, depending on strategy
 srv_master_timed_check(IsLeader, SrvId, State) ->
     State2 = check_base_namespace(IsLeader, State),
     State3 = check_auto_activate(SrvId, State2),
@@ -258,19 +254,27 @@ check_base_namespace(IsLeader, #{base_namespace:=Namespace}=State) ->
 
 
 %% @private
-check_auto_activate(SrvId, #{next_auto_activate:=Next}=State) when Next > 0 ->
-    Now = nklib_date:epoch(msecs),
-    case Now > Next of
-        true ->
-            spawn(fun() -> nkactor_util:activate_actors(SrvId, 2*60*60*1000) end),
-            #{auto_activate_actors_period:=Time} = nkserver:get_config(SrvId),
-            State#{next_auto_activate := Now+Time};
-        false ->
-            State
-    end;
-
-check_auto_activate(_SrvId, State) ->
-    State.
+check_auto_activate(SrvId, State) ->
+    Config = nkserver:get_config(SrvId),
+    case maps:get(auto_activate_actors_period, Config, 0) of
+        0 ->
+            State;
+        Period ->
+            Now = nklib_date:epoch(msecs),
+            Next = maps:get(next_auto_activate_time, State, 0),
+            case Now > Next of
+                true ->
+                    Fun = fun() ->
+                        {ok, Total} = nkactor_util:activate_actors(SrvId, ?ACTIVATE_AHEAD),
+                        lager:error("NKLOG LAUNCH AUTO ACTIVATE ~p", [Total])
+                    end,
+                    spawn(Fun);
+                false ->
+                    ok
+            end,
+            Next2 = nklib_date:epoch(msecs) + Period,
+            State#{next_auto_activate_time => Next2}
+    end.
 
 
 %% @private

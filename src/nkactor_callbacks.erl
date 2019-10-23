@@ -39,7 +39,7 @@
 -export([actor_db_find/3, actor_db_read/3, actor_db_create/3, actor_db_update/3,
          actor_db_delete/3, actor_db_delete_multi/3, actor_db_search/3, actor_db_aggregate/3,
          actor_db_truncate/2]).
--export([srv_master_init/2, srv_master_handle_call/4, srv_master_handle_cast/3,
+-export([srv_master_init/2, srv_master_handle_call/4,
          srv_master_handle_info/3, srv_master_timed_check/3]).
 
 
@@ -662,11 +662,6 @@ srv_master_init(SrvId, State) ->
 %% @private
 srv_master_handle_call(Msg, From, SrvId, State) ->
     nkactor_master:srv_master_handle_call(Msg, From, SrvId, State).
-
-
-%% @private
-srv_master_handle_cast(Msg, SrvId, State) ->
-    nkactor_master:srv_master_handle_cast(Msg, SrvId, State).
 
 
 %% @private
