@@ -590,11 +590,19 @@ expand_op(Value) ->
                 lte -> lte;
                 prefix -> prefix;
                 values -> values;
+                exists -> exists;
                 _ -> none
             end,
             case Op2 of
                 values ->
                     {values, binary:split(Value2, <<"|">>, [global])};
+                exists ->
+                    case nklib_util:to_boolean(Value2) of
+                        error ->
+                            {eq, Value};
+                        Bool ->
+                            {exists, Bool}
+                    end;
                 none ->
                     {eq, Value};
                 _ ->
