@@ -156,9 +156,16 @@ srv_master_init(SrvId, State) ->
         base_namespace_pid => undefined,
         namespaces => []
     },
+    Config = nkserver:get_config(SrvId),
+    State3 = case maps:get(auto_activate_actors_period, Config, 0) of
+        0 ->
+            State2;
+        _Period ->
+            State2#{next_auto_activate_time => 0}
+    end,
     self() ! nkactor_check_base_namespace,
     self() ! nkactor_auto_activate,
-    {continue, [SrvId, State2]}.
+    {continue, [SrvId, State3]}.
 
 
 %% @private
@@ -254,27 +261,25 @@ check_base_namespace(IsLeader, #{base_namespace:=Namespace}=State) ->
 
 
 %% @private
-check_auto_activate(SrvId, State) ->
-    Config = nkserver:get_config(SrvId),
-    case maps:get(auto_activate_actors_period, Config, 0) of
-        0 ->
-            State;
-        Period ->
-            Now = nklib_date:epoch(msecs),
-            Next = maps:get(next_auto_activate_time, State, 0),
-            case Now > Next of
-                true ->
-                    Fun = fun() ->
-                        {ok, Total} = nkactor_util:activate_actors(SrvId, ?ACTIVATE_AHEAD),
-                        lager:error("NKLOG LAUNCH AUTO ACTIVATE ~p", [Total])
-                    end,
-                    spawn(Fun);
-                false ->
-                    ok
+check_auto_activate(SrvId, #{next_auto_activate_time:=Next}=State) ->
+    Now = nklib_date:epoch(msecs),
+    case Now > Next of
+        true ->
+            Fun = fun() ->
+                {ok, Total} = nkactor_util:activate_actors(SrvId, ?ACTIVATE_AHEAD),
+                lager:error("NKLOG LAUNCHED AUTO ACTIVATE ~p", [Total])
             end,
-            Next2 = nklib_date:epoch(msecs) + Period,
-            State#{next_auto_activate_time => Next2}
-    end.
+            spawn(Fun),
+            Config = nkserver:get_config(SrvId),
+            Period = maps:get(auto_activate_actors_period, Config),
+            State#{next_auto_activate_time => Now+Period};
+        false ->
+            State
+    end;
+
+check_auto_activate(_SrvId, State) ->
+    State.
+
 
 
 %% @private
