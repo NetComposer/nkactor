@@ -39,14 +39,38 @@
 -export_type([config/0]).
 
 -include("nkactor.hrl").
--include("nkactor.hrl").
 -include("nkactor_debug.hrl").
 -include_lib("nkserver/include/nkserver.hrl").
 
 
 %% ===================================================================
-%% Callbacks definitions
+%% Types
 %% ===================================================================
+
+%% Data field guidelines
+%%  - Use field 'spec' for core information about this specific actor type
+%%    Users should be able to modify this at any time
+%%
+%%  - Use field 'status' for information:
+%%      - calculated from spec
+%%          - can be calculated in parse callback, only if depends only on spec
+%%            with no side effects. At modifications, previous data and metadata
+%%            is usually not available
+%%          - Links and labels should NOT be added in parse, but at init(create, _) and
+%%            update callbacks, where full data is available
+%%      - calculated taking info from others actors. Should be implemented in
+%%        init(create, _) and update
+%%      - data could be persisted, making it easier to search directly on the DB
+%%        (but may not be accurate until the actor is loaded) or not, implementing
+%%        get callback to add it to status
+%%      - User should usually NOT be allowed to update status, and specific update
+%%        to resource 'status' should be used, or specific _rpc/... that produces
+%%        this update as a side effect
+%%      - It could however not be blocked for creation in parse in order to allow
+%%        migration from other systems, or even update, but it is dangerous
+%%      - You MUST be careful that, when user updates data, it does not delete status
+%%        You may implement update/2 and call nkactor_srv_lib:update_status/2 to copy
+%%        the old status into the new actor
 
 
 -type actor() ::

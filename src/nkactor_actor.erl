@@ -223,7 +223,7 @@ get_config(SrvId, Module) when is_atom(SrvId), is_atom(Module) ->
 get_config(SrvId, #actor_id{group=Group, resource=Resource}) ->
     case get_module(SrvId, Group, Resource) of
         undefined ->
-            {error, resource_invalid};
+            {error, {resource_invalid, Group, Resource}};
         Module when is_atom(Module) ->
             {ok, SrvId, get_config(SrvId, Module)}
     end.

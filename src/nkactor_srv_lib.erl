@@ -24,7 +24,7 @@
 
 -export([event/2, event_link/2, update/3, delete/1, set_auto_activate/2, set_activate_time/2,
          set_expire_time/3, get_links/1, add_link/3, remove_link/2, save/2,
-         remove_all_links/1, add_actor_event/4, set_updated/1,
+         remove_all_links/1, add_actor_event/2, add_actor_event/3, add_actor_event/4, set_updated/1,
          update_status/2, update_status/3, add_actor_alarm/2, clear_all_alarms/1]).
 -export([handle/3, set_times/1]).
 -export([op_span_check_create/3, op_span_force_create/2, op_span_finish/1,
@@ -514,6 +514,19 @@ set_times(State) ->
 
 
 %% @doc
+add_actor_event(Class, ActorSt) ->
+    add_actor_event(Class, <<>>, #{}, ActorSt).
+
+
+%% @doc
+add_actor_event(Class, Data, ActorSt) when is_map(Data) ->
+    add_actor_event(Class, <<>>, Data, ActorSt);
+
+add_actor_event(Class, Type, ActorSt) ->
+    add_actor_event(Class, Type, #{}, ActorSt).
+
+
+%% @doc
 add_actor_event(Class, Type, Data, ActorSt) ->
     #actor_st{actor=#{metadata:=Meta}=Actor, config=Config} = ActorSt,
     Event1 = #{
@@ -522,6 +535,10 @@ add_actor_event(Class, Type, Data, ActorSt) ->
     },
     Event2 = case nklib_util:to_binary(Type) of
         <<>> ->
+            Event1;
+        <<"undefined">> ->
+            Event1;
+        <<"none">> ->
             Event1;
         Type2 ->
             Event1#{type => Type2}
