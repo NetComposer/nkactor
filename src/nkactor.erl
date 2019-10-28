@@ -71,7 +71,12 @@
 %%      - You MUST be careful that, when user updates data, it does not delete status
 %%        You may implement update/2 and call nkactor_srv_lib:update_status/2 to copy
 %%        the old status into the new actor
-
+%%
+%%  - Empty values
+%%      - general criteria is not including fields with not value
+%%      - however, for fields that will usually be with a value, and specially
+%%        if searches are common, be can include them and set value to 'null'
+%%        Use fields_type config and set the value to string_null for example
 
 -type actor() ::
     #{

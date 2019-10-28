@@ -87,7 +87,7 @@
 %   #{field => "spec.phone.phone", eq=>"123} generates data->'spec'->'phone' @> '[{"phone": "123456"}]'
 % For array, {"field":["value"]} will be used
 
--type field_type() :: string | boolean | integer | object | array.
+-type field_type() :: string | string_null | boolean | integer | object | array.
 
 
 -type filter_spec() ::
@@ -155,8 +155,7 @@ parse_spec(SearchSpec, Opts) ->
                     Parsed4 = apply_default_spec(Parsed3, Opts),
                     case check_filters(Parsed4, Opts) of
                         {ok, Parsed5} ->
-                            S = check_sort(Parsed5, Opts),
-                            S;
+                            check_sort(Parsed5, Opts);
                         {error, Error} ->
                             {error, Error}
                     end;
@@ -384,20 +383,12 @@ check_field_sort([Sort|Rest], Opts, Acc) ->
 %% @private
 field_trans(#{field:=Field}=Filter, #{fields_trans:=Trans}) ->
     Field2 = to_bin(Field),
-    case maps:get(Field2, Trans, Field2) of
-        Field ->
-            {Field, Filter};
-        Field3 ->
-            {Field3, Filter#{field:=Field3}}
-    end;
+    Field3 = maps:get(Field2, Trans, Field2),
+    {Field3, Filter#{field:=Field3}};
 
 field_trans(#{field:=Field}=Filter, _) ->
-    case to_bin(Field) of
-        Field ->
-            {Field, Filter};
-        Field2 ->
-            {Field2, Filter#{field:=Field2}}
-    end.
+    Field2 = to_bin(Field),
+    {Field2, Filter#{field:=Field2}}.
 
 
 %% @private
