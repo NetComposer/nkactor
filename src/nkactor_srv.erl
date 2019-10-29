@@ -121,6 +121,9 @@
     get_actor_id |
     get_links |
     save |
+    {save, Reason::term()} |
+    force_save |
+    {force_save, Reason::term()} |
     {add_label, binary(), binary()} |
     delete |
     {enable, boolean()} |
@@ -141,6 +144,9 @@
     {set_alarm, nkactor:alarm()} |
     clear_all_alarms |
     save |
+    {save, Reason::term()} |
+    force_save |
+    {force_save, Reason::term()} |
     delete |
     {stop, Reason :: nkserver:status()} |
     term().
@@ -604,13 +610,18 @@ do_sync_op(get_links, _From, State) ->
     Data = nkactor_srv_lib:get_links(State),
     reply({ok, Data}, State);
 
-do_sync_op(save, _From, State) ->
-    {Reply, State2} = nkactor_srv_lib:save(user_order, State),
+do_sync_op(save, From, State) ->
+    do_sync_op({save, user_order}, From, State);
+
+do_sync_op({save, Reason}, _From, State) ->
+    {Reply, State2} = nkactor_srv_lib:save(Reason, State),
     reply(Reply, do_refresh_ttl(State2));
 
-do_sync_op(force_save, _From, State) ->
-    {Reply, State2} = nkactor_srv_lib:save(user_order, nkactor_srv_lib:set_updated(State)),
-    reply(Reply, do_refresh_ttl(State2));
+do_sync_op(force_save, From, State) ->
+    do_sync_op({force_save, user_order}, From, State);
+
+do_sync_op({force_save, Reason}, From, State) ->
+    do_sync_op({save, Reason}, From, State#actor_st{is_dirty=true});
 
 do_sync_op(get_timers, _From, State) ->
     #actor_st{
@@ -740,6 +751,12 @@ do_async_op(save, State) ->
 do_async_op({save, Reason}, State) ->
     {_Reply, State2} = nkactor_srv_lib:save(Reason, State),
     noreply(do_refresh_ttl(State2));
+
+do_async_op(force_save, State) ->
+    do_async_op({force_save, user_order}, State);
+
+do_async_op({force_save, Reason}, State) ->
+    do_async_op({save, Reason}, State#actor_st{is_dirty=true});
 
 do_async_op(delete, #actor_st{is_enabled=IsEnabled, config=Config}=State) ->
     case {IsEnabled, Config} of
