@@ -255,6 +255,7 @@
 -type update_opts() ::
     #{
         merge_data => boolean(),
+        % Can include the original request (to extract params, etc.)
         request => nkactor:request(),
         get_actor => boolean(),
         allow_name_change => boolean()
@@ -263,7 +264,9 @@
 
 -type delete_opts() ::
     #{
-        activate => boolean()
+        activate => boolean(),
+        % Can include the original request (to extract params, etc.)
+        request => nkactor:request()
     }.
 
 -type request() :: nkactor_request:request().

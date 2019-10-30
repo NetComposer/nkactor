@@ -22,7 +22,7 @@
 -module(nkactor_srv_lib).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([event/2, event_link/2, update/3, delete/1, set_auto_activate/2, set_activate_time/2,
+-export([event/2, event_link/2, update/3, delete/2, set_auto_activate/2, set_activate_time/2,
          set_expire_time/3, get_links/1, add_link/3, remove_link/2, save/2,
          remove_all_links/1, add_actor_event/2, add_actor_event/3, add_actor_event/4, set_updated/1,
          update_status/2, update_status/3, add_actor_alarm/2, clear_all_alarms/1]).
@@ -295,7 +295,7 @@ update(UpdActor, Opts, #actor_st{actor_id=ActorId, actor=Actor}=State) ->
                 case nkactor_lib:update_check_fields(NewActor1, State2) of
                     ok ->
                         op_span_log(<<"calling actor_srv_update">>, State2),
-                        case handle(actor_srv_update, [NewActor1], State2) of
+                        case handle(actor_srv_update, [NewActor1, Opts], State2) of
                             {ok, NewActor2, State3} ->
                                 State4 = set_updated(State3#actor_st{actor=NewActor2}),
                                 NewEnabled = maps:get(is_enabled, NewMeta3, true),
@@ -327,7 +327,6 @@ update(UpdActor, Opts, #actor_st{actor_id=ActorId, actor=Actor}=State) ->
                         {error, StaticFieldError, State4}
                 end;
             false ->
-                % lager:error("NKLOG NO UPDATE"),
                 {ok, State}
         end
     catch
@@ -356,11 +355,11 @@ update_status(Actor, Fields, #actor_st{actor=OldActor}) ->
 
 
 %% @doc
-delete(#actor_st{is_dirty = deleted} = State) ->
+delete(_Opts, #actor_st{is_dirty = deleted} = State) ->
     {ok, State};
 
-delete(#actor_st{srv = SrvId, actor_id = ActorId, actor = Actor} = State) ->
-    case handle(actor_srv_delete, [], State) of
+delete(Opts, #actor_st{srv = SrvId, actor_id = ActorId, actor = Actor} = State) ->
+    case handle(actor_srv_delete, [Opts], State) of
         {ok, State2} ->
             case ?CALL_SRV(SrvId, actor_db_delete, [SrvId, ActorId, #{}]) of
                 {ok, DbMeta} ->

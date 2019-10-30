@@ -28,7 +28,7 @@
          actor_create/2, actor_activate/2, actor_external_event/3]).
 -export([actor_path_to_id/2]).
 -export([actor_srv_init/2, actor_srv_terminate/2,
-         actor_srv_stop/2, actor_srv_get/2, actor_srv_update/2, actor_srv_delete/1,
+         actor_srv_stop/2, actor_srv_get/2, actor_srv_update/3, actor_srv_delete/2,
          actor_srv_event/2,
          actor_srv_link_event/4, actor_srv_link_down/3, actor_srv_save/2,
          actor_srv_sync_op/3, actor_srv_async_op/2,
@@ -265,12 +265,12 @@ actor_srv_get(Actor, ActorSt) ->
 
 
 %%  @doc Called after approving an update, to change the updated actor  (callback update/2 in actor)
--spec actor_srv_update(nkactor:actor(), actor_st()) ->
+-spec actor_srv_update(nkactor:actor(), nkactor:update_opts(), actor_st()) ->
     {ok, nkactor:actor(), actor_st()} | {error, nkserver:status(), actor_st()} |continue().
 
-actor_srv_update(Actor, ActorSt) ->
+actor_srv_update(Actor, Opts, ActorSt) ->
     #actor_st{srv=SrvId, actor_id=#actor_id{group=Group, resource=Res}} = ActorSt,
-    case ?CALL_SRV(SrvId, nkactor_callback, [update, Group, Res, [Actor, ActorSt]]) of
+    case ?CALL_SRV(SrvId, nkactor_callback, [update, Group, Res, [Actor, Opts, ActorSt]]) of
         continue ->
             {ok, Actor, ActorSt};
         {ok, Actor2, ActorSt2} ->
@@ -283,12 +283,12 @@ actor_srv_update(Actor, ActorSt) ->
 
 
 %%  @doc Called before finishing a deletion
--spec actor_srv_delete(actor_st()) ->
+-spec actor_srv_delete(nkactor:delete_opts(), actor_st()) ->
     {ok, actor_st()} | {error, nkserver:status(), actor_st()} |continue().
 
-actor_srv_delete(ActorSt) ->
+actor_srv_delete(Opts, ActorSt) ->
     #actor_st{srv=SrvId, actor_id=#actor_id{group=Group, resource=Res}} = ActorSt,
-    case ?CALL_SRV(SrvId, nkactor_callback, [delete, Group, Res, [ActorSt]]) of
+    case ?CALL_SRV(SrvId, nkactor_callback, [delete, Group, Res, [Opts, ActorSt]]) of
         continue ->
             {ok, ActorSt};
         Other ->

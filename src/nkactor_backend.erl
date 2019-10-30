@@ -402,7 +402,7 @@ delete(Id, Opts) ->
             case is_pid(Pid) of
                 true ->
                     span_log(delete, <<"calling actor delete">>),
-                    case nkactor:sync_op(ActorId2, delete, infinity) of
+                    case nkactor:sync_op(ActorId2, {delete, Opts}, infinity) of
                         ok ->
                             % The object is loaded, and it will perform the delete
                             % itself, including sending the event (a full event)

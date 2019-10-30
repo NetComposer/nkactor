@@ -22,6 +22,7 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([request/1, pre_request/1, do_request/1, post_request/2]).
+-export([parse_params/2]).
 -export_type([request/0, response/0, reply/0]).
 
 -include("nkactor_request.hrl").
@@ -424,7 +425,7 @@ update(ActorId, Config, Req) ->
                             Opts1 = set_activate_opts(Config, Params),
                             Opts2 = Opts1#{get_actor=>true},
                             ?REQ_DEBUG("Updating actor ~p", [Actor2]),
-                            case nkactor:update(ActorId, Actor2, Opts2) of
+                            case nkactor:update(ActorId, Actor2, Opts2#{request=>Req}) of
                                 {ok, Actor3} ->
                                     {ok, Actor3};
                                 {error, actor_not_found} ->
@@ -452,7 +453,7 @@ delete(ActorId, _Config, Req) ->
     },
     case parse_params(Req, ParamsSyntax) of
         {ok, _Params} ->
-            case nkactor:delete(ActorId, #{ot_span_id=>?REQ_SPAN}) of
+            case nkactor:delete(ActorId, #{request=>Req, ot_span_id=>?REQ_SPAN}) of
                 ok ->
                     {status, actor_deleted};
                 {error, Error} ->

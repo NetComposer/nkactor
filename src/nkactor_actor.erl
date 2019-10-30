@@ -87,13 +87,13 @@
 %% For example, if we added something to status or links
 %% the will be gone and must be inserted again here
 %% @see nkactor_srv_lib:copy_status_fields/3
--callback update(nkactor:actor(), actor_st()) ->
+-callback update(nkactor:actor(), nkactor:update_opts(), actor_st()) ->
     {ok, nkactor:actor(), actor_st()} | {ok, actor_st()} |
     {error, nkserver:status(), actor_st()}.
 
 
 %% @doc Called when the actor is about to be deleted
--callback delete(actor_st()) ->
+-callback delete(nkactor:delete_opts(), actor_st()) ->
     {ok, actor_st()} | {error, nkserver:status(), actor_st()}.
 
 
@@ -186,7 +186,7 @@
 %% @doc
 -optional_callbacks([
     parse/3, request/4, save/2,
-    init/2, get/2, update/2, delete/1, sync_op/3, async_op/2, enabled/2, heartbeat/1,
+    init/2, get/2, update/3, delete/2, sync_op/3, async_op/2, enabled/2, heartbeat/1,
     event/2, link_event/4, activated/2, expired/2,
     handle_call/3, handle_cast/2, handle_info/2, stop/2, terminate/2]).
 

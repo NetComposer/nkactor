@@ -125,7 +125,7 @@
     force_save |
     {force_save, Reason::term()} |
     {add_label, binary(), binary()} |
-    delete |
+    {delete, nkactor:delete_opts()} |
     {enable, boolean()} |
     is_enabled |
     {link, nklib:link(), link_opts()} |
@@ -147,7 +147,7 @@
     {save, Reason::term()} |
     force_save |
     {force_save, Reason::term()} |
-    delete |
+    {delete, nkactor:delete_opts()} |
     {stop, Reason :: nkserver:status()} |
     term().
 
@@ -415,7 +415,7 @@ init({Op, Actor, StartConfig, Caller, Ref}) ->
                                 {error, Error} ->
                                     do_init_stop(Error, Caller, Ref, State4);
                                 {delete, Error} ->
-                                    _ = nkactor_srv_lib:delete(State4),
+                                    _ = nkactor_srv_lib:delete(#{}, State4),
                                     do_init_stop(Error, Caller, Ref, State4)
                             end;
                         {error, Error} ->
@@ -600,7 +600,7 @@ do_sync_op(get_actor, _From, State) ->
 do_sync_op(consume_actor, From, State) ->
     {UserActor, State2} = do_get_user_actor(State),
     gen_server:reply(From, {ok, UserActor}),
-    {_, State3} = nkactor_srv_lib:delete(State2),
+    {_, State3} = nkactor_srv_lib:delete(#{}, State2),
     do_stop(actor_consumed, State3);
 
 do_sync_op(get_state, _From, State) ->
@@ -643,12 +643,12 @@ do_sync_op(get_timers, _From, State) ->
     },
     reply({ok, Data}, State);
 
-do_sync_op(delete, From, #actor_st{is_enabled=IsEnabled, config=Config}=State) ->
+do_sync_op({delete, Opts}, From, #actor_st{is_enabled=IsEnabled, config=Config}=State) ->
     case {IsEnabled, Config} of
         {false, #{dont_delete_on_disabled:=true}} ->
             reply({error, actor_is_disabled}, State);
         _ ->
-            {Reply, State2} = nkactor_srv_lib:delete(State),
+            {Reply, State2} = nkactor_srv_lib:delete(Opts, State),
             gen_server:reply(From, Reply),
             do_stop(actor_deleted, State2)
     end;
@@ -758,12 +758,12 @@ do_async_op(force_save, State) ->
 do_async_op({force_save, Reason}, State) ->
     do_async_op({save, Reason}, State#actor_st{is_dirty=true});
 
-do_async_op(delete, #actor_st{is_enabled=IsEnabled, config=Config}=State) ->
+do_async_op({delete, Opts}, #actor_st{is_enabled=IsEnabled, config=Config}=State) ->
     case {IsEnabled, Config} of
         {false, #{dont_delete_on_disabled:=true}} ->
             noreply(State);
         _ ->
-            {_Reply, State2} = nkactor_srv_lib:delete(State),
+            {_Reply, State2} = nkactor_srv_lib:delete(Opts, State),
             do_stop(actor_deleted, State2)
     end;
 do_async_op({stop, Reason}, State) ->
@@ -952,7 +952,7 @@ do_stop2(Reason, #actor_st{stop_reason=false}=State) ->
             {_, State5} = nkactor_srv_lib:save(unloaded, State4),
             State5;
         {delete, State4} ->
-            {_, State5} = nkactor_srv_lib:delete(State4),
+            {_, State5} = nkactor_srv_lib:delete(#{}, State4),
             State5
     end;
 
@@ -1051,7 +1051,7 @@ check_expire_time(#actor_st{actor=Actor, expire_timer=Timer1}=State) ->
                         {ok, State3} ->
                             {true, State3};
                         {delete, State3} ->
-                            {_, State4} = nkactor_srv_lib:delete(State3),
+                            {_, State4} = nkactor_srv_lib:delete(#{}, State3),
                             {true, State4}
                     end;
                 Step ->
