@@ -756,7 +756,7 @@ parse_actors(SrvId, Actors, Opts) ->
 parse_actors(_SrvId, [], _Req, Acc) ->
     {ok, lists:reverse(Acc)};
 
-parse_actors(SrvId, [#{data:=Data, metadata:=Meta}=Actor|Rest], Req, Acc)
+parse_actors(SrvId, [#{data:=Data, metadata:=_Meta}=Actor|Rest], Req, Acc)
         when map_size(Data) > 0 ->
     case nkactor_actor:parse(SrvId, read, Actor, Req) of
         {ok, Actor2} ->
