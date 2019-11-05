@@ -570,8 +570,10 @@ search(SrvId, SearchType, Opts) ->
         {ok, Actors, Meta} ->
             span_log(search, "success: ~p", [Meta]),
             span_finish(search),
+%%            lager:error("NKLOG ACTORS ~p", [Actors]),
             case parse_actors(SrvId, Actors, Opts) of
                 {ok, Actors2} ->
+%%                    lager:error("NKLOG ACTORS2 ~p", [Actors2]),
                     {ok, Actors2, Meta};
                 {error, Error} ->
                     {error, Error}
