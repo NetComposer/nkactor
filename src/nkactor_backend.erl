@@ -570,10 +570,8 @@ search(SrvId, SearchType, Opts) ->
         {ok, Actors, Meta} ->
             span_log(search, "success: ~p", [Meta]),
             span_finish(search),
-%%            lager:error("NKLOG ACTORS ~p", [Actors]),
             case parse_actors(SrvId, Actors, Opts) of
                 {ok, Actors2} ->
-%%                    lager:error("NKLOG ACTORS2 ~p", [Actors2]),
                     {ok, Actors2, Meta};
                 {error, Error} ->
                     {error, Error}
@@ -759,7 +757,7 @@ parse_actors(_SrvId, [], _Req, Acc) ->
     {ok, lists:reverse(Acc)};
 
 parse_actors(SrvId, [#{data:=Data, metadata:=Meta}=Actor|Rest], Req, Acc)
-        when map_size(Data) > 0, map_size(Meta) > 0 ->
+        when map_size(Data) > 0 ->
     case nkactor_actor:parse(SrvId, read, Actor, Req) of
         {ok, Actor2} ->
             parse_actors(SrvId, Rest, Req, [Actor2|Acc]);
