@@ -258,7 +258,8 @@
         % Can include the original request (to extract params, etc.)
         request => nkactor:request(),
         get_actor => boolean(),
-        allow_name_change => boolean()
+        allow_name_change => boolean(),
+        force_update => boolean()
     }.
 
 

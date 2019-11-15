@@ -147,6 +147,7 @@
     {save, Reason::term()} |
     force_save |
     {force_save, Reason::term()} |
+    force_update |
     {delete, nkactor:delete_opts()} |
     {stop, Reason :: nkserver:status()} |
     term().
@@ -757,6 +758,17 @@ do_async_op(force_save, State) ->
 
 do_async_op({force_save, Reason}, State) ->
     do_async_op({save, Reason}, State#actor_st{is_dirty=true});
+
+do_async_op(force_update, State) ->
+    #actor_st{actor=Actor} = State,
+    case nkactor_srv_lib:update(Actor, #{force_update=>true}, State) of
+        {ok, State2} ->
+            ?ACTOR_LOG(warning, "done force-update", [], State),
+            noreply(State2);
+        {error, Error, State2} ->
+            ?ACTOR_LOG(warning, "could not force-update: ~p", [Error], State),
+            noreply(State2)
+    end;
 
 do_async_op({delete, Opts}, #actor_st{is_enabled=IsEnabled, config=Config}=State) ->
     case {IsEnabled, Config} of

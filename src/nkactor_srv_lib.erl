@@ -281,7 +281,8 @@ update(UpdActor, Opts, #actor_st{actor_id=ActorId, actor=Actor}=State) ->
                 NewMeta2
         end,
         IsMetaUpdated = (Meta /= NewMeta3),
-        case IsCoreUpdated orelse IsDataUpdated orelse IsMetaUpdated of
+        Forced = maps:get(force_update, Opts, false),
+        case IsCoreUpdated orelse IsDataUpdated orelse IsMetaUpdated orelse Forced of
             true ->
                 % At this point, we create main span and operation span
                 State2 = op_span_check_create(update, Opts, State),
