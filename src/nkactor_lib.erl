@@ -34,7 +34,7 @@
 -export([add_creation_fields/2, update/2, check_actor_links/1, check_meta_links/1, check_links/1]).
 -export([add_labels/4, add_label/3, rm_label_re/2]).
 -export([actor_id_to_path/1]).
--export([parse/3, parse/4, parse_actor_data/4, parse_request_params/2]).
+-export([parse/3, parse/4, parse_actor_data/4, parse_request_params/2, parse_request_body/2]).
 -export([make_rev_path/1, make_rev_parts/1]).
 -export([make_plural/1, make_singular/1, normalized_name/1]).
 -export([add_fts/3, fts_normalize_word/1, fts_normalize_multi/1]).
@@ -345,6 +345,26 @@ parse_request_params(Req, Syntax) ->
             lager:error("Unexpected parse error at ~p: ~p", [?MODULE, Error]),
             {error, Error}
     end.
+
+
+%% @private
+-spec parse_request_body(nkactor:request(), nklib_syntax:syntax()) ->
+    {ok, map()} | {error, nklib_syntax:error()}.
+
+parse_request_body(Req, Syntax) ->
+    Body = maps:get(params, Req, #{}),
+    case nklib_syntax:parse_all(Body, Syntax) of
+        {ok, Data2} ->
+            {ok, Data2};
+        {error, {syntax_error, Field}} ->
+            {error, {parameter_invalid, Field}};
+        {error, {field_missing, Field}} ->
+            {error, {parameter_missing, Field}};
+        {error, Error} ->
+            lager:error("Unexpected parse error at ~p: ~p", [?MODULE, Error]),
+            {error, Error}
+    end.
+
 
 
 %% @doc Sends an out-of-actor event
