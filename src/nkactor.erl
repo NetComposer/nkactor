@@ -620,7 +620,7 @@ search_label(SrvId, Label, Opts) ->
 
 %% @doc Gets objects having a label
 -spec search_label_range(nkservice:id(), binary(), binary(), search_labels_range_opts()) ->
-    {ok, [{uid(), Key::binary(), Value::binary()}]} | {error, actor_not_found|term()}.
+    {ok, [{uid(), Key::binary(), Value::binary()}], map()} | {error, actor_not_found|term()}.
 
 search_label_range(SrvId, Start, Stop, Opts) ->
     Label1 = nklib_util:to_binary(Start),
@@ -645,7 +645,7 @@ search_label_range(SrvId, Start, Stop, Opts) ->
         #{field => <<"label_key">>, order=>Order},
         #{field => <<"label_value">>, order=>Order}
     ],
-    Opts2 = maps:with([namespace, deep, from, size], Opts),
+    Opts2 = maps:with([namespace, deep, from, size, get_total], Opts),
     Opts3 = Opts2#{
         filter => Filter,
         sort => Sort,
@@ -658,8 +658,8 @@ search_label_range(SrvId, Start, Stop, Opts) ->
             Opts3#{namespace => base_namespace(SrvId)}
     end,
     case nkactor_backend:search(SrvId, actors_search_labels, Opts4) of
-        {ok, Result, _Meta} ->
-            {ok, Result};
+        {ok, Result, Meta} ->
+            {ok, Result, Meta};
         {error, Error} ->
             {error, Error}
     end.
