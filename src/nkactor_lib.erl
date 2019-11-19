@@ -36,7 +36,7 @@
 -export([actor_id_to_path/1]).
 -export([parse/3, parse/4, parse_actor_data/4, parse_request_params/2, parse_request_body/2]).
 -export([make_rev_path/1, make_rev_parts/1]).
--export([make_plural/1, make_singular/1, normalized_name/1]).
+-export([make_plural/1, make_singular/1, normalized_name/1, make_uid/1]).
 -export([add_fts/3, fts_normalize_word/1, fts_normalize_multi/1]).
 -export([update_check_fields/2]).
 -export([maybe_set_ttl/2, set_ttl/2, map_merge/2]).
