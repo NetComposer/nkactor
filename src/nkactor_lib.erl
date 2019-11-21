@@ -352,7 +352,7 @@ parse_request_params(Req, Syntax) ->
     {ok, map()} | {error, nklib_syntax:error()}.
 
 parse_request_body(Req, Syntax) ->
-    Body = maps:get(params, Req, #{}),
+    Body = maps:get(body, Req, #{}),
     case nklib_syntax:parse_all(Body, Syntax) of
         {ok, Data2} ->
             {ok, Data2};
