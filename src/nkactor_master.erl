@@ -290,7 +290,7 @@ do_register_namespace(Namespace, Pid, State) ->
             case lists:keyfind(Namespace, 2, Namespaces) of
                 {_, _, Pid} ->
                     {ok, State};
-                {Namespace, OldPid} ->
+                {_Parts, Namespace, OldPid} ->
                     {error, {already_registered, OldPid}};
                 false ->
                     monitor(process, Pid),
