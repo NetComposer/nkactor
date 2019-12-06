@@ -564,20 +564,22 @@ search_resources(SrvId, Group, Opts) ->
 
 
 %% @doc Gets objects having a label
+
+
+
 -spec search_label(nkservice:id(), binary(), search_labels_opts()) ->
     {ok, [{uid(), Key::binary(), Value::binary()}]} | {error, actor_not_found|term()}.
 
 search_label(SrvId, Label, Opts) ->
     Label2 = nklib_util:to_binary(Label),
-    Filter = #{
-        'and' => [
-            #{
-                field => <<"label:", Label2/binary>>,
-                op => maps:get(op, Opts, exists),
-                value => nklib_util:to_binary(maps:get(value, Opts, <<>>))
-            }
-        ]
-    },
+    Op = maps:get(op, Opts, exists),
+    Value = case Op of
+        exists ->
+            maps:get(value, Opts, true);
+        _ ->
+            nklib_util:to_binary(maps:get(value, Opts))
+    end,
+    Filter = #{'and' => [#{field => <<"label:", Label2/binary>>, op=>Op, value=>Value}]},
     Sort = case Opts of
         #{order := Order} ->
             [#{field => <<"label:", Label2/binary>>, order=>Order}];
