@@ -30,7 +30,7 @@
 -export([search_groups/2, search_resources/3]).
 -export([search_label/3, search_label_range/4, search_linked_to/3, search_fts/3, search_actors/3, delete_multi/3, delete_old/5]).
 -export([search_activate/2, truncate/1]).
--export([base_namespace/1, find_label/4, find_linked/3]).
+-export([base_namespace/1, find_cached_label/4, find_cached_linked/3]).
 -export([sync_op/2, sync_op/3, async_op/2]).
 -export([get_services/0, call_services/2]).
 -export_type([actor/0, id/0, uid/0, namespace/0, resource/0, path/0, name/0,
@@ -825,10 +825,10 @@ async_op(Id, Op) ->
 
 %% @doc Finds first actor with some label, and stores it in cache
 %% Only UID will be populated, along with pid if available
--spec find_label(nkserver:id(), namespace(), binary(), binary()) ->
+-spec find_cached_label(nkserver:id(), namespace(), binary(), binary()) ->
     {ok, #actor_id{}} | {error, term()}.
 
-find_label(SrvId, Namespace, Key, Value) ->
+find_cached_label(SrvId, Namespace, Key, Value) ->
     Key2 = nklib_util:to_binary(Key),
     Value2 = nklib_util:to_binary(Value),
     case nklib_proc:values({?MODULE, label, SrvId, Key2, Value2}) of
@@ -841,7 +841,6 @@ find_label(SrvId, Namespace, Key, Value) ->
                 order => desc,
                 namespace => Namespace,
                 deep => true
-                %ot_span_id=>Parent
             },
             case search_label(SrvId, Key, Opts) of
                 {ok, [{UID, _, _}|_]} ->
@@ -861,10 +860,10 @@ find_label(SrvId, Namespace, Key, Value) ->
 
 
 %% @doc Finds first actor linked to another, and stores it in cache
--spec find_linked(nkserver:id(), binary(), uid()) ->
+-spec find_cached_linked(nkserver:id(), binary(), uid()) ->
     {ok, uid(), pid()|undefined} | {error, term()}.
 
-find_linked(SrvId, Type, UID) ->
+find_cached_linked(SrvId, Type, UID) ->
     Type2 = nklib_util:to_binary(Type),
     case nklib_proc:values({?MODULE, linked, SrvId, Type2, UID}) of
         [{UID2, Pid}|_] ->
