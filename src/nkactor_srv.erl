@@ -373,7 +373,6 @@ init({Op, Actor, StartConfig, Caller, Ref}) ->
     % Also, if Config has option 'ot_span_id' a specific operation span will be created
     % in do_pre_init
     ActorId = nkactor_lib:actor_to_actor_id(Actor),
-    lager:error("NKLOG INIT OP ~p", [Op]),
     case nkactor_actor:get_config(ActorId) of
         {ok, _SrvId, #{activable:=false}} ->
             Caller ! {do_start_ignore, Ref, {error, actor_is_not_activable}},
