@@ -85,7 +85,7 @@
 -define(LLOG(Type, Txt, Args, State),
     lager:Type("NkACTOR Namespace '~s' (~s) "++Txt, [State#state.namespace, State#state.id | Args])).
 
--define(TIMEOUT, 5000).
+-define(TIMEOUT, 60000).
 
 
 
