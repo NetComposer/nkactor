@@ -499,8 +499,8 @@ make_rev_parts(Namespace) ->
 
 %% @private
 make_uid(Res) ->
-    Time = nklib_date:now_hex(msecs),   % 12 bytes
-    <<UUID:15/binary, _/binary>> = nklib_util:luid(),
+    Time = nklib_date:now_bin(msecs),   % 9 bytes
+    <<UUID:18/binary, _/binary>> = nklib_util:luid(),
     <<(to_bin(Res))/binary, $-, Time/binary, UUID/binary>>.
 
 
