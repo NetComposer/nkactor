@@ -150,6 +150,7 @@
     force_update |
     {delete, nkactor:delete_opts()} |
     {stop, Reason :: nkserver:status()} |
+    del_all_events |
     term().
 
 
@@ -806,6 +807,17 @@ do_async_op({set_alarm, Alarm}, State) ->
 do_async_op(clear_all_alarms, State) ->
     State2 = nkactor_srv_lib:clear_all_alarms(State),
     noreply(do_refresh_ttl(State2));
+
+do_async_op(del_all_events, State) ->
+    #actor_st{actor=#{metadata:=Meta}=Actor} = State,
+    case Meta of
+        #{events:=_} ->
+            Meta2 = maps:remove(events, Meta),
+            State2 = State#actor_st{actor=Actor#{metadata:=Meta2}, is_dirty=true},
+            noreply(do_refresh_ttl(State2));
+        _ ->
+            noreply(do_refresh_ttl(State))
+    end;
 
 do_async_op(Op, State) ->
     ?ACTOR_LOG(notice, "unknown async op: ~p", [Op], State),
