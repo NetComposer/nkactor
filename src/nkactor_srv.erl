@@ -719,7 +719,7 @@ do_sync_op({apply, Mod, Fun, Args}, From, State) ->
     apply(Mod, Fun, Args++[From, do_refresh_ttl(State)]);
 
 do_sync_op(Op, _From, State) ->
-    ?ACTOR_LOG(notice, "unknown sync op: ~p", [Op], State),
+    ?ACTOR_LOG(warning, "unknown sync op: ~p", [Op], State),
     reply({error, unknown_op}, State).
 
 
@@ -820,7 +820,7 @@ do_async_op(del_all_events, State) ->
     end;
 
 do_async_op(Op, State) ->
-    ?ACTOR_LOG(notice, "unknown async op: ~p", [Op], State),
+    ?ACTOR_LOG(warning, "unknown async op: ~p", [Op], State),
     noreply(State).
 
 
