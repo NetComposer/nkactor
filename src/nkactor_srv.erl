@@ -1044,7 +1044,8 @@ check_activate_time(#actor_st{actor=Actor, activate_timer=Timer1}=State) ->
                         actor = Actor#{metadata:=Meta2}
                     },
                     {ok, State3} = nkactor_srv_lib:handle(actor_srv_activate_timer, [ActiveTime], State2),
-                    State3;
+                    {_, State4} = nkactor_srv_lib:save(activate_save, State3),
+                    State4;
                 Step ->
                     Step2 = min(Step, ?MAX_STATUS_TIME),
                     ?ACTOR_LOG(info, "not yet activation time, ~psecs left (next call in ~psecs)",
