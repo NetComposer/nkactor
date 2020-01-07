@@ -92,15 +92,21 @@ set_activate_time(<<>>, #actor_st{actor=Actor, activate_timer=Timer}=State) ->
     end;
 
 set_activate_time(Time, #actor_st{actor=#{metadata:=Meta}=Actor, activate_timer=Timer}=State) ->
-    nklib_util:cancel_timer(Timer),
-    {ok, Time1} = nklib_date:to_epoch(Time, usecs),
-    Time2 = Time1 + nklib_util:rand(0, 999),
-    {ok, Time3} = nklib_date:to_3339(Time2, usecs),
-    % Make sure we have usecs resolution, and random usecs
-    % To avoid it to be the same (probably 0) in several requests
-    Actor2 = Actor#{metadata:=Meta#{activate_time => Time3}},
-    self() ! nkactor_check_activate_time,
-    State#actor_st{actor=Actor2, is_dirty=true}.
+    case Meta of
+        #{activate_time:=Time} ->
+            % If we set up activation on init callback, the init process will call again here
+            State;
+        _ ->
+            nklib_util:cancel_timer(Timer),
+            {ok, Time1} = nklib_date:to_epoch(Time, usecs),
+            Time2 = Time1 + nklib_util:rand(0, 999),
+            {ok, Time3} = nklib_date:to_3339(Time2, usecs),
+            % Make sure we have usecs resolution, and random usecs
+            % To avoid it to be the same (probably 0) in several requests
+            Actor2 = Actor#{metadata:=Meta#{activate_time => Time3}},
+            self() ! nkactor_check_activate_time,
+            State#actor_st{actor=Actor2, is_dirty=true}
+    end.
 
 
 %% @doc Sets an expiration date

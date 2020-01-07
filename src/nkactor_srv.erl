@@ -1047,7 +1047,8 @@ check_activate_time(#actor_st{actor=Actor, activate_timer=Timer1}=State) ->
                     State3;
                 Step ->
                     Step2 = min(Step, ?MAX_STATUS_TIME),
-                    ?ACTOR_LOG(info, "no yet activation time, ~pmsecs left (next call in ~pmsecs)", [Step, Step2], State),
+                    ?ACTOR_LOG(info, "not yet activation time, ~psecs left (next call in ~psecs)",
+                               [Step div 1000, Step2 div 1000], State),
                     Timer2 = erlang:send_after(Step2, self(), nkactor_check_activate_time),
                     State#actor_st{activate_timer=Timer2}
             end;
