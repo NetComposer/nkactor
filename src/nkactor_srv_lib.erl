@@ -514,9 +514,26 @@ handle(Fun, Args, State) ->
 
 %% @doc
 set_times(State) ->
-    State2 = set_unload_policy(State),
-    State3 = set_activate_timer(State2),
-    set_expire_timer(State3).
+    #actor_st{
+        actor = #{metadata:=Meta},
+        activate_timer = ActivateTimer,
+        expire_timer = ExpireTimer
+    } = State,
+    nklib_util:cancel_timer(ActivateTimer),
+    nklib_util:cancel_timer(ExpireTimer),
+    case maps:get(activate_time, Meta, <<>>) of
+        <<>> ->
+            ok;
+        _ ->
+            self() ! nkactor_check_activate_time
+    end,
+    case maps:get(expire_time, Meta, <<>>) of
+        <<>> ->
+            ok;
+        _ ->
+            self() ! nkactor_check_expire_time
+    end,
+    set_unload_policy(State).
 
 
 %% @doc
@@ -642,26 +659,6 @@ set_unload_policy(#actor_st{actor=Actor, config=Config}=State) ->
     end.
 
 
-%% @private
-set_activate_timer(#actor_st{actor=#{metadata:=Meta}, activate_timer=Timer}=State) ->
-    nklib_util:cancel_timer(Timer),
-    case maps:get(activate_time, Meta, <<>>) of
-        <<>> ->
-            State;
-        Activation ->
-            set_activate_time(Activation, State)
-    end.
-
-
-%% @private
-set_expire_timer(#actor_st{actor=#{metadata:=Meta}, expire_timer=Timer}=State) ->
-    nklib_util:cancel_timer(Timer),
-    case maps:get(expire_time, Meta, <<>>) of
-        <<>> ->
-            State;
-        Expires ->
-            set_expire_time(Expires, false, State)
-    end.
 
 
 %% @private
