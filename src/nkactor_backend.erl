@@ -135,7 +135,7 @@ do_find([SrvId|Rest], ActorId, SpanId) ->
 
 activate(Id, Opts) ->
     SpanId = maps:get(ot_span_id, Opts, undefined),
-    case do_activate(Id, Opts#{ot_span_id=>SpanId}) of
+    case do_activate(Id, Opts#{ot_span_id=>SpanId}, 3) of
         {ok, SrvId, ActorId2, Meta2} ->
             nkserver_ot:log(SpanId, <<"actor is activated">>),
             {ok, SrvId, ActorId2, Meta2};
@@ -180,7 +180,7 @@ read(Id, #{activate:=false}=Opts) ->
 
 read(Id, Opts) ->
     SpanId = maps:get(ot_span_id, Opts, undefined),
-    case do_activate(Id, Opts#{ot_span_id=>SpanId}) of
+    case do_activate(Id, Opts#{ot_span_id=>SpanId}, 3) of
         {ok, SrvId, ActorId2, Meta2} ->
             Op = case maps:get(consume, Opts, false) of
                 true ->
@@ -323,7 +323,7 @@ update(_Id, _Actor, #{activate:=false}) ->
 
 update(Id, Actor, Opts) ->
     span_create(update, undefined, Opts),
-    case do_activate(Id, Opts#{ot_span_id=>span_id(update)}) of
+    case do_activate(Id, Opts#{ot_span_id=>span_id(update)}, 3) of
         {ok, SrvId, ActorId, _} ->
             span_update_srv_id(update, SrvId),
             #actor_id{
@@ -665,7 +665,7 @@ do_read(SrvId, ActorId, Opts) ->
 
 
 %% @private
-do_activate(Id, Opts) ->
+do_activate(Id, Opts, Tries) when Tries > 0 ->
     SpanId = maps:get(ot_span_id, Opts, undefined),
     case find(Id, Opts) of
         {ok, SrvId, #actor_id{pid=Pid}=ActorId, Meta} when is_pid(Pid) ->
@@ -680,6 +680,10 @@ do_activate(Id, Opts) ->
                         {ok, Pid} ->
                             nkserver_ot:log(SpanId, <<"actor is activated">>),
                             {ok, SrvId, ActorId#actor_id{pid=Pid}, Meta2};
+                        {error, actor_already_exists} ->
+                            lager:notice("Error activating ~s: retrying"),
+                            timer:sleep(100),
+                            do_activate(Id, Opts, Tries-1);
                         {error, Error} ->
                             nkserver_ot:log(SpanId, <<"error activating actor: ~p">>, [Error]),
                             {error, Error}
@@ -693,7 +697,11 @@ do_activate(Id, Opts) ->
             end;
         {error, Error} ->
             {error, Error}
-    end.
+    end;
+
+do_activate(_Id, _Opts, _Tries) ->
+    {error, actor_already_exists}.
+
 
 
 
