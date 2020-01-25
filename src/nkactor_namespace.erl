@@ -570,8 +570,8 @@ do_register_actor(ActorId, #state{register_ets=Ets}=State) ->
             ets:insert(Ets, Objs),
             State2 = do_add_actor(ActorId, State),
             {ok, State2};
-        {true, _OldActorId, _Indices} ->
-            {error, actor_already_registered}
+        {true, #actor_id{pid=Pid}, _Indices} ->
+            {error, {actor_already_registered, Pid}}
     end.
 
 

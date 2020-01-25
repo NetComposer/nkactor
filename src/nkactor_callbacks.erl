@@ -53,12 +53,13 @@
 %% ===================================================================
 
 
-status(actor_already_registered)    -> "Actor already registered";
+status({actor_already_registered, _}) -> "Actor already registered";
 status(actor_deleted)               -> {"Actor has been deleted", #{code=>200}};
 status({actors_deleted, N})         -> {"Actors (~p) have been deleted", [N]};
 status({actor_invalid, A})          -> {"Invalid actor '~s'", [A], #{code=>400, data=>#{actor=>A}}};
 status(actor_expired)	            -> {"Actor has expired", #{code=>404}};
 status(actor_already_exists)	    -> {"Actor already exists", #{code=>409}};
+status(actor_already_activated)	    -> {"Actor already activated", #{code=>409}};
 status(actor_has_linked_actors)	    -> {"Actor has linked actors", #{code=>422}};
 status(actor_id_invalid)            -> "Actor ID is invalid";
 status(actor_is_not_activable)	    -> {"Actor is not activable", #{code=>422}};

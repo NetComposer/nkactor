@@ -680,11 +680,12 @@ do_activate(Id, Opts, Tries) when Tries > 0 ->
                         {ok, Pid} ->
                             nkserver_ot:log(SpanId, <<"actor is activated">>),
                             {ok, SrvId, ActorId#actor_id{pid=Pid}, Meta2};
-                        {error, actor_already_exists} ->
-                            lager:notice("Error activating ~s: retrying"),
+                        {error, actor_already_activated} ->
+                            lager:notice("Already activated ~p: retrying", [Id]),
                             timer:sleep(100),
                             do_activate(Id, Opts, Tries-1);
                         {error, Error} ->
+                            lager:notice("Error activating ~p: ~p", [Id, Error]),
                             nkserver_ot:log(SpanId, <<"error activating actor: ~p">>, [Error]),
                             {error, Error}
                     end;
@@ -699,8 +700,9 @@ do_activate(Id, Opts, Tries) when Tries > 0 ->
             {error, Error}
     end;
 
-do_activate(_Id, _Opts, _Tries) ->
-    {error, actor_already_exists}.
+do_activate(Id, _Opts, _Tries) ->
+    lager:notice("Error activating ~p: too_many_retries", [Id]),
+    {error, actor_already_activated}.
 
 
 

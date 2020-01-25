@@ -925,8 +925,9 @@ do_register(Tries, #actor_st{actor_id=ActorId, srv=SrvId} = State) ->
             set_debug(State2),
             ?ACTOR_DEBUG("registered with namespace (pid:~p)", [Pid]),
             {ok, State2};
-        {error, actor_already_registered} ->
-            {error, actor_already_exists};
+        {error, {actor_already_registered, OldPid}} ->
+            ?ACTOR_LOG(warning, "already activated! (~p)", [OldPid]),
+            {error, actor_already_activated};
         {error, Error} ->
             case Tries > 1 of
                 true ->
