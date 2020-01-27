@@ -305,7 +305,12 @@ create(Actor, Opts) ->
                     span_log(create, <<"error creating actor: ~p">>, [Error]),
                     span_error(create, Error),
                     span_finish(create),
-                    {error, Error}
+                    case Error of
+                        actor_already_activated ->
+                            {error, actor_already_exists};
+                        _ ->
+                            {error, Error}
+                    end
             end;
         {error, Error} ->
             span_delete(create),
@@ -681,7 +686,7 @@ do_activate(Id, Opts, Tries) when Tries > 0 ->
                             nkserver_ot:log(SpanId, <<"actor is activated">>),
                             {ok, SrvId, ActorId#actor_id{pid=Pid}, Meta2};
                         {error, actor_already_activated} ->
-                            lager:notice("Already activated ~p: retrying", [Id]),
+                            lager:notice("Already activated ~p: retrying (~p tries left)", [Tries, Id]),
                             timer:sleep(100),
                             do_activate(Id, Opts, Tries-1);
                         {error, Error} ->
