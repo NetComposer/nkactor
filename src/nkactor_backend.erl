@@ -686,7 +686,7 @@ do_activate(Id, Opts, Tries) when Tries > 0 ->
                             nkserver_ot:log(SpanId, <<"actor is activated">>),
                             {ok, SrvId, ActorId#actor_id{pid=Pid}, Meta2};
                         {error, actor_already_activated} ->
-                            lager:notice("Already activated ~p: retrying (~p tries left)", [Tries, Id]),
+                            lager:info("Already activated ~p: retrying (~p tries left)", [Id, Tries]),
                             timer:sleep(100),
                             do_activate(Id, Opts, Tries-1);
                         {error, Error} ->
