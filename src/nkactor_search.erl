@@ -86,6 +86,9 @@
 % for example, for field spec.phone.phone => array, the query
 %   #{field => "spec.phone.phone", eq=>"123} generates data->'spec'->'phone' @> '[{"phone": "123456"}]'
 % For array, {"field":["value"]} will be used
+% For 'range' queries, a value like min|max is expected (will find >= mind AND <= max)
+% Use ! prefix to make strict: !min|!max is expected (will find > mind AND < max)
+
 
 -type field_type() :: string | string_null | boolean | integer | object | array.
 
@@ -99,7 +102,7 @@
     }.
 
 -type filter_op() ::
-    eq | ne | lt | lte | gt | gte | values | exists | prefix.
+    eq | ne | lt | lte | gt | gte | values | exists | prefix | range.
 
 
 -type value() :: string() | binary() | integer() | boolean().
@@ -197,7 +200,7 @@ search_spec_syntax_filter() ->
     #{
         field => binary,
         type => {atom, [string, integer, boolean, object, array]},
-        op => {atom, [eq, ne, lt, lte, gt, gte, values, exists, prefix, ignore]},
+        op => {atom, [eq, ne, lt, lte, gt, gte, values, exists, prefix, range, ignore]},
         value => any,
         '__mandatory' => [field, value]
     }.
@@ -581,6 +584,7 @@ expand_op(Value) ->
                 lte -> lte;
                 prefix -> prefix;
                 values -> values;
+                range -> range;
                 exists -> exists;
                 _ -> none
             end,
