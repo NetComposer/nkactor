@@ -267,7 +267,7 @@ check_auto_activate(SrvId, #{next_auto_activate_time:=Next}=State) ->
         true ->
             Fun = fun() ->
                 {ok, Total} = nkactor_util:activate_actors(SrvId, ?ACTIVATE_AHEAD),
-                lager:info("NkACTOR launched auto activate: ~p", [Total])
+                lager:debug("NkACTOR launched auto activate: ~p", [Total])
             end,
             spawn(Fun),
             Config = nkserver:get_config(SrvId),

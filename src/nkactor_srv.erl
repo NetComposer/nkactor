@@ -1038,7 +1038,7 @@ check_activate_time(#actor_st{actor=Actor, activate_timer=Timer1}=State) ->
             {ok, ActiveTime2} = nklib_date:to_epoch(ActiveTime, msecs),
             case ActiveTime2 - Now of
                 Step when Step=<0 ->
-                    ?ACTOR_LOG(info, "activation time!", [], State),
+                    ?ACTOR_LOG(debug, "activation time!", [], State),
                     Meta2 = maps:remove(activate_time, Meta),
                     State2 = State#actor_st{
                         activate_timer = undefined,
@@ -1049,7 +1049,7 @@ check_activate_time(#actor_st{actor=Actor, activate_timer=Timer1}=State) ->
                     State4;
                 Step ->
                     Step2 = min(Step, ?MAX_STATUS_TIME),
-                    ?ACTOR_LOG(info, "not yet activation time, ~psecs left (next call in ~psecs)",
+                    ?ACTOR_LOG(debug, "not yet activation time, ~psecs left (next call in ~psecs)",
                                [Step div 1000, Step2 div 1000], State),
                     Timer2 = erlang:send_after(Step2, self(), nkactor_check_activate_time),
                     State#actor_st{activate_timer=Timer2}
@@ -1068,7 +1068,7 @@ check_expire_time(#actor_st{actor=Actor, expire_timer=Timer1}=State) ->
             {ok, ExpireTime2} = nklib_date:to_epoch(ExpireTime, msecs),
             case ExpireTime2 - Now of
                 Step when Step=<0 ->
-                    ?ACTOR_LOG(info, "expiration time!", [], State),
+                    ?ACTOR_LOG(debug, "expiration time!", [], State),
                     Meta2 = maps:remove(expire_time, Meta),
                     State2 = State#actor_st{
                         expire_timer = undefined,
