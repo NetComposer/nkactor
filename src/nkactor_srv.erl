@@ -1083,7 +1083,7 @@ check_expire_time(#actor_st{actor=Actor, expire_timer=Timer1}=State) ->
                     end;
                 Step ->
                     Step2 = min(Step, ?MAX_STATUS_TIME),
-                    ?ACTOR_LOG(info, "no yet expiration time, ~pmsecs left (next call in ~pmsecs)", [Step, Step2], State),
+                    ?ACTOR_LOG(debug, "not yet expiration time, ~pmsecs left (next call in ~pmsecs)", [Step, Step2], State),
                     Timer2 = erlang:send_after(Step2, self(), nkactor_check_expire_time),
                     {false, State#actor_st{expire_timer=Timer2}}
             end;
