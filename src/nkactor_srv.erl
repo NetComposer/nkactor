@@ -841,6 +841,7 @@ do_pre_init(ActorId, Actor, Config, SrvId) ->
         actor_id = ActorId2,
         actor = Actor,
         run_state = undefined,
+        trace = #{},
         links = nklib_links:new(),
         is_dirty = false,
         saved_metadata = Meta,
