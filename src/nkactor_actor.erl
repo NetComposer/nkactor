@@ -115,7 +115,7 @@
 
 %% @doc Called when an event is sent inside the actor process
 %% Can be used to launch API events, calling
--callback event(term(), actor_st()) ->
+-callback event(nkactor_srv:event(), map(), actor_st()) ->
     {ok, actor_st()} | continue().
 
 
@@ -131,7 +131,7 @@
 
 %% @doc Called when an event is sent, for each registered process to the session
 %% The events are 'erlang' events (tuples usually)
--callback link_event(nklib:link(), term(), nkactor_srv:event(), actor_st()) ->
+-callback link_event(nklib:link(), term(), nkactor_srv:event(), map(), actor_st()) ->
     {ok, actor_st()} | continue().
 
 
@@ -187,7 +187,7 @@
 -optional_callbacks([
     parse/3, request/4, save/2,
     init/2, get/2, update/3, delete/2, sync_op/3, async_op/2, enabled/2, heartbeat/1,
-    event/2, link_event/4, activated/2, expired/2,
+    event/3, link_event/5, activated/2, expired/2,
     handle_call/3, handle_cast/2, handle_info/2, stop/2, terminate/2]).
 
 

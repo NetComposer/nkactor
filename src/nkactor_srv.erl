@@ -405,7 +405,7 @@ init({Op, Actor, StartConfig, Caller, Ref}) ->
                     case do_register(1, State3) of
                         {ok, State4} ->
                             nkactor_srv_lib:op_span_log(<<"registered with namespace">>, State4),
-                            case nkactor_srv_lib:handle(actor_srv_init, [Op], State4) of
+                            case nkactor_srv_lib:handle(actor_srv_init, [Group, Res, Op], State4) of
                                 {ok, State5} ->
                                     State6 = nkactor_srv_lib:set_times(State5),
                                     case do_post_init(Op, State6) of
@@ -733,10 +733,10 @@ do_async_op({unlink, Link}, State) ->
     end;
 
 do_async_op({send_info, Info, Meta}, State) ->
-    noreply(nkactor_srv_lib:event({info, nklib_util:to_binary(Info), Meta}, do_refresh_ttl(State)));
+    noreply(nkactor_srv_lib:event(info, #{info=>nklib_util:to_binary(Info), meta=>Meta}, do_refresh_ttl(State)));
 
 do_async_op({send_event, Event}, State) ->
-    noreply(nkactor_srv_lib:event(Event, do_refresh_ttl(State)));
+    noreply(nkactor_srv_lib:event(Event, #{}, do_refresh_ttl(State)));
 
 do_async_op({set_activate_time, Time}, State) ->
     noreply(nkactor_srv_lib:set_activate_time(Time, State));
@@ -792,7 +792,7 @@ do_async_op({raw_stop, Reason}, State) ->
             ?ACTOR_LOG(info, "received raw_stop: ~p", [Reason], State)
     end,
     {_, State2} = nkactor_srv_lib:handle(actor_srv_stop, [Reason], State),
-    State3 = nkactor_srv_lib:event({stopped, Reason}, State2),
+    State3 = nkactor_srv_lib:event(stopped, #{reason=>Reason}, State2),
     {stop, normal, State3#actor_st{stop_reason=raw_stop}};
 
 do_async_op({set_alarm, Alarm}, State) ->
@@ -841,7 +841,6 @@ do_pre_init(ActorId, Actor, Config, SrvId) ->
         actor_id = ActorId2,
         actor = Actor,
         run_state = undefined,
-        trace = #{},
         links = nklib_links:new(),
         is_dirty = false,
         saved_metadata = Meta,
@@ -871,10 +870,10 @@ do_post_init(Op, State) ->
             State4 = case Op of
                 create ->
                     nkactor_srv_lib:op_span_log(<<"actor saved">>, State),
-                    nkactor_srv_lib:event(created, State3);
+                    nkactor_srv_lib:event(created, #{}, State3);
                 _ ->
                     nkactor_srv_lib:op_span_log(<<"actor activated">>, State),
-                    nkactor_srv_lib:event(activated, State3)
+                    nkactor_srv_lib:event(activated, #{}, State3)
             end,
             State5 = do_check_alarms(State4),
             case Config of
@@ -972,7 +971,7 @@ do_stop(Reason, State) ->
 %% @private
 do_stop2(Reason, #actor_st{stop_reason=false}=State) ->
     State2 = State#actor_st{stop_reason=Reason},
-    State3 = nkactor_srv_lib:event({stopped, Reason}, State2),
+    State3 = nkactor_srv_lib:event(stopped, #{reason=>Reason}, State2),
     case nkactor_srv_lib:handle(actor_srv_stop, [Reason], State3) of
         {ok, State4} ->
             {_, State5} = nkactor_srv_lib:save(unloaded, State4),
@@ -1143,7 +1142,7 @@ link_down(Mon, #actor_st{links=Links}=State) ->
         {ok, Link, #link_info{data=Data}=LinkInfo, Links2} ->
             case LinkInfo of
                 #link_info{gen_events=true, data=Data} ->
-                    State2 = nkactor_srv_lib:event({link_down, Data}, State),
+                    State2 = nkactor_srv_lib:event(link_down, Data, State),
                     {ok, Link, LinkInfo, State2#actor_st{links=Links2}};
                 _ ->
                     {ok, Link, LinkInfo, State#actor_st{links=Links2}}

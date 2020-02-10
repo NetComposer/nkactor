@@ -28,7 +28,6 @@
     actor_id :: #actor_id{},
     actor :: nkactor:actor(),
     run_state :: term(),
-    trace :: map(),
     namespace_pid :: pid() | undefined,
     saved_metadata :: map(),
     is_dirty :: true | false | deleted,

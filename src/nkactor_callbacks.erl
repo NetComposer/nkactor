@@ -27,10 +27,9 @@
          actor_fields_trans/1, actor_fields_type/1, actor_fields_static/1,
          actor_create/2, actor_activate/2, actor_external_event/3]).
 -export([actor_path_to_id/2]).
--export([actor_srv_init/2, actor_srv_terminate/2,
+-export([actor_srv_init/4, actor_srv_terminate/2,
          actor_srv_stop/2, actor_srv_get/2, actor_srv_update/3, actor_srv_delete/2,
-         actor_srv_event/2,
-         actor_srv_link_event/4, actor_srv_link_down/3, actor_srv_save/2,
+         actor_srv_event/5, actor_srv_link_event/5, actor_srv_link_down/3, actor_srv_save/2,
          actor_srv_sync_op/3, actor_srv_async_op/2,
          actor_srv_enabled/2, actor_srv_activate_timer/2, actor_srv_expired/2,
          actor_srv_alarms/1, actor_srv_heartbeat/1,
@@ -223,10 +222,10 @@ actor_external_event(_SrvId, _Event, _Actor) ->
 
 
 %% @doc Called on successful registration (callback init/2 in actor)
--spec actor_srv_init(create|start, actor_st()) ->
+-spec actor_srv_init(nkactor:group(), nkactor:resource(), create|start, actor_st()) ->
     {ok, actor_st()} | {error, Reason::term()}.
 
-actor_srv_init(Op, ActorSt) ->
+actor_srv_init(_Group, _Res, Op, ActorSt) ->
     #actor_st{srv=SrvId, actor_id=#actor_id{group=Group, resource=Res}} = ActorSt,
     case ?CALL_SRV(SrvId, nkactor_callback, [init, Group, Res, [Op, ActorSt]]) of
         continue ->
@@ -312,14 +311,13 @@ actor_srv_enabled(Enabled, ActorSt) ->
 
 
 %% @doc Called to send an event from inside an actor's process
-%% from nkactor_srv_lib:event/2
+%% from nkactor_srv_lib:event/3
 %% The events are 'erlang' events (tuples usually)
--spec actor_srv_event(term(), actor_st()) ->
+-spec actor_srv_event(nkactor:group(), nkactor:resource(), term(), map(), actor_st()) ->
     {ok, actor_st()} | continue().
 
-actor_srv_event(Event, ActorSt) ->
-    #actor_st{srv=SrvId, actor_id=#actor_id{group=Group, resource=Res}} = ActorSt,
-    case ?CALL_SRV(SrvId, nkactor_callback, [event, Group, Res, [Event, ActorSt]]) of
+actor_srv_event(Group, Res, EventType, Meta, #actor_st{srv=SrvId}=ActorSt) ->
+    case ?CALL_SRV(SrvId, nkactor_callback, [event, Group, Res, [EventType, Meta, ActorSt]]) of
         continue ->
             {ok, ActorSt};
         Other ->
@@ -330,12 +328,12 @@ actor_srv_event(Event, ActorSt) ->
 %% @doc Called when an event is sent, for each registered process to the session
 %% from nkactor_srv_lib:event_link/2
 %% The events are 'erlang' events (tuples usually)
--spec actor_srv_link_event(nklib:link(), term(), nkactor_srv:event(), actor_st()) ->
+-spec actor_srv_link_event(nklib:link(), term(), nkactor_srv:event(), map(), actor_st()) ->
     {ok, actor_st()} | continue().
 
-actor_srv_link_event(Link, LinkData, Event, ActorSt) ->
+actor_srv_link_event(Link, LinkData, EventType, EventData, ActorSt) ->
     #actor_st{srv=SrvId, actor_id=#actor_id{group=Group, resource=Res}} = ActorSt,
-    case ?CALL_SRV(SrvId, nkactor_callback, [link_event, Group, Res, [Link, LinkData, Event, ActorSt]]) of
+    case ?CALL_SRV(SrvId, nkactor_callback, [link_event, Group, Res, [Link, LinkData, EventType, EventData, ActorSt]]) of
         continue ->
             {ok, ActorSt};
         Other ->
@@ -647,7 +645,6 @@ actor_db_aggregate(_SrvId, _Type, _Opts) ->
 
 actor_db_truncate(_SrvId, _Opts) ->
     {error, persistence_not_defined}.
-
 
 
 %% ===================================================================

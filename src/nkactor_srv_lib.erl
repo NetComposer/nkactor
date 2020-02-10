@@ -22,7 +22,7 @@
 -module(nkactor_srv_lib).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([event/2, event_link/2, update/3, delete/2, set_auto_activate/2, set_activate_time/2,
+-export([log/4, trace/3, event/3, event_link/3, update/3, delete/2, set_auto_activate/2, set_activate_time/2,
          set_expire_time/3, get_links/1, add_link/3, remove_link/2, save/2,
          remove_all_links/1, add_actor_event/2, add_actor_event/3, add_actor_event/4, set_updated/1,
          update_status/2, update_status/3, add_actor_alarm/2, clear_all_alarms/1]).
@@ -32,8 +32,8 @@
 
 -include("nkactor.hrl").
 -include("nkactor_debug.hrl").
--include_lib("nkserver_ot/include/nkserver_ot.hrl").
 -include_lib("nkserver/include/nkserver.hrl").
+-include_lib("nkserver/include/nkserver_trace.hrl").
 
 -define(DEFAULT_TTL, 10000).
 
@@ -42,19 +42,31 @@
 %% ===================================================================
 
 %% @doc
-event(Event, State) ->
-    ?ACTOR_DEBUG("sending 'event': ~p", [Event], State),
-    State2 = event_link(Event, State),
-    {ok, State3} = handle(actor_srv_event, [Event], State2),
+log(Level, Txt, Args, State) ->
+    #actor_st{srv=SrvId, actor_id = #actor_id{group=Group, resource=Res}} = State,
+    nkserver_trace:log(SrvId, {nkactor, Group, Res}, Level, Txt, Args).
+
+
+trace(Name, Fun, #actor_st{srv=SrvId}=State) ->
+    nkserver_trace:span_run(SrvId, {nkactor, Name, State}, Fun, #{}).
+
+
+%% @doc
+event(EventType, Meta, State) ->
+    #actor_st{srv=SrvId, actor_id = #actor_id{group=Group, resource=Res}} = State,
+    nkserver_trace:event(SrvId, {nkactor, Group, Res}, EventType, Meta),
+    ?ACTOR_DEBUG("sending 'event': ~p", [EventType], State),
+    State2 = event_link(EventType, Meta, State),
+    {ok, State3} = handle(actor_srv_event, [Group, Res, EventType, Meta], State2),
     State3.
 
 
 %% @doc
-event_link(Event, #actor_st{links = Links} = State) ->
+event_link(EventType, EventMeta, #actor_st{links = Links} = State) ->
     nklib_links:fold_values(
         fun
             (Link, #link_info{get_events = true, data = Data}, Acc) ->
-                {ok, Acc2} = handle(actor_srv_link_event, [Link, Data, Event], Acc),
+                {ok, Acc2} = handle(actor_srv_link_event, [Link, Data, EventType, EventMeta], Acc),
                 Acc2;
             (_Link, _LinkOpts, Acc) ->
                 Acc
@@ -159,7 +171,7 @@ add_link(Link, Opts, #actor_st{links = Links} = State) ->
     },
     State2 = case LinkInfo#link_info.gen_events of
         true ->
-            event({link_added, Link}, State);
+            event(link_added, #{link=>Link}, State);
         _ ->
             State
     end,
@@ -170,7 +182,7 @@ add_link(Link, Opts, #actor_st{links = Links} = State) ->
 remove_link(Link, #actor_st{links = Links} = State) ->
     case nklib_links:get_value(Link, Links) of
         {ok, #link_info{gen_events = true}} ->
-            State2 = event({link_removed, Link}, State),
+            State2 = event(link_removed, #{link=>Link}, State),
             State3 = State2#actor_st{links = nklib_links:remove(Link, Links)},
             {true, State3};
         not_found ->
@@ -314,7 +326,7 @@ update(UpdActor, Opts, #actor_st{actor_id=ActorId, actor=Actor}=State) ->
                                         nkserver_ot:log(<<"actor updated">>, State7),
                                         op_span_log(<<"actor updated">>, State7),
                                         State8 = op_span_finish(State7),
-                                        {ok, event({updated, UpdActor}, State8)};
+                                        {ok, event(updated, #{update=>UpdActor}, State8)};
                                     {{error, SaveError}, State7} ->
                                         op_span_log(<<"save error: ~p">>, [SaveError], State7),
                                         op_span_error(SaveError, State7),
@@ -371,7 +383,7 @@ delete(Opts, #actor_st{srv = SrvId, actor_id = ActorId, actor = Actor} = State) 
             case ?CALL_SRV(SrvId, actor_db_delete, [SrvId, ActorId, #{}]) of
                 {ok, DbMeta} ->
                     ?ACTOR_DEBUG("object deleted: ~p", [DbMeta], State),
-                    {ok, event(deleted, State2#actor_st{is_dirty = deleted})};
+                    {ok, event(deleted, #{}, State2#actor_st{is_dirty = deleted})};
                 {error, Error} ->
                     case Error of
                         actor_has_linked_actors ->
@@ -459,7 +471,7 @@ save(Reason, SaveOpts, #actor_st{actor=Actor, is_dirty = true} = State) ->
                             % to check differences
                             #{metadata:=NewMeta} = Actor,
                             State6 = State5#actor_st{saved_metadata = NewMeta, is_dirty = false},
-                            {ok, event(saved, State6)};
+                            {ok, event(saved, #{}, State6)};
                         {error, not_implemented} ->
                             op_span_log(<<"save not implemented">>, State4),
                             State5 = op_span_finish(State4),
@@ -493,7 +505,7 @@ enabled(Enabled, #actor_st{is_enabled=Enabled}=State) ->
 enabled(Enabled, State) ->
     State2 = State#actor_st{is_enabled = Enabled},
     {ok, State3} = handle(actor_srv_enabled, [Enabled], State2),
-    nkactor_srv_lib:event({enabled, Enabled}, State3).
+    nkactor_srv_lib:event(enabled, #{enabled=>Enabled}, State3).
 
 
 %% @doc
@@ -607,7 +619,7 @@ add_actor_alarm(Alarm, #actor_st{actor=Actor, config=Config}=State) ->
             Meta2 = Meta#{in_alarm => true, alarms => Alarms4},
             Actor2 = Actor#{metadata:=Meta2},
             State2 = nkactor_srv_lib:set_updated(State#actor_st{actor=Actor2}),
-            {ok, event({alarm_fired, Alarm}, State2)};
+            {ok, event(alarm_fired, #{alarm=>Alarm}, State2)};
         {error, Error} ->
             {error, Error}
     end.
@@ -621,7 +633,7 @@ clear_all_alarms(#actor_st{actor=Actor}=State) ->
             Meta2 = maps:without([in_alarm, alarms], Meta),
             Actor2 = Actor#{metadata := Meta2},
             State2 = nkactor_srv_lib:set_updated(State#actor_st{actor=Actor2}),
-            nkactor_srv_lib:event(alarms_all_cleared, State2);
+            nkactor_srv_lib:event(alarms_all_cleared, #{}, State2);
         _ ->
             State
     end.
