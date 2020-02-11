@@ -50,7 +50,7 @@ add_modules(Config, Group, Modules) ->
 
 %% @doc 
 plugin_deps() ->
-	[nkserver_ot].
+	[].
 
 
 %% @doc

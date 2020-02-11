@@ -39,8 +39,7 @@
     unload_policy :: permanent | {ttl, Msecs::integer()},
     ttl_timer :: reference() | undefined,
     activate_timer :: reference() | undefined,
-    expire_timer :: reference() | undefined,
-    op_span_ids :: [nkserver_ot:span_id()]
+    expire_timer :: reference() | undefined
 }).
 
 

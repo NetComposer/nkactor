@@ -131,17 +131,15 @@ do_activate_actors([ActorId|Rest], Acc) ->
         _ ->
             case nkactor:activate(ActorId) of
                 {ok, ActorId2} ->
-                    nkserver_ot:log(?ACTIVATE_SPAN, {"activated actor ~p", [ActorId2]}),
-                    lager:info("NkACTOR auto-activating ~p", [ActorId2]),
+                    nkserver_trace:log(info, "activated actor ~p", [ActorId2]),
                     Acc+1;
                 {error, actor_expired} ->
-                    nkserver_ot:log(?ACTIVATE_SPAN, {"activated actor ~p", [ActorId]}),
+                    nkserver_trace:log(info, "activated actor ~p", [ActorId]),
                     lager:info("NkACTOR expired actor ~p", [ActorId]),
                     Acc+1;
                 {error, Error} ->
-                    nkserver_ot:log(?ACTIVATE_SPAN, {"could not activated actor ~p: ~p",
-                        [ActorId, Error]}),
-                    nkserver_ot:tag_error(?ACTIVATE_SPAN, could_not_activate_actor),
+                    nkserver_trace:log(notice, "could not activated actor ~p: ~p", [ActorId, Error]),
+                    nkserver_trace:error(could_not_activate_actor),
                     lager:warning("NkACTOR could not auto-activate ~p: ~p",
                         [ActorId, Error]),
                     Acc

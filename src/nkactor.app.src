@@ -7,7 +7,6 @@
     {applications, [
         nkpubsub,
         nkserver,
-        nkserver_ot,
         hackney
     ]},
     {env, [

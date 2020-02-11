@@ -231,7 +231,7 @@
         request => nkactor:request(),
         % If ot_span_is defined, logs will be added, and it will be used
         % as parent for new spans that could be created
-        ot_span_id => nkserver_ot:span_id() | nkserver_ot:parent()
+        ot_span_id => any() % nkserver_ot:span_id() | nkserver_ot:parent()
     }.
 
 
@@ -248,7 +248,7 @@
         % Use it only for non-persistent actors, or if sure it is really unique
         forced_uid => binary(),
         request => nkactor:request(),
-        ot_span_id => nkserver_ot:span_id() | nkserver_ot:parent()
+        ot_span_id => any() % nkserver_ot:span_id() | nkserver_ot:parent()
     }.
 
 

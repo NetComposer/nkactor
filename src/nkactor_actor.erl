@@ -24,6 +24,7 @@
 
 -export([get_module/3, get_config/1, get_config/2, get_common_config/1]).
 -export([parse/4, unparse/3, request/3]).
+-import(nkserver_trace, [log/2, log/3]).
 
 -include("nkactor.hrl").
 -include("nkactor_debug.hrl").
@@ -369,25 +370,24 @@ parse(SrvId, Op, Actor, Req) ->
             maps:get(resource, Req)
     end,
     % See nkactor_callback in nkactor_plugin
-    SpanId = maps:get(ot_span_id, Req, undefined),
-    nkserver_ot:log(SpanId, <<"calling actor parse">>),
+    log(info, "calling actor parse"),
     Req2 = maps:merge(#{srv=>SrvId}, Req),
     Args = [parse, Group, Res, [Op, Actor, Req2]],
     case ?CALL_SRV(SrvId, nkactor_callback, Args) of
         continue ->
-            nkserver_ot:log(SpanId, <<"default syntax">>),
+            log(info, "default syntax"),
             {ok, Actor};
         {ok, Actor2} ->
-            nkserver_ot:log(SpanId, <<"actor is custom parsed">>),
+            log(info, "actor is custom parsed"),
             {ok, Actor2};
         {syntax, Vsn, Syntax} when is_map(Syntax) ->
-            nkserver_ot:log(SpanId, <<"actor has custom syntax">>),
+            log(info, "actor has custom syntax"),
             nkactor_lib:parse_actor_data(Op, Actor, Vsn, Syntax);
         {syntax, Vsn, Syntax, Actor2} when is_map(Syntax) ->
-            nkserver_ot:log(SpanId, <<"actor has custom syntax and actor">>),
+            log(info, "actor has custom syntax and actor"),
             nkactor_lib:parse_actor_data(Op, Actor2, Vsn, Syntax);
         {error, Error} ->
-            nkserver_ot:log(SpanId, <<"error parsing actor: ~p">>, [Error]),
+            log(notice, "error parsing actor: ~p", [Error]),
             {error, Error}
     end.
 
@@ -398,19 +398,18 @@ parse(SrvId, Op, Actor, Req) ->
 
 unparse(SrvId, Actor, Req) ->
     #{group:=Group, resource:=Res} = Actor,
-    SpanId = maps:get(ot_span_id, Req, undefined),
-    nkserver_ot:log(SpanId, <<"calling actor unparse">>),
+    log(info, "calling actor unparse"),
     Req2 = maps:merge(#{srv=>SrvId}, Req),
     Args = [unparse, Group, Res, [Actor, Req2]],
     case ?CALL_SRV(SrvId, nkactor_callback, Args) of
         continue ->
-            nkserver_ot:log(SpanId, <<"default syntax">>),
+            log(info, "default syntax"),
             {ok, Actor};
         {ok, Actor2} ->
-            nkserver_ot:log(SpanId, <<"actor is custom parsed">>),
+            log(info, "actor is custom parsed"),
             {ok, Actor2};
         {error, Error} ->
-            nkserver_ot:log(SpanId, <<"error parsing actor: ~p">>, Error),
+            log(notice, "error parsing actor: ~p", [Error]),
             {error, Error}
     end.
 
@@ -427,14 +426,13 @@ request(SrvId, ActorId, Req) ->
     Req2 = maps:merge(#{srv=>SrvId}, Req),
     Args = [request, Group, Res, [Verb, SubRes, ActorId, Req2]],
     % See nkactor_callback in nkactor_plugin
-    SpanId = maps:get(ot_span_id, Req, undefined),
-    nkserver_ot:log(SpanId, <<"calling actor request">>),
+    log(info, "calling actor request"),
     case ?CALL_SRV(SrvId, nkactor_callback, Args) of
         continue ->
-            nkserver_ot:log(SpanId, <<"no specific action">>),
+            log(info, "no specific action"),
             continue;
         Other ->
-            nkserver_ot:log(SpanId, <<"specific action return">>),
+            log(info, "specific action return"),
             Other
     end.
 

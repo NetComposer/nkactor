@@ -52,7 +52,7 @@
 %% - After each sync or async operation, if 'is_dirty' is true, a timer is started
 %%   (if it was not yet started) to save the actor automatically
 %%
-%% Opentracing
+%% Open tracing
 %%
 %% - Some operations (like init and update) accept a parameter 'ot_span_id', and,
 %%   if provided, will create a new span based on it
@@ -67,11 +67,11 @@
 -export([create/2, start/2, sync_op/2, sync_op/3, async_op/2, live_async_op/2, delayed_async_op/3, hibernate/0]).
 -export([init/1, terminate/2, code_change/3, handle_call/3, handle_cast/2, handle_info/2]).
 -export([count/0, get_state/1, get_timers/1, raw_stop/2]).
+-import(nkactor_srv_lib, [log/2, log/3, event/3, span_start/4, span_tags/1, span_error/1]).
 -export_type([event/0, save_reason/0]).
 
 -include("nkactor.hrl").
 -include("nkactor_debug.hrl").
--include_lib("nkserver_ot/include/nkserver_ot.hrl").
 -include_lib("nkserver/include/nkserver.hrl").
 
 %%-define(DEFAULT_TTL, 10000).
@@ -164,7 +164,7 @@ creation | user_op | user_order | unloaded | update | timer.
 -type start_opts() ::
     #{
         ttl => integer(),           % msecs
-        ot_span_id => nkserver_ot:span_id() | nkserver_ot:parent()
+        ot_span_id => any() %nkserver_ot:span_id() | nkserver_ot:parent()
     }
     |
     nkactor:config().
@@ -197,16 +197,8 @@ start(Actor, Config) ->
 
 %% @private
 do_start(Op, Actor, StartConfig) ->
-    StartConfig2 = case StartConfig of
-        #{ot_span_id:=SpanId} ->
-            % We are going to a different process, if it is a
-            % process dictionary span is not going to pass
-            StartConfig#{ot_span_id:=nkserver_ot:make_parent(SpanId)};
-        _ ->
-            StartConfig
-    end,
     Ref = make_ref(),
-    Opts = {Op, Actor, StartConfig2, self(), Ref},
+    Opts = {Op, Actor, StartConfig, self(), Ref},
     case gen_server:start(?MODULE, Opts, []) of
         {ok, Pid} ->
             {ok, Pid};
@@ -381,54 +373,54 @@ init({Op, Actor, StartConfig, Caller, Ref}) ->
         {ok, SrvId, BaseConfig} ->
             Config = maps:merge(BaseConfig, StartConfig),
             State1 = do_pre_init(ActorId, Actor, Config, SrvId),
-            State2 = nkactor_srv_lib:op_span_check_create(Op, Config, State1),
-            nkactor_srv_lib:op_span_log(<<"starting initialization: ~p">>, [Op], State2),
-            #actor_id{
-                group = Group,
-                resource = Res,
-                name = Name,
-                namespace = Namespace,
-                uid = UID
-            } = ActorId,
-            Tags = #{
-                <<"actor.group">> => Group,
-                <<"actor.resource">> => Res,
-                <<"actor.name">> => Name,
-                <<"actor.namespace">> => Namespace,
-                <<"actor.uid">> => UID,
-                <<"actor.pid">> => list_to_binary(pid_to_list(self()))
-            },
-            nkactor_srv_lib:op_span_tags(Tags, State2),
-            case check_expire_time(State2) of
-                {false, State3} ->
-                    nkactor_srv_lib:op_span_log(<<"registering with namespace">>, State3),
-                    case do_register(1, State3) of
-                        {ok, State4} ->
-                            nkactor_srv_lib:op_span_log(<<"registered with namespace">>, State4),
-                            case nkactor_srv_lib:handle(actor_srv_init, [Group, Res, Op], State4) of
-                                {ok, State5} ->
-                                    State6 = nkactor_srv_lib:set_times(State5),
-                                    case do_post_init(Op, State6) of
-                                        {ok, State7} ->
-                                            {ok, State7};
-                                        {error, Error} ->
-                                            do_init_stop(Error, Caller, Ref, State6)
-                                    end;
-                                {error, Error} ->
-                                    do_init_stop(Error, Caller, Ref, State4);
-                                {delete, Error} ->
-                                    _ = nkactor_srv_lib:delete(#{}, State4),
-                                    do_init_stop(Error, Caller, Ref, State4)
-                            end;
-                        {error, Error} ->
-                            do_init_stop(Error, Caller, Ref, State3)
-                    end;
-                {true, State3} ->
-                    nkactor_srv_lib:op_span_log(<<"actor is expired on load">>, State3),
-                    ?ACTOR_LOG(info, "actor is expired on load", [], State3),
-                    _ = do_stop(actor_expired, State3),
-                    do_init_stop(actor_expired, Caller, Ref, State3)
-            end
+            Fun = fun() ->
+                log(info, "starting initialization: ~p", [Op]),
+                #actor_id{
+                    group = Group,
+                    resource = Res,
+                    name = Name,
+                    namespace = Namespace,
+                    uid = UID
+                } = ActorId,
+                Tags = #{
+                    <<"actor.group">> => Group,
+                    <<"actor.resource">> => Res,
+                    <<"actor.name">> => Name,
+                    <<"actor.namespace">> => Namespace,
+                    <<"actor.uid">> => UID,
+                    <<"actor.pid">> => list_to_binary(pid_to_list(self()))
+                },
+                span_tags(Tags),
+                case check_expire_time(State1) of
+                    {false, State2} ->
+                        log(info, "registering with namespace"),
+                        case do_register(1, State2) of
+                            {ok, State3} ->
+                                log(info, "calling actor_srv_init"),
+                                case nkactor_srv_lib:handle(actor_srv_init, [Group, Res, Op], State3) of
+                                    {ok, State4} ->
+                                        State5 = nkactor_srv_lib:set_times(State4),
+                                        case do_post_init(Op, State5) of
+                                            {ok, State6} ->
+                                                {ok, State6};
+                                            {error, Error} ->
+                                                do_init_stop(Error, Caller, Ref, State5)
+                                        end;
+                                    {error, Error} ->
+                                        do_init_stop(Error, Caller, Ref, State3);
+                                    {delete, Error} ->
+                                        _ = nkactor_srv_lib:delete(#{}, State3),
+                                        do_init_stop(Error, Caller, Ref, State3)
+                                end;
+                            {error, Error} ->
+                                do_init_stop(Error, Caller, Ref, State2)
+                        end;
+                    {true, State3} ->
+                        _ = do_stop(actor_expired, State3),
+                        do_init_stop(actor_expired, Caller, Ref, State3)
+                end
+            end,
+            span_start("ActorSrv::load", Fun, StartConfig, State1)
     end.
 
 
@@ -571,15 +563,10 @@ code_change(OldVsn, #actor_st{srv = SrvId} = State, Extra) ->
 %%terminate(_Reason, #actor{moved_to=Pid}) when is_pid(Pid) ->
 %%    ok;
 
-terminate(Reason, #actor_st{op_span_ids=SpanIds}=State) ->
+terminate(Reason, State) ->
     State2 = do_stop2({terminate, Reason}, State),
     {ok, _State3} = nkactor_srv_lib:handle(actor_srv_terminate, [Reason], State2),
-    lists:foreach(
-        fun(SpanId) ->
-            nkserver_ot:log(SpanId, <<"actor terminated: ~p">>, [Reason]),
-            nkserver_ot:finish(SpanId)
-        end,
-        SpanIds),
+    log(info, "actor terminated: ~p", [Reason]),
     ok.
 
 
@@ -733,10 +720,10 @@ do_async_op({unlink, Link}, State) ->
     end;
 
 do_async_op({send_info, Info, Meta}, State) ->
-    noreply(nkactor_srv_lib:event(info, #{info=>nklib_util:to_binary(Info), meta=>Meta}, do_refresh_ttl(State)));
+    noreply(event(info, #{info=>nklib_util:to_binary(Info), meta=>Meta}, do_refresh_ttl(State)));
 
 do_async_op({send_event, Event}, State) ->
-    noreply(nkactor_srv_lib:event(Event, #{}, do_refresh_ttl(State)));
+    noreply(event(Event, #{}, do_refresh_ttl(State)));
 
 do_async_op({set_activate_time, Time}, State) ->
     noreply(nkactor_srv_lib:set_activate_time(Time, State));
@@ -792,7 +779,7 @@ do_async_op({raw_stop, Reason}, State) ->
             ?ACTOR_LOG(info, "received raw_stop: ~p", [Reason], State)
     end,
     {_, State2} = nkactor_srv_lib:handle(actor_srv_stop, [Reason], State),
-    State3 = nkactor_srv_lib:event(stopped, #{reason=>Reason}, State2),
+    State3 = event(stopped, #{reason=>Reason}, State2),
     {stop, normal, State3#actor_st{stop_reason=raw_stop}};
 
 do_async_op({set_alarm, Alarm}, State) ->
@@ -848,8 +835,7 @@ do_pre_init(ActorId, Actor, Config, SrvId) ->
         activate_timer = undefined,
         expire_timer = undefined,
         save_timer = undefined,
-        unload_policy = permanent,           % Updated later
-        op_span_ids = []
+        unload_policy = permanent           % Updated later
     }.
 
 
@@ -859,7 +845,7 @@ do_post_init(Op, State) ->
     ?ACTOR_DEBUG("started (~p)", [self()], State),
     State2 = case Op of
         create ->
-            nkactor_srv_lib:op_span_log(<<"starting creation save">>, State),
+            log(info, "starting creation save"),
             % Do not update generation
             State#actor_st{is_dirty=true};
         _ ->
@@ -867,13 +853,12 @@ do_post_init(Op, State) ->
     end,
     case nkactor_srv_lib:save(Op, State2) of
         {ok, State3} ->
+            Self = nklib_util:to_binary(self()),
             State4 = case Op of
                 create ->
-                    nkactor_srv_lib:op_span_log(<<"actor saved">>, State),
-                    nkactor_srv_lib:event(created, #{}, State3);
+                    event(created, #{self=>Self}, State3);
                 _ ->
-                    nkactor_srv_lib:op_span_log(<<"actor activated">>, State),
-                    nkactor_srv_lib:event(activated, #{}, State3)
+                    event(activated, #{self=>Self}, State3)
             end,
             State5 = do_check_alarms(State4),
             case Config of
@@ -883,20 +868,18 @@ do_post_init(Op, State) ->
                     ok
             end,
             nklib_counters:async([?MODULE]),
-            nkactor_srv_lib:op_span_log(<<"actor init completed">>, State5),
-            State6 = nkactor_srv_lib:op_span_finish(State5),
+            State6 = event(actor_init_completed, #{}, State5),
             {ok, do_refresh_ttl(State6)};
-        {{error, Error}, State3} ->
-            nkactor_srv_lib:op_span_log("actor save error: ~p", [Error], State3),
+        {{error, Error}, _State3} ->
+            log(warning, "actor save error: ~p", [Error]),
             {error, Error}
     end.
 
 
 %% @private
-do_init_stop(Error, Caller, Ref, State) ->
-    nkactor_srv_lib:op_span_log("actor init error: ~p", [Error], State),
-    nkactor_srv_lib:op_span_error(Error, State),
-    _State2 = nkactor_srv_lib:op_span_finish(State),
+do_init_stop(Error, Caller, Ref, _State) ->
+    log(warning, "actor init error: ~p", [Error]),
+    span_error(Error),
     Caller ! {do_start_ignore, Ref, {error, Error}},
     ignore.
 
@@ -971,7 +954,7 @@ do_stop(Reason, State) ->
 %% @private
 do_stop2(Reason, #actor_st{stop_reason=false}=State) ->
     State2 = State#actor_st{stop_reason=Reason},
-    State3 = nkactor_srv_lib:event(stopped, #{reason=>Reason}, State2),
+    State3 = event(stopped, #{reason=>Reason}, State2),
     case nkactor_srv_lib:handle(actor_srv_stop, [Reason], State3) of
         {ok, State4} ->
             {_, State5} = nkactor_srv_lib:save(unloaded, State4),
@@ -1142,7 +1125,7 @@ link_down(Mon, #actor_st{links=Links}=State) ->
         {ok, Link, #link_info{data=Data}=LinkInfo, Links2} ->
             case LinkInfo of
                 #link_info{gen_events=true, data=Data} ->
-                    State2 = nkactor_srv_lib:event(link_down, Data, State),
+                    State2 = event(link_down, Data, State),
                     {ok, Link, LinkInfo, State2#actor_st{links=Links2}};
                 _ ->
                     {ok, Link, LinkInfo, State#actor_st{links=Links2}}
