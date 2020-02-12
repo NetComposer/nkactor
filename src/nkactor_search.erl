@@ -190,7 +190,6 @@ search_spec_syntax() ->
         only_uid => boolean,
         get_data => boolean,
         get_metadata => boolean,
-        ot_span_id => any,
         '__defaults' => #{namespace => <<>>}
     }.
 

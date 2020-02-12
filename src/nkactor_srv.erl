@@ -54,10 +54,6 @@
 %%
 %% Open tracing
 %%
-%% - Some operations (like init and update) accept a parameter 'ot_span_id', and,
-%%   if provided, will create a new span based on it
-%% - Other operations (save) always generate a new span, based on previous defined
-%%   operation span (from init or update) or top-level if none defined
 
 
 -module(nkactor_srv).
@@ -67,7 +63,9 @@
 -export([create/2, start/2, sync_op/2, sync_op/3, async_op/2, live_async_op/2, delayed_async_op/3, hibernate/0]).
 -export([init/1, terminate/2, code_change/3, handle_call/3, handle_cast/2, handle_info/2]).
 -export([count/0, get_state/1, get_timers/1, raw_stop/2]).
--import(nkactor_srv_lib, [log/2, log/3, event/3, span_start/4, span_tags/1, span_error/1]).
+-import(nkactor_srv_lib, [event/3, span_start/4]).
+-import(nkserver_trace, [trace/1, trace/2, log/3]).
+
 -export_type([event/0, save_reason/0]).
 
 -include("nkactor.hrl").
@@ -163,8 +161,7 @@ creation | user_op | user_order | unloaded | update | timer.
 
 -type start_opts() ::
     #{
-        ttl => integer(),           % msecs
-        ot_span_id => any() %nkserver_ot:span_id() | nkserver_ot:parent()
+        ttl => integer()           % msecs
     }
     |
     nkactor:config().
@@ -198,7 +195,9 @@ start(Actor, Config) ->
 %% @private
 do_start(Op, Actor, StartConfig) ->
     Ref = make_ref(),
-    Opts = {Op, Actor, StartConfig, self(), Ref},
+    ParentSpan = nkserver_trace:parent(),
+    Opts = {Op, Actor, StartConfig, self(), Ref, ParentSpan},
+    trace("starting actor server"),
     case gen_server:start(?MODULE, Opts, []) of
         {ok, Pid} ->
             {ok, Pid};
@@ -240,7 +239,7 @@ sync_op(Id, Op, Timeout) ->
 
 %% @private
 sync_op(Id, Op, _Timeout, 0) ->
-    lager:warning("NkACTOR SynOP failed (too many retries) (~p) (~p)", [Id, Op]),
+    lager:warning("NkACTOR SyncOP failed (too many retries) (~p) (~p)", [Id, Op]),
     {error, process_not_found};
 
 sync_op(#actor_id{pid=Pid}=ActorId, Op, Timeout, Tries) when is_pid(Pid) ->
@@ -248,7 +247,7 @@ sync_op(#actor_id{pid=Pid}=ActorId, Op, Timeout, Tries) when is_pid(Pid) ->
         {error, process_not_found} ->
             ActorId2 = ActorId#actor_id{pid = undefined},
             timer:sleep(250),
-            lager:notice("NkACTOR SynOP failed (~p), retrying...", [ActorId2]),
+            lager:info("NkACTOR SyncOP failed (~p), retrying...", [ActorId2]),
             sync_op(ActorId2, Op, Timeout, Tries - 1);
         Other ->
             Other
@@ -361,10 +360,7 @@ count() ->
 -spec init(term()) ->
     {ok, state()} | {stop, term()}.
 
-init({Op, Actor, StartConfig, Caller, Ref}) ->
-    % We create a top-level span for generic actor operations
-    % Also, if Config has option 'ot_span_id' a specific operation span will be created
-    % in do_pre_init
+init({Op, Actor, StartConfig, Caller, Ref, ParentSpan}) ->
     ActorId = nkactor_lib:actor_to_actor_id(Actor),
     case nkactor_actor:get_config(ActorId) of
         {ok, _SrvId, #{activable:=false}} ->
@@ -374,7 +370,7 @@ init({Op, Actor, StartConfig, Caller, Ref}) ->
             Config = maps:merge(BaseConfig, StartConfig),
             State1 = do_pre_init(ActorId, Actor, Config, SrvId),
             Fun = fun() ->
-                log(info, "starting initialization: ~p", [Op]),
+                 trace("actor initializing: ~p", [Op]),
                 #actor_id{
                     group = Group,
                     resource = Res,
@@ -390,13 +386,13 @@ init({Op, Actor, StartConfig, Caller, Ref}) ->
                     <<"actor.uid">> => UID,
                     <<"actor.pid">> => list_to_binary(pid_to_list(self()))
                 },
-                span_tags(Tags),
+                nkserver_trace:tags(Tags),
                 case check_expire_time(State1) of
                     {false, State2} ->
-                        log(info, "registering with namespace"),
+                        trace("registering with namespace"),
                         case do_register(1, State2) of
                             {ok, State3} ->
-                                log(info, "calling actor_srv_init"),
+                                trace("calling actor_srv_init"),
                                 case nkactor_srv_lib:handle(actor_srv_init, [Group, Res, Op], State3) of
                                     {ok, State4} ->
                                         State5 = nkactor_srv_lib:set_times(State4),
@@ -420,7 +416,11 @@ init({Op, Actor, StartConfig, Caller, Ref}) ->
                         do_init_stop(actor_expired, Caller, Ref, State3)
                 end
             end,
-            span_start("ActorSrv::load", Fun, StartConfig, State1)
+            SpanOpts = case ParentSpan of
+                undefined -> #{};
+                _ -> #{parent=>ParentSpan}
+            end,
+            span_start("ActorSrv::load", Fun, SpanOpts, State1)
     end.
 
 
@@ -566,7 +566,7 @@ code_change(OldVsn, #actor_st{srv = SrvId} = State, Extra) ->
 terminate(Reason, State) ->
     State2 = do_stop2({terminate, Reason}, State),
     {ok, _State3} = nkactor_srv_lib:handle(actor_srv_terminate, [Reason], State2),
-    log(info, "actor terminated: ~p", [Reason]),
+    trace("actor terminated: ~p", [Reason]),
     ok.
 
 
@@ -845,7 +845,7 @@ do_post_init(Op, State) ->
     ?ACTOR_DEBUG("started (~p)", [self()], State),
     State2 = case Op of
         create ->
-            log(info, "starting creation save"),
+            trace("starting creation save"),
             % Do not update generation
             State#actor_st{is_dirty=true};
         _ ->
@@ -878,8 +878,13 @@ do_post_init(Op, State) ->
 
 %% @private
 do_init_stop(Error, Caller, Ref, _State) ->
-    log(warning, "actor init error: ~p", [Error]),
-    span_error(Error),
+    case Error of
+        actor_already_activated ->
+            ok;
+        _ ->
+            trace("actor init error: ~p", [Error]),
+            nkserver_trace:error(Error)
+    end,
     Caller ! {do_start_ignore, Ref, {error, Error}},
     ignore.
 
@@ -1134,18 +1139,3 @@ link_down(Mon, #actor_st{links=Links}=State) ->
             not_found
     end.
 
-%%%% @private
-%%op_span_update_srv_id(SrvId, #actor_st{op_span_ids=[SpanId|_]}) ->
-%%    nkserver_ot:update_srv_id(SpanId, SrvId);
-%%
-%%op_span_update_srv_id(_SrvId, #actor_st{op_span_ids=[]}) ->
-%%    ok.
-
-
-%%%% @private
-%%links_iter(Fun, Acc, #actor_st{links=Links}) ->
-%%    nklib_links:fold_values(Fun, Acc, Links).
-
-%%%% @private
-%%to_bin(Term) when is_binary(Term) -> Term;
-%%to_bin(Term) -> nklib_util:to_binary(Term).

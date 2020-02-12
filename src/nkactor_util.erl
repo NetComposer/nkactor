@@ -28,7 +28,7 @@
 -include_lib("nkserver/include/nkserver.hrl").
 
 -export([fold_actors/7, activate_actors/2]).
-
+-import(nkserver_trace, [trace/1, trace/2]).
 -define(ACTIVATE_SPAN, auto_activate).
 
 
@@ -131,10 +131,10 @@ do_activate_actors([ActorId|Rest], Acc) ->
         _ ->
             case nkactor:activate(ActorId) of
                 {ok, ActorId2} ->
-                    nkserver_trace:log(info, "activated actor ~p", [ActorId2]),
+                    trace("activated actor ~p", [ActorId2]),
                     Acc+1;
                 {error, actor_expired} ->
-                    nkserver_trace:log(info, "activated actor ~p", [ActorId]),
+                    trace("activated actor ~p", [ActorId]),
                     lager:info("NkACTOR expired actor ~p", [ActorId]),
                     Acc+1;
                 {error, Error} ->

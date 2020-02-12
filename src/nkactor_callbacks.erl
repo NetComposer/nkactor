@@ -561,8 +561,6 @@ actor_do_expired(_Actor) ->
 
 -type db_opts() ::
     #{
-        % If ot_span_id is defined, it will be used as parent for new created spans
-        ot_span_id => any(), % nkserver_ot:span_id() | nkserver_ot:parent(),
         % Default true
         no_unique_check => boolean(),
         % For deletions, default false

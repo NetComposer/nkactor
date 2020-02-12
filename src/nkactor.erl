@@ -228,10 +228,7 @@
         % Do not parse actor's data
         no_data_parse => boolean(),
         % Request will be used when calling actor's parse if provided
-        request => nkactor:request(),
-        % If ot_span_is defined, logs will be added, and it will be used
-        % as parent for new spans that could be created
-        ot_span_id => any() % nkserver_ot:span_id() | nkserver_ot:parent()
+        request => nkactor:request()
     }.
 
 
@@ -247,8 +244,7 @@
         no_unique_check => boolean(),
         % Use it only for non-persistent actors, or if sure it is really unique
         forced_uid => binary(),
-        request => nkactor:request(),
-        ot_span_id => any() % nkserver_ot:span_id() | nkserver_ot:parent()
+        request => nkactor:request()
     }.
 
 
@@ -283,7 +279,6 @@
 
 
 %% @doc Launches an Request
-%% - A new span will be created. If ot_span_id is defined, it will be used as parent
 %% - Calls actor_req_authorize/1 for authorization of the request
 %% - Finds service managing namespace, and adds srv and start_time
 

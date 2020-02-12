@@ -264,7 +264,6 @@ request_syntax() ->
         content_type => binary,
         body => [map, binary],
         auth => map,
-        ot_span_id => any,
         external_url => binary,
         callback => atom,
         meta => map,
