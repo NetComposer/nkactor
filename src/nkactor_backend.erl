@@ -287,8 +287,8 @@ create(Actor, Opts) ->
                                     #{get_actor:=true} ->
                                         trace("calling get_actor"),
                                         case nkactor:sync_op(ActorId, get_actor, infinity) of
-                                            {ok, Actor3} ->
-                                                {ok, SrvId, Actor3, #{}};
+                                            {ok, Actor4} ->
+                                                {ok, SrvId, Actor4, #{}};
                                             {error, actor_not_found} ->
                                                 {error, actor_not_found};
                                             {error, Error} ->
