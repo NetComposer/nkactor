@@ -201,112 +201,124 @@ read(Id, Opts) ->
     {ok, nkserver:id(), nkactor:actor(),  Meta::map()} | {error, actor_not_found|term()}.
 
 create(Actor, #{activate:=false}=Opts) ->
-    Fun = fun() ->
-        case pre_create(Actor, Opts) of
-            {ok, SrvId, Actor2} ->
-                #{
-                    namespace := Namespace,
-                    group := Group,
-                    resource := Res,
-                    name := Name,
-                    uid := UID
-                } = Actor2,
-                nkserver_trace:tags(#{
-                    <<"actor.namespace">> => Namespace,
-                    <<"actor.group">> => Group,
-                    <<"actor.resource">> => Res,
-                    <<"actor.name">> => Name,
-                    <<"actor.uid">> => UID,
-                    <<"actor.opts.activate">> => false
-                }),
-                % Non recommended for non-relational databases, if name is not
-                % randomly generated
-                Config = maps:with([no_unique_check], Opts),
-                trace("calling actor_db_create"),
-                case ?CALL_SRV(SrvId, actor_db_create, [SrvId, Actor2, Config]) of
-                    {ok, Meta} ->
-                        % Use the alternative method for sending the event
-                        nkactor_lib:send_external_event(SrvId, created, Actor2),
-                        case Opts of
-                            #{get_actor:=true} ->
-                                {ok, SrvId, Actor2, Meta};
-                            _ ->
-                                ActorId = nkactor_lib:actor_to_actor_id(Actor2),
-                                {ok, SrvId, ActorId, Meta}
-                        end;
-                    {error, Error} ->
-                        log("error creating actor: ~p", [Error]),
-                        nkserver_trace:error(Error),
-                        {error, Error}
-                end;
-            {error, Error} ->
-                %span_delete(create),
-                {error, Error}
-        end
-    end,
-    nkserver_trace:new(last, "ActorBackend::create", Fun, #{});
-
-create(Actor, Opts) ->
-    Fun = fun() ->
-        case pre_create(Actor, Opts) of
-            {ok, SrvId, Actor2} ->
-                % If we use the activate option, the object is first
-                % registered with leader, so you cannot have two with same
-                % name even on non-relational databases
-                % The process will send the 'create' event in-server
-                Config = maps:with([ttl, no_unique_check], Opts),
-                trace("calling actor create"),
-                case ?CALL_SRV(SrvId, actor_create, [Actor2, Config]) of
-                    {ok, Pid} when is_pid(Pid) ->
-                        ActorId = nkactor_lib:actor_to_actor_id(Actor2),
-                        #actor_id{
-                            namespace = Namespace,
-                            group = Group,
-                            resource = Res,
-                            name = Name,
-                            uid = UID
-                        } = ActorId,
+    case pre_parse(Actor) of
+        {ok, SrvId, Actor2} ->
+            Fun = fun() ->
+                case pre_create(SrvId, Actor2, Opts) of
+                    {ok, Actor3} ->
+                        #{
+                            namespace := Namespace,
+                            group := Group,
+                            resource := Res,
+                            name := Name,
+                            uid := UID
+                        } = Actor2,
                         nkserver_trace:tags(#{
                             <<"actor.namespace">> => Namespace,
                             <<"actor.group">> => Group,
                             <<"actor.resource">> => Res,
                             <<"actor.name">> => Name,
                             <<"actor.uid">> => UID,
-                            <<"actor.pid">> => list_to_binary(pid_to_list(Pid)),
-                            <<"actor.opts.activate">> => true
+                            <<"actor.opts.activate">> => false
                         }),
-                        case Opts of
-                            #{get_actor:=true} ->
-                                trace("calling get_actor"),
-                                case nkactor:sync_op(ActorId, get_actor, infinity) of
-                                    {ok, Actor3} ->
-                                        {ok, SrvId, Actor3, #{}};
-                                    {error, actor_not_found} ->
-                                        {error, actor_not_found};
-                                    {error, Error} ->
-                                        trace("error getting actor: ~p", [Error]),
-                                        nkserver_trace:error(Error),
-                                        {error, Error}
+                        % Non recommended for non-relational databases, if name is not
+                        % randomly generated
+                        Config = maps:with([no_unique_check], Opts),
+                        trace("calling actor_db_create"),
+                        case ?CALL_SRV(SrvId, actor_db_create, [SrvId, Actor3, Config]) of
+                            {ok, Meta} ->
+                                % Use the alternative method for sending the event
+                                nkactor_lib:send_external_event(SrvId, created, Actor3),
+                                case Opts of
+                                    #{get_actor:=true} ->
+                                        {ok, SrvId, Actor3, Meta};
+                                    _ ->
+                                        ActorId = nkactor_lib:actor_to_actor_id(Actor3),
+                                        {ok, SrvId, ActorId, Meta}
                                 end;
-                            _ ->
-                                {ok, SrvId, ActorId, #{}}
+                            {error, Error} ->
+                                log("error creating actor: ~p", [Error]),
+                                nkserver_trace:error(Error),
+                                {error, Error}
                         end;
                     {error, Error} ->
-                        trace("error creating actor: ~p", [Error]),
-                        nkserver_trace:error(Error),
-                        case Error of
-                            actor_already_activated ->
-                                {error, actor_already_exists};
-                            _ ->
-                                {error, Error}
-                        end
-                end;
-            {error, Error} ->
-                %span_delete(create),
-                {error, Error}
-        end
-    end,
-    nkserver_trace:new(last, "ActorBackend::create", Fun, #{}).
+                        %span_delete(create),
+                        {error, Error}
+                end
+            end,
+            SpanOpts = #{metadata=>#{app=>SrvId, group=>actor_backend, resource=>create}},
+            nkserver_trace:new(last, "ActorBackend::create", Fun, SpanOpts);
+        {error, Error} ->
+            {error, Error}
+    end;
+
+create(Actor, Opts) ->
+    case pre_parse(Actor) of
+        {ok, SrvId, Actor2} ->
+            Fun = fun() ->
+                case pre_create(SrvId, Actor2, Opts) of
+                    {ok, Actor3} ->
+                        % If we use the activate option, the object is first
+                        % registered with leader, so you cannot have two with same
+                        % name even on non-relational databases
+                        % The process will send the 'create' event in-server
+                        Config = maps:with([ttl, no_unique_check], Opts),
+                        trace("calling actor create"),
+                        case ?CALL_SRV(SrvId, actor_create, [Actor3, Config]) of
+                            {ok, Pid} when is_pid(Pid) ->
+                                ActorId = nkactor_lib:actor_to_actor_id(Actor3),
+                                #actor_id{
+                                    namespace = Namespace,
+                                    group = Group,
+                                    resource = Res,
+                                    name = Name,
+                                    uid = UID
+                                } = ActorId,
+                                nkserver_trace:tags(#{
+                                    <<"actor.namespace">> => Namespace,
+                                    <<"actor.group">> => Group,
+                                    <<"actor.resource">> => Res,
+                                    <<"actor.name">> => Name,
+                                    <<"actor.uid">> => UID,
+                                    <<"actor.pid">> => list_to_binary(pid_to_list(Pid)),
+                                    <<"actor.opts.activate">> => true
+                                }),
+                                case Opts of
+                                    #{get_actor:=true} ->
+                                        trace("calling get_actor"),
+                                        case nkactor:sync_op(ActorId, get_actor, infinity) of
+                                            {ok, Actor3} ->
+                                                {ok, SrvId, Actor3, #{}};
+                                            {error, actor_not_found} ->
+                                                {error, actor_not_found};
+                                            {error, Error} ->
+                                                trace("error getting actor: ~p", [Error]),
+                                                nkserver_trace:error(Error),
+                                                {error, Error}
+                                        end;
+                                    _ ->
+                                        {ok, SrvId, ActorId, #{}}
+                                end;
+                            {error, Error} ->
+                                trace("error creating actor: ~p", [Error]),
+                                nkserver_trace:error(Error),
+                                case Error of
+                                    actor_already_activated ->
+                                        {error, actor_already_exists};
+                                    _ ->
+                                        {error, Error}
+                                end
+                        end;
+                    {error, Error} ->
+                        %span_delete(create),
+                        {error, Error}
+                end
+            end,
+            SpanOpts = #{metadata=>#{app=>SrvId, group=>actor_backend, resource=>create}},
+            nkserver_trace:new(last, "ActorBackend::create", Fun, SpanOpts);
+        {error, Error} ->
+            {error, Error}
+    end.
 
 
 %% @doc Updates an actor
@@ -317,9 +329,9 @@ update(_Id, _Actor, #{activate:=false}) ->
     {error, update_not_implemented};
 
 update(Id, Actor, Opts) ->
-    Fun = fun() ->
-        case do_activate(Id, Opts, 3) of
-            {ok, SrvId, ActorId, _} ->
+    case do_activate(Id, Opts, 3) of
+        {ok, SrvId, ActorId, _} ->
+            Fun = fun() ->
                 #actor_id{
                     namespace = Namespace,
                     group = Group,
@@ -353,12 +365,13 @@ update(Id, Actor, Opts) ->
                         trace("error updating actor: ~p", [Error]),
                         nkserver_trace:error(Error),
                         {error, Error}
-                end;
-            {error, Error} ->
-                {error, Error}
-        end
-    end,
-    nkserver_trace:new(last, "ActorBackend::update", Fun).
+                end
+            end,
+            SpanOpts = #{metadata=>#{app=>SrvId, group=>actor_backend, resource=>update}},
+            nkserver_trace:new(last, "ActorBackend::update", Fun, SpanOpts);
+        {error, Error} ->
+            {error, Error}
+    end.
 
 
 
@@ -367,9 +380,9 @@ update(Id, Actor, Opts) ->
     {ok, map()} | {error, actor_not_found|term()}.
 
 delete(Id, Opts) ->
-    Fun = fun() ->
-        case find(Id, Opts) of
-            {ok, SrvId, #actor_id{uid=UID, pid=Pid}=ActorId2, _Meta} ->
+    case find(Id, Opts) of
+        {ok, SrvId, #actor_id{uid=UID, pid=Pid}=ActorId2, _Meta} ->
+            Fun = fun() ->
                 #actor_id{
                     namespace = Namespace,
                     group = Group,
@@ -423,128 +436,18 @@ delete(Id, Opts) ->
                                 nkserver_trace:error(Error),
                                 {error, Error}
                         end
-                end;
-            {error, Error} ->
-                % We didn't identify any service
-                %span_delete(delete),
-                {error, Error}
-        end
-    end,
-    nkserver_trace:new(last, "ActorBackend::delete", Fun, #{}).
+                end
+            end,
+            SpanOpts = #{metadata=>#{app=>SrvId, group=>actor_backend, resource=>delete}},
+            nkserver_trace:new(last, "ActorBackend::delete", Fun, SpanOpts);
+        {error, Error} ->
+            {error, Error}
+    end.
 
 %% @doc
 delete_multi(SrvId, ActorIds) ->
     ?CALL_SRV(SrvId, actor_db_delete_multi, [SrvId, ActorIds, #{}]).
 
-
-
-
-%%
-%%%% @doc Deletes an actor
-%%-spec delete(nkactor:id(), #{cascade=>boolean()}) ->
-%%    {ok, #actor_id{}, map()} | {error, actor_not_found|term()}.
-%%
-%%delete(Id, Opts) ->
-%%    span_create(delete, undefined, Opts),
-%%    case find(Id, Opts#{ot_span_id=>?BACKEND_SPAN}) of
-%%        {ok, SrvId, #actor_id{uid=UID, pid=Pid}=ActorId2, _Meta} ->
-%%            span_update_srv_id(SrvId),
-%%            #actor_id{
-%%                namespace = Namespace,
-%%                group = Group,
-%%                resource = Res,
-%%                name = Name,
-%%                uid = UID,
-%%                pid = Pid
-%%            } = ActorId2,
-%%            PidBin = case is_pid(Pid) of
-%%                true ->
-%%                    list_to_binary(pid_to_list(Pid));
-%%                false ->
-%%                    <<>>
-%%            end,
-%%            nkserver_ot:tags(?BACKEND_SPAN, #{
-%%                <<"actor.namespace">> => Namespace,
-%%                <<"actor.group">> => Group,
-%%                <<"actor.resource">> => Res,
-%%                <<"actor.name">> => Name,
-%%                <<"actor.uid">> => UID,
-%%                <<"actor.pid">> => PidBin,
-%%                <<"actor.opts.activate">> => true
-%%            }),
-%%            case maps:get(cascade, Opts, false) of
-%%                false when is_pid(Pid) ->
-%%                    span_log(<<"cascade: false (active)">>),
-%%                    span_log(<<"calling actor_delete">>),
-%%                    lager:error("NKLOG DELETE3"),
-%%                    case nkactor:sync_op(ActorId2, delete, infinity) of
-%%                        ok ->
-%%                            % The object is loaded, and it will perform the delete
-%%                            % itself, including sending the event (a full event)
-%%                            % It will stop, and when the backend calls raw_stop/2
-%%                            % the actor would not be activated, unless it is
-%%                            % reactivated in the middle, and would stop without saving
-%%                            span_log(<<"successful">>),
-%%                            span_finish(),
-%%                            {ok, [ActorId2], #{}};
-%%                        {error, Error} ->
-%%                            span_log(<<"error deleting active actor: ~p">>, [Error]),
-%%                            span_error(Error),
-%%                            span_finish(),
-%%                            {error, Error}
-%%                    end;
-%%                Cascade ->
-%%                    span_log(<<"cascade: ~p">>, [Cascade]),
-%%                    % The actor is not activated or we want cascade deletion
-%%                    Opts2 = #{cascade => Cascade},
-%%                    % Implementation must call nkactor_srv:raw_stop/1
-%%                    span_log(<<"calling actor_db_delete">>),
-%%                    case ?CALL_SRV(SrvId, actor_db_delete, [SrvId, UID, Opts2]) of
-%%                        {ok, DeleteMeta} ->
-%%                            % In this case, we must send the deleted events
-%%                            FakeActor = make_fake_actor(ActorId),
-%%                            nkactor_lib:send_external_event(SrvId, deleted, FakeActor),
-%%                            span_log(<<"successful">>),
-%%                            span_finish(),
-%%                            {ok, ActorId, DeleteMeta};
-%%                        {error, Error} ->
-%%                            span_log(<<"error deleting inactive actor: ~p">>, [Error]),
-%%                            span_error(Error),
-%%                            span_finish(),
-%%                            {error, Error}
-%%                    end
-%%            end;
-%%        {error, Error} ->
-%%            span_delete(),
-%%            {error, Error}
-%%    end.
-%%
-%%
-%%%% @doc
-%%%% Deletes a number of UIDs and send events
-%%%% Loaded objects wil be unloaded
-%%delete_multi(SrvId, UIDs, Opts) ->
-%%    % Implementation must call nkactor_srv:raw_stop/1
-%%    span_create(delete_multi, undefined, Opts),
-%%    span_log(<<"uids: ~p">>, [UIDs]),
-%%    span_log(<<"calling actor_db_delete">>),
-%%    case ?CALL_SRV(SrvId, actor_db_delete, [SrvId, UIDs, #{}]) of
-%%        {ok, ActorIds, DeleteMeta} ->
-%%            lists:foreach(
-%%                fun(AId) ->
-%%                    FakeActor = make_fake_actor(AId),
-%%                    nkactor_lib:send_external_event(SrvId, deleted, FakeActor)
-%%                end,
-%%                ActorIds),
-%%            span_log(<<"success">>),
-%%            span_finish(),
-%%            {ok, ActorIds, DeleteMeta};
-%%        {error, Error} ->
-%%            span_log(<<"error deleting multi actor: ~p">>, [Error]),
-%%            span_error(Error),
-%%            span_finish(),
-%%            {error, Error}
-%%    end.
 
 
 %% @doc
@@ -556,7 +459,7 @@ search(SrvId, SearchType, Opts) ->
         trace("calling actor_db_search (~p) (~p)", [SearchType, Opts]),
         case ?CALL_SRV(SrvId, actor_db_search, [SrvId, SearchType, Opts]) of
             {ok, Actors, Meta} ->
-                trace("search success: ~p", [Meta]),
+                trace("search success"),
                 case parse_actors(SrvId, Actors, Opts) of
                     {ok, Actors2} ->
                         {ok, Actors2, Meta};
@@ -569,8 +472,8 @@ search(SrvId, SearchType, Opts) ->
                 {error, Error}
         end
     end,
-    TraceOpts = #{metadata=>#{group=>actor_backend, resource=>search}},
-    nkserver_trace:new(SrvId, "ActorBackend::search", Fun, TraceOpts).
+    SpanOpts = #{metadata=>#{app=>SrvId, group=>actor_backend, resource=>search}},
+    nkserver_trace:new(SrvId, "ActorBackend::search", Fun, SpanOpts).
 
 
 %% @doc
@@ -579,11 +482,10 @@ search(SrvId, SearchType, Opts) ->
 
 aggregation(SrvId, AggType, Opts) ->
     Fun = fun() ->
-        trace("agg type: ~p (~p)", [AggType, Opts]),
-        trace("calling actor_db_aggregate"),
+        trace("calling actor_db_aggregate (~p) (~p)", [AggType, Opts]),
         case ?CALL_SRV(SrvId, actor_db_aggregate, [SrvId, AggType, Opts]) of
             {ok, Result, Meta} ->
-                trace("success: ~p", [Meta]),
+                trace("aggregation success"),
                 {ok, Result, Meta};
             {error, Error} ->
                 trace("error in agg: ~p", [Error]),
@@ -591,7 +493,8 @@ aggregation(SrvId, AggType, Opts) ->
                 {error, Error}
         end
     end,
-    nkserver_trace:new(SrvId, "ActorBackend::aggregate", Fun).
+    SpanOpts = #{metadata=>#{app=>SrvId, group=>actor_backend, resource=>aggregate}},
+    nkserver_trace:new(SrvId, "ActorBackend::aggregate", Fun, SpanOpts).
 
 
 %% @doc
@@ -612,7 +515,8 @@ truncate(SrvId, Opts) ->
                 {error, Error}
         end
     end,
-    nkserver_trace:new(SrvId, "ActorBackend::truncate", Fun).
+    SpanOpts = #{metadata=>#{app=>SrvId, group=>actor_backend, resource=>truncate}},
+    nkserver_trace:new(SrvId, "ActorBackend::truncate", Fun, SpanOpts).
 
 
 %% ===================================================================
@@ -714,7 +618,9 @@ search_activate_actors(SrvId, Date, PageSize) ->
     Fun = fun() ->
         search_activate_actors(SrvId, #{last_time=>Date, size=>PageSize}, 100, [])
     end,
-    nkserver_trace:new(SrvId, "Actor::auto-activate", Fun).
+    Opts = #{metadata=>#{app=>SrvId, group=>actor_system, resource=>auto_activate}},
+    nkserver_trace:new(SrvId, "ActorBackend::auto_activate", Fun, Opts).
+
 
 
 %% @private
@@ -758,8 +664,10 @@ parse_actors(SrvId, [#{data:=Data, metadata:=_Meta}=Actor|Rest], Req, Acc)
 parse_actors(SrvId, [Actor|Rest], Req, Acc) ->
     parse_actors(SrvId, Rest, Req, [Actor|Acc]).
 
-%% @private
-pre_create(Actor, Opts) ->
+
+
+
+pre_parse(Actor) ->
     Syntax = #{'__mandatory' => [group, resource, namespace]},
     case nkactor_syntax:parse_actor(Actor, Syntax) of
         {ok, Actor2} ->
@@ -767,44 +675,49 @@ pre_create(Actor, Opts) ->
             #{namespace:=Namespace} = Actor2,
             case nkactor_namespace:find_service(Namespace) of
                 {ok, SrvId} ->
-                    trace("actor namespace found: ~s", [SrvId]),
-                    case nkactor_lib:add_creation_fields(SrvId, Actor2) of
-                        {ok, Actor3} ->
-                            Actor4 = case Opts of
-                                #{forced_uid:=UID} ->
-                                    nomatch = binary:match(UID, <<".">>),
-                                    <<First, _/binary>> = UID,
-                                    true = (First /= $/),
-                                    Actor3#{uid := UID};
-                                _ ->
-                                    Actor3
-                            end,
-                            Req1 = maps:get(request, Opts, #{}),
-                            Req2 = Req1#{srv => SrvId},
-                            case nkactor_actor:parse(SrvId, create, Actor4, Req2) of
-                                {ok, Actor5} ->
-                                    case nkactor_lib:check_actor_links(Actor5) of
-                                        {ok, Actor6} ->
-                                            trace("actor parsed"),
-                                            {ok, SrvId, Actor6};
-                                        {error, Error} ->
-                                            log(notice, "error checking links: ~p", [Error]),
-                                            {error, Error}
-                                    end;
-                                {error, Error} ->
-                                    log(notice, "error parsing specific actor: ~p", [Error]),
-                                    {error, Error}
-                            end;
-                        {error, Error} ->
-                            trace("error creating initial data: ~p", [Error]),
-                            {error, Error}
-                    end;
+                    {ok, SrvId, Actor2};
                 {error, Error} ->
-                    trace("error getting namespace: ~p", [Error]),
+                    trace("error getting service for ~s: ~p", [Namespace, Error]),
                     {error, Error}
             end;
         {error, Error} ->
             trace("error parsing generic actor: ~p", [Error]),
+            {error, Error}
+    end.
+
+
+%% @private
+pre_create(SrvId, Actor, Opts) ->
+    case nkactor_lib:add_creation_fields(SrvId, Actor) of
+        {ok, Actor2} ->
+            Actor3 = case Opts of
+                #{forced_uid:=UID} ->
+                    nomatch = binary:match(UID, <<".">>),
+                    <<First, _/binary>> = UID,
+                    true = (First /= $/),
+                    Actor2#{uid := UID};
+                _ ->
+                    Actor2
+            end,
+            Req1 = maps:get(request, Opts, #{}),
+            Req2 = Req1#{srv => SrvId},
+            case nkactor_actor:parse(SrvId, create, Actor3, Req2) of
+                {ok, Actor4} ->
+                    trace("pre_create check links"),
+                    case nkactor_lib:check_actor_links(Actor4) of
+                        {ok, Actor5} ->
+                            trace("actor pre_created"),
+                            {ok, Actor5};
+                        {error, Error} ->
+                            log(notice, "error checking links: ~p", [Error]),
+                            {error, Error}
+                    end;
+                {error, Error} ->
+                    log(notice, "error parsing specific actor: ~p", [Error]),
+                    {error, Error}
+            end;
+        {error, Error} ->
+            trace("error creating initial data: ~p", [Error]),
             {error, Error}
     end.
 

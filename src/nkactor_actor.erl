@@ -431,7 +431,7 @@ request(SrvId, ActorId, Req) ->
             trace("no specific action"),
             continue;
         Other ->
-            trace("specific action return"),
+            trace("specific action performed"),
             Other
     end.
 

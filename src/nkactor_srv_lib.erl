@@ -470,7 +470,7 @@ save(Reason, SaveOpts, #actor_st{actor=Actor, is_dirty = true} = State) ->
         end
     end,
     SpanOpts = maps:with([parent], SaveOpts),
-    span_start(<<"Actor::Save">>, Fun, SpanOpts, State);
+    span_start(<<"ActorSrv::Save">>, Fun, SpanOpts, State);
 
 save(_Reason, _SaveOpts, State) ->
     {ok, State}.

@@ -23,7 +23,7 @@
 
 -export([request/1, pre_request/1, do_request/1, post_request/2]).
 -export([parse_params/2]).
--import(nkserver_trace, [trace/1, trace/2, event/1, log/2, log/3]).
+-import(nkserver_trace, [trace/1, trace/2, event/1, event/2, log/2, log/3]).
 -export_type([request/0, response/0, reply/0]).
 
 -include("nkactor_request.hrl").
@@ -119,57 +119,70 @@
 request(Req) ->
     case pre_request(Req) of
         {ok, Req2} ->
-            Reply = do_request(Req2),
-            post_request(Reply, Req2);
+            #{
+                group := Group,
+                resource := Res,
+                namespace := Ns,
+                verb := Verb,
+                subresource := SubRes,
+                srv := SrvId
+            } = Req2,
+            SpanName = <<
+                "ActorRequest::",
+                (nklib_util:to_upper(Verb))/binary, " ",
+                "(", SubRes/binary, ")"
+            >>,
+            Fun = fun() ->
+                Tags = #{
+                    <<"req.verb">> => Verb,
+                    <<"req.group">> => Group,
+                    <<"req.resource">> => Res,
+                    <<"req.namespace">> => Ns,
+                    <<"req.name">> => maps:get(name, Req, <<>>),
+                    <<"req.srv">> => SrvId,
+                    <<"req.subresource">> => SubRes
+                },
+                nkserver_trace:tags(Tags),
+                set_debug(SrvId),
+                case authorize(SrvId, Req2) of
+                    {true, Req3} ->
+                        Reply = do_request(Req3),
+                        post_request(Reply, Req3);
+                    false ->
+                        {error, unauthorized, Req2}
+                end
+            end,
+            SpanOpts = #{
+                metadata => #{
+                    app => SrvId,
+                    group => actor_request,
+                    resource => Verb,
+                    namespace => Ns,
+                    verb => Verb,
+                    subresource => SubRes
+                }
+            },
+            nkserver_trace:new(SrvId, SpanName, Fun, SpanOpts);
         {error, Error, Req2} ->
             {error, Error, Req2}
     end.
 
 
-%% @doc
+%% @private
 pre_request(Req) ->
-    trace("Starting parsing request"),
+    trace("parsing request"),
     case nkactor_syntax:parse_request(Req) of
-        {ok, #{group:=Group, resource:=Res, namespace:=Namespace}=Req2} ->
-            trace("Request parsed"),
-            case find_srv_id(Req2) of
+        {ok, #{namespace:=Ns}=Req2} ->
+            case nkactor_namespace:find_service(Ns) of
                 {ok, SrvId} ->
-                    Fun = fun() ->
-                        trace("Request service is ~s", [SrvId]),
-                        Verb = maps:get(verb, Req2, get),
-                        SubRes = maps:get(subresource, Req2, <<>>),
-                        Req3 = Req2#{
-                            srv => SrvId,
-                            verb => Verb,
-                            subresource => SubRes,
-                            start_time => nklib_date:epoch(usecs)
-                        },
-                        SpanName = <<
-                            "Actor::Request ",
-                            " ", (nklib_util:to_upper(Verb))/binary, " ",
-                            "(", SubRes/binary, ")"
-                        >>,
-                        nkserver_trace:update([{srv, SrvId}, {name, SpanName}]),
-                        Tags = #{
-                            <<"req.verb">> => Verb,
-                            <<"req.group">> => Group,
-                            <<"req.resource">> => Res,
-                            <<"req.namespace">> => Namespace,
-                            <<"req.name">> => maps:get(name, Req2, <<>>),
-                            <<"req.srv">> => SrvId,
-                            <<"req.subresource">> => SubRes
-                        },
-                        nkserver_trace:tags(Tags),
-                        % Add uid later
-                        set_debug(SrvId),
-                        case authorize(SrvId, Req3) of
-                            {true, Req5} ->
-                                {ok, Req5};
-                            false ->
-                                {error, unauthorized, Req3}
-                        end
-                    end,
-                    nkserver_trace:new(SrvId, "Actor::Request", Fun);
+                    trace("request service is ~s (~s)", [SrvId, Ns]),
+                    Req3 = Req2#{
+                        srv => SrvId,
+                        verb => maps:get(verb, Req2, get),
+                        subresource => maps:get(subresource, Req2, <<>>),
+                        start_time => nklib_date:epoch(usecs)
+                    },
+                    {ok, Req3};
                 {error, Error} ->
                     {error, Error, Req2}
             end;
@@ -178,25 +191,14 @@ pre_request(Req) ->
     end.
 
 
-%% @private
-find_srv_id(#{namespace:=Namespace}) ->
-    nkactor_namespace:find_service(Namespace);
-
-find_srv_id(#{srv:=SrvId}) ->
-    {ok, SrvId};
-
-find_srv_id(_) ->
-    {error, {field_missing, <<"namespace">>}}.
-
-
 %% @doc
 post_request(Reply, Req) ->
     case reply(Reply, Req) of
         {raw, {CT, Bin}, Req2} ->
-            trace("replied 'raw': ~s", [CT]),
+            trace("request reply 'raw': ~s", [CT]),
             {raw, {CT, Bin}, Req2};
         {Status, Data, Req2} ->
-            trace("replied '~s': ~p", [Status, Data]),
+            trace("request reply '~s'", [Status]),
             {Status, Data, Req2}
     end.
 
@@ -384,7 +386,7 @@ create(ActorId, Config, Req) ->
                     case check_actor(Actor1, ActorId, Req) of
                         {ok, Actor2} ->
                             Opts = set_activate_opts(Config, Params),
-                            trace("processing standard create ~p, (~p)", [Actor2, Opts]),
+                            event(actor_create, #{opts=>Opts}),
                             % request is included in case it could be used for specific parsing
                             % when calling nkactor_actor:parse()
                             CreateOpts = Opts#{get_actor=>true, request=>Req},

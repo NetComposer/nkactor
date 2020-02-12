@@ -420,7 +420,14 @@ init({Op, Actor, StartConfig, Caller, Ref, ParentSpan}) ->
                 undefined -> #{};
                 _ -> #{parent=>ParentSpan}
             end,
-            span_start("ActorSrv::load", Fun, SpanOpts, State1)
+            case span_start("ActorSrv::load", Fun, SpanOpts, State1) of
+                {ok, FinalState} ->
+                    % Opportunity to insert a long-running span
+                    span_start("ActorSrv::run", infinity, SpanOpts, FinalState),
+                    {ok, FinalState};
+                Other ->
+                    Other
+            end
     end.
 
 

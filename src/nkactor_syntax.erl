@@ -141,10 +141,10 @@ parse_request(Req) ->
             {error, {field_unknown, Field}};
         {ok, #{uid:=UID}=Req2, _} ->
             OptSrvId = maps:get(srv, Req2, undefined),
-            ?REQ_DEBUG("reading UID: ~s", [UID]),
+            nkserver_trace:trace("finding UID '~s", [UID]),
             case nkactor:find({OptSrvId, UID}) of
                 {ok, ActorId} ->
-                    ?REQ_DEBUG("UID resolved", []),
+                    nkserver_trace:trace("UID found"),
                     #actor_id{
                         group = Group,
                         resource = Res,
