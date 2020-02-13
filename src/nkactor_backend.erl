@@ -247,7 +247,7 @@ create(Actor, #{activate:=false}=Opts) ->
                 end
             end,
             SpanOpts = #{metadata=>#{app=>SrvId, group=>actor_backend, resource=>create}},
-            nkserver_trace:new(last, "ActorBackend::create", Fun, SpanOpts);
+            nkserver_trace:new_span(last, "ActorBackend::create", Fun, SpanOpts);
         {error, Error} ->
             {error, Error}
     end;
@@ -315,7 +315,7 @@ create(Actor, Opts) ->
                 end
             end,
             SpanOpts = #{metadata=>#{app=>SrvId, group=>actor_backend, resource=>create}},
-            nkserver_trace:new(last, "ActorBackend::create", Fun, SpanOpts);
+            nkserver_trace:new_span(last, "ActorBackend::create", Fun, SpanOpts);
         {error, Error} ->
             {error, Error}
     end.
@@ -352,7 +352,7 @@ update(Id, Actor, Opts) ->
                 trace("calling update actor"),
                 case pre_update(SrvId, ActorId, Actor, Opts) of
                     {ok, Actor2} ->
-                        Opts2 = Opts#{parent => nkserver_trace:parent()},
+                        Opts2 = Opts#{parent => nkserver_trace:span_parent()},
                         case nkactor:sync_op(ActorId, {update, Actor2, Opts2}, infinity) of
                             {ok, Actor3} ->
                                 {ok, SrvId, Actor3, #{}};
@@ -368,7 +368,7 @@ update(Id, Actor, Opts) ->
                 end
             end,
             SpanOpts = #{metadata=>#{app=>SrvId, group=>actor_backend, resource=>update}},
-            nkserver_trace:new(last, "ActorBackend::update", Fun, SpanOpts);
+            nkserver_trace:new_span(last, "ActorBackend::update", Fun, SpanOpts);
         {error, Error} ->
             {error, Error}
     end.
@@ -439,7 +439,7 @@ delete(Id, Opts) ->
                 end
             end,
             SpanOpts = #{metadata=>#{app=>SrvId, group=>actor_backend, resource=>delete}},
-            nkserver_trace:new(last, "ActorBackend::delete", Fun, SpanOpts);
+            nkserver_trace:new_span(last, "ActorBackend::delete", Fun, SpanOpts);
         {error, Error} ->
             {error, Error}
     end.
@@ -473,7 +473,7 @@ search(SrvId, SearchType, Opts) ->
         end
     end,
     SpanOpts = #{metadata=>#{app=>SrvId, group=>actor_backend, resource=>search}},
-    nkserver_trace:new(SrvId, "ActorBackend::search", Fun, SpanOpts).
+    nkserver_trace:new_span(SrvId, "ActorBackend::search", Fun, SpanOpts).
 
 
 %% @doc
@@ -494,7 +494,7 @@ aggregation(SrvId, AggType, Opts) ->
         end
     end,
     SpanOpts = #{metadata=>#{app=>SrvId, group=>actor_backend, resource=>aggregate}},
-    nkserver_trace:new(SrvId, "ActorBackend::aggregate", Fun, SpanOpts).
+    nkserver_trace:new_span(SrvId, "ActorBackend::aggregate", Fun, SpanOpts).
 
 
 %% @doc
@@ -516,7 +516,7 @@ truncate(SrvId, Opts) ->
         end
     end,
     SpanOpts = #{metadata=>#{app=>SrvId, group=>actor_backend, resource=>truncate}},
-    nkserver_trace:new(SrvId, "ActorBackend::truncate", Fun, SpanOpts).
+    nkserver_trace:new_span(SrvId, "ActorBackend::truncate", Fun, SpanOpts).
 
 
 %% ===================================================================
@@ -619,7 +619,7 @@ search_activate_actors(SrvId, Date, PageSize) ->
         search_activate_actors(SrvId, #{last_time=>Date, size=>PageSize}, 100, [])
     end,
     Opts = #{metadata=>#{app=>SrvId, group=>actor_system, resource=>auto_activate}},
-    nkserver_trace:new(SrvId, "ActorBackend::auto_activate", Fun, Opts).
+    nkserver_trace:new_span(SrvId, "ActorBackend::auto_activate", Fun, Opts).
 
 
 

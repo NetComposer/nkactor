@@ -22,7 +22,7 @@
 -module(nkactor_srv_lib).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([span_start/4, event/3]).
+-export([new_span/4, event/3]).
 -export([event_link/3, update/3, delete/2, set_auto_activate/2, set_activate_time/2,
          set_expire_time/3, get_links/1, add_link/3, remove_link/2, save/2,
          remove_all_links/1, add_actor_event/2, add_actor_event/3, add_actor_event/4, set_updated/1,
@@ -40,9 +40,9 @@
 %% In-process API
 %% ===================================================================
 
-span_start(Name, Fun, Opts, #actor_st{srv=SrvId}=State) ->
+new_span(Name, Fun, Opts, #actor_st{srv=SrvId}=State) ->
     Name2 = nklib_util:to_binary(Name),
-    nkserver_trace:new(SrvId, {nkactor, Name2, State}, Fun, Opts).
+    nkserver_trace:new_span(SrvId, {nkactor, Name2, State}, Fun, Opts).
 
 
 %% @doc
@@ -332,7 +332,7 @@ update(UpdActor, Opts, #actor_st{actor_id=ActorId, actor=Actor}=State) ->
                     end
                 end,
                 SpanOpts = maps:with([parent], Opts),
-                span_start("ActorSrv::update", Fun, SpanOpts, State);
+                new_span("ActorSrv::update", Fun, SpanOpts, State);
             false ->
                 {ok, State}
         end
@@ -438,7 +438,7 @@ save(Reason, SaveOpts, #actor_st{actor=Actor, is_dirty = true} = State) ->
                                         nkserver_trace:error(Error)
                                 end
                             end,
-                            span_start("ActorSrv::asyn_save", Fun2, #{use_father=>true}, State3)
+                            new_span("ActorSrv::asyn_save", Fun2, #{use_father=>true}, State3)
                         end,
                         Pid = spawn_link(Spawn),
                         trace("launched asynchronous save: ~p", [Pid]),
@@ -470,7 +470,7 @@ save(Reason, SaveOpts, #actor_st{actor=Actor, is_dirty = true} = State) ->
         end
     end,
     SpanOpts = maps:with([parent], SaveOpts),
-    span_start(<<"ActorSrv::Save">>, Fun, SpanOpts, State);
+    new_span(<<"ActorSrv::Save">>, Fun, SpanOpts, State);
 
 save(_Reason, _SaveOpts, State) ->
     {ok, State}.

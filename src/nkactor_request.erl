@@ -162,7 +162,7 @@ request(Req) ->
                     subresource => SubRes
                 }
             },
-            nkserver_trace:new(SrvId, SpanName, Fun, SpanOpts);
+            nkserver_trace:new_span(SrvId, SpanName, Fun, SpanOpts);
         {error, Error, Req2} ->
             {error, Error, Req2}
     end.

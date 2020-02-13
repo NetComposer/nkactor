@@ -63,7 +63,7 @@
 -export([create/2, start/2, sync_op/2, sync_op/3, async_op/2, live_async_op/2, delayed_async_op/3, hibernate/0]).
 -export([init/1, terminate/2, code_change/3, handle_call/3, handle_cast/2, handle_info/2]).
 -export([count/0, get_state/1, get_timers/1, raw_stop/2]).
--import(nkactor_srv_lib, [event/3, span_start/4]).
+-import(nkactor_srv_lib, [event/3, new_span/4]).
 -import(nkserver_trace, [trace/1, trace/2, log/3]).
 
 -export_type([event/0, save_reason/0]).
@@ -195,7 +195,7 @@ start(Actor, Config) ->
 %% @private
 do_start(Op, Actor, StartConfig) ->
     Ref = make_ref(),
-    ParentSpan = nkserver_trace:parent(),
+    ParentSpan = nkserver_trace:span_parent(),
     Opts = {Op, Actor, StartConfig, self(), Ref, ParentSpan},
     trace("starting actor server"),
     case gen_server:start(?MODULE, Opts, []) of
@@ -416,14 +416,10 @@ init({Op, Actor, StartConfig, Caller, Ref, ParentSpan}) ->
                         do_init_stop(actor_expired, Caller, Ref, State3)
                 end
             end,
-            SpanOpts = case ParentSpan of
-                undefined -> #{};
-                _ -> #{parent=>ParentSpan}
-            end,
-            case span_start("ActorSrv::load", Fun, SpanOpts, State1) of
+            case new_span("ActorSrv::load", Fun, #{parent=>ParentSpan}, State1) of
                 {ok, FinalState} ->
                     % Opportunity to insert a long-running span
-                    span_start("ActorSrv::run", infinity, SpanOpts, FinalState),
+                    new_span("ActorSrv::run", infinity, #{}, FinalState),
                     {ok, FinalState};
                 Other ->
                     Other
