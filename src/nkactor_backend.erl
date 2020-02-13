@@ -212,7 +212,7 @@ create(Actor, #{activate:=false}=Opts) ->
                             resource := Res,
                             name := Name,
                             uid := UID
-                        } = Actor2,
+                        } = Actor3,
                         nkserver_trace:tags(#{
                             <<"actor.namespace">> => Namespace,
                             <<"actor.group">> => Group,
