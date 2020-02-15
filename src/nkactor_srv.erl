@@ -416,10 +416,10 @@ init({Op, Actor, StartConfig, Caller, Ref, ParentSpan}) ->
                         do_init_stop(actor_expired, Caller, Ref, State3)
                 end
             end,
-            case new_span("ActorSrv::load", Fun, #{parent=>ParentSpan}, State1) of
+            case new_span({nkactor_server, load}, Fun, #{parent=>ParentSpan}, State1) of
                 {ok, FinalState} ->
                     % Opportunity to insert a long-running span
-                    new_span("ActorSrv::run", infinity, #{}, FinalState),
+                    new_span({nkactor_server, run}, infinity, #{}, FinalState),
                     {ok, FinalState};
                 Other ->
                     Other

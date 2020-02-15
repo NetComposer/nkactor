@@ -127,11 +127,6 @@ request(Req) ->
                 subresource := SubRes,
                 srv := SrvId
             } = Req2,
-            SpanName = <<
-                "ActorRequest::",
-                (nklib_util:to_upper(Verb))/binary, " ",
-                "(", SubRes/binary, ")"
-            >>,
             Fun = fun() ->
                 Tags = #{
                     <<"req.verb">> => Verb,
@@ -162,7 +157,7 @@ request(Req) ->
                     subresource => SubRes
                 }
             },
-            nkserver_trace:new_span(SrvId, SpanName, Fun, SpanOpts);
+            nkserver_trace:new_span(SrvId, nkactor_request, Fun, SpanOpts);
         {error, Error, Req2} ->
             {error, Error, Req2}
     end.

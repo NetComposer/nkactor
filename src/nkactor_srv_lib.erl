@@ -40,9 +40,10 @@
 %% In-process API
 %% ===================================================================
 
-new_span(Name, Fun, Opts, #actor_st{srv=SrvId}=State) ->
-    Name2 = nklib_util:to_binary(Name),
-    nkserver_trace:new_span(SrvId, {nkactor, Name2, State}, Fun, Opts).
+
+new_span(SpanId, Fun, Opts, #actor_st{srv=SrvId, actor=Actor}) ->
+    nkserver_trace:new_span(SrvId, SpanId, Fun, Opts#{actor=>Actor}).
+
 
 
 %% @doc
@@ -332,7 +333,7 @@ update(UpdActor, Opts, #actor_st{actor_id=ActorId, actor=Actor}=State) ->
                     end
                 end,
                 SpanOpts = maps:with([parent], Opts),
-                new_span("ActorSrv::update", Fun, SpanOpts, State);
+                new_span({nkactor_server, update}, Fun, SpanOpts, State);
             false ->
                 {ok, State}
         end
@@ -438,7 +439,7 @@ save(Reason, SaveOpts, #actor_st{actor=Actor, is_dirty = true} = State) ->
                                         nkserver_trace:error(Error)
                                 end
                             end,
-                            new_span("ActorSrv::asyn_save", Fun2, #{use_father=>true}, State3)
+                            new_span({nkactor_server, async_save}, Fun2, #{}, State3)
                         end,
                         Pid = spawn_link(Spawn),
                         trace("launched asynchronous save: ~p", [Pid]),
@@ -470,7 +471,7 @@ save(Reason, SaveOpts, #actor_st{actor=Actor, is_dirty = true} = State) ->
         end
     end,
     SpanOpts = maps:with([parent], SaveOpts),
-    new_span(<<"ActorSrv::Save">>, Fun, SpanOpts, State);
+    new_span({nkactor_server, save}, Fun, SpanOpts, State);
 
 save(_Reason, _SaveOpts, State) ->
     {ok, State}.
