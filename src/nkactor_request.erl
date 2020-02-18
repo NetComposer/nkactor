@@ -128,16 +128,6 @@ request(Req) ->
                 srv := SrvId
             } = Req2,
             Fun = fun() ->
-                Tags = #{
-                    <<"req.verb">> => Verb,
-                    <<"req.group">> => Group,
-                    <<"req.resource">> => Res,
-                    <<"req.namespace">> => Ns,
-                    <<"req.name">> => maps:get(name, Req, <<>>),
-                    <<"req.srv">> => SrvId,
-                    <<"req.subresource">> => SubRes
-                },
-                nkserver_trace:tags(Tags),
                 set_debug(SrvId),
                 case authorize(SrvId, Req2) of
                     {true, Req3} ->
@@ -148,14 +138,12 @@ request(Req) ->
                 end
             end,
             SpanOpts = #{
-                metadata => #{
-                    app => SrvId,
-                    group => actor_request,
-                    resource => Verb,
-                    namespace => Ns,
-                    verb => Verb,
-                    subresource => SubRes
-                }
+                group => Group,
+                resource => Res,
+                namespace => Ns,
+                name => maps:get(name, Req2, <<>>),
+                verb => Verb,
+                subresource => SubRes
             },
             nkserver_trace:new_span(SrvId, nkactor_request, Fun, SpanOpts);
         {error, Error, Req2} ->
@@ -354,7 +342,7 @@ list(ActorId, Config, Req) ->
         }
     },
     %io:format("NKLOG SPEC ~s\n", [nklib_json:encode_pretty(Opts2)]),
-    trace("processing standard read: ~p, ~p", [Base, Opts2]),
+    trace("processing standard list: ~p, ~p", [Base, Opts2]),
     case nkactor:search_actors(SrvId, Base, Opts2) of
         {ok, ActorList, Meta} ->
             {ok, Meta#{items=>ActorList}};

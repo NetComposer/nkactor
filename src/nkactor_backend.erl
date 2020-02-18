@@ -81,7 +81,6 @@
 find({OptSrvId, Id}, _Opts) when is_atom(OptSrvId) ->
     ActorId = nkactor_lib:id_to_actor_id(Id),
     % Traces will be sent on the current span (lager:debug will be used if none)
-    trace("calling find actor: ~p (~s)", [ActorId, OptSrvId]),
     case nkactor_namespace:find_actor(ActorId) of
         {true, SrvId, #actor_id{pid=Pid}=ActorId2} when is_pid(Pid) ->
             % It is registered or cached
@@ -136,7 +135,6 @@ do_find([SrvId|Rest], ActorId) ->
 activate(Id, Opts) ->
     case do_activate(Id, Opts, 3) of
         {ok, SrvId, ActorId2, Meta2} ->
-            trace("actor is activated"),
             {ok, SrvId, ActorId2, Meta2};
         {error, actor_not_found} ->
             {error, actor_not_found};

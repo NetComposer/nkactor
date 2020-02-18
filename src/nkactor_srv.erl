@@ -871,8 +871,8 @@ do_post_init(Op, State) ->
                     ok
             end,
             nklib_counters:async([?MODULE]),
-            State6 = event(actor_init_completed, #{}, State5),
-            {ok, do_refresh_ttl(State6)};
+            trace("actor init completed"),
+            {ok, do_refresh_ttl(State5)};
         {{error, Error}, _State3} ->
             log(warning, "actor save error: ~p", [Error]),
             {error, Error}
