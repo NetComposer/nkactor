@@ -22,7 +22,7 @@
 -module(nkactor_srv_lib).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([new_span/4, event/3]).
+-export([new_span/4, new_actor_span/4, event/3]).
 -export([event_link/3, update/3, delete/2, set_auto_activate/2, set_activate_time/2,
          set_expire_time/3, get_links/1, add_link/3, remove_link/2, save/2,
          remove_all_links/1, add_actor_event/2, add_actor_event/3, add_actor_event/4, set_updated/1,
@@ -45,12 +45,15 @@ new_span(SpanId, Fun, Opts, #actor_st{srv=SrvId, actor=Actor}) ->
     nkserver_trace:new_span(SrvId, SpanId, Fun, Opts#{actor=>Actor}).
 
 
+new_actor_span(Type, Fun, Opts, #actor_st{actor_id=ActorId}=ActorSt) ->
+    #actor_id{group=Group, resource=Res} = ActorId,
+    new_span({nkactor_actor, Group, Res, Type}, Fun, Opts, ActorSt).
+
 
 %% @doc
 event(EventType, Meta, State) ->
     #actor_st{actor_id = #actor_id{group=Group, resource=Res}} = State,
     nkserver_trace:event(EventType, Meta),
-    ?ACTOR_DEBUG("sending 'event': ~p", [EventType], State),
     State2 = event_link(EventType, Meta, State),
     {ok, State3} = handle(actor_srv_event, [Group, Res, EventType, Meta], State2),
     State3.
