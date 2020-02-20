@@ -615,13 +615,13 @@ authorize(SrvId, Req) ->
     trace("calling authorize"),
     case ?CALL_SRV(SrvId, actor_req_authorize, [Req]) of
         true ->
-            event(actor_request_authorized),
+            event(arequest_authorized),
             {true, Req};
         {true, Req2} ->
-            event(actor_request_authorized),
+            event(request_authorized),
             {true, Req2};
         false ->
-            event(actor_request_not_authorized),
+            event(request_not_authorized),
             false
     end.
 
