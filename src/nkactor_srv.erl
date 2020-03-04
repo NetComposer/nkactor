@@ -419,7 +419,7 @@ init({Op, Actor, StartConfig, Caller, Ref, ParentSpan}) ->
             case new_span({nkactor_server, load}, Fun, #{parent=>ParentSpan}, State1) of
                 {ok, FinalState} ->
                     % Opportunity to insert a long-running span
-                    new_span({nkactor_server, run}, infinity, #{}, FinalState),
+                    %new_span({nkactor_server, run}, infinity, #{}, FinalState),
                     {ok, FinalState};
                 Other ->
                     Other
