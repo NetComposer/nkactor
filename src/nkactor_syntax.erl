@@ -144,7 +144,7 @@ parse_request(Req) ->
             nkserver_trace:trace("finding UID '~s", [UID]),
             case nkactor:find({OptSrvId, UID}) of
                 {ok, ActorId} ->
-                    nkserver_trace:trace("UID found"),
+                    nkserver_trace:log(debug, "UID found"),
                     #actor_id{
                         group = Group,
                         resource = Res,

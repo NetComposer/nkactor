@@ -153,12 +153,12 @@ request(Req) ->
 
 %% @private
 pre_request(Req) ->
-    trace("parsing request"),
+    log(debug, "parsing request"),
     case nkactor_syntax:parse_request(Req) of
         {ok, #{namespace:=Ns}=Req2} ->
             case nkactor_namespace:find_service(Ns) of
                 {ok, SrvId} ->
-                    trace("request service is ~s (~s)", [SrvId, Ns]),
+                    log(debug, "request service is ~s (~s)", [SrvId, Ns]),
                     Req3 = Req2#{
                         srv => SrvId,
                         verb => maps:get(verb, Req2, get),
@@ -178,10 +178,10 @@ pre_request(Req) ->
 post_request(Reply, Req) ->
     case reply(Reply, Req) of
         {raw, {CT, Bin}, Req2} ->
-            trace("request reply 'raw': ~s", [CT]),
+            log(info, "request reply 'raw': ~s", [CT]),
             {raw, {CT, Bin}, Req2};
         {Status, Data, Req2} ->
-            trace("request reply '~s'", [Status]),
+            log(info, "request reply '~s'", [Status]),
             {Status, Data, Req2}
     end.
 
@@ -242,23 +242,22 @@ do_request(Req) ->
         trace("calling specific processing"),
         case nkactor_actor:request(SrvId, ActorId, Req) of
             continue when SubRes == <<>> ->
-                trace("processing default"),
-                ?REQ_DEBUG("processing default", [], Req),
+                log(debug, "processing default"),
                 default_request(Verb, ActorId, Config, Req);
             continue ->
                 log(notice, "invalid subresource (~s:~s) ~w", [Verb, SubRes, ActorId]),
                 nkserver_trace:error(resource_invalid),
                 {error, resource_invalid};
             {continue, #{resource:=Res2}=Req3} when Res2 /= Res ->
-                trace("request updated. New resource: ~p", [Res2]),
+                log(debug, "request updated. New resource: ~p", [Res2]),
                 do_request(Req3);
             Other ->
-                trace("processed specific"),
+                log(debug, "processed specific"),
                 Other
         end
     catch
         throw:Throw ->
-            trace("request processing error: ~p", [Throw]),
+            log(notice, "request processing error: ~p", [Throw]),
             nkserver_trace:error(Throw),
             Throw
     end.
@@ -311,7 +310,7 @@ get(ActorId, Config, Req) ->
     case parse_params(Req, ParamsSyntax) of
         {ok, Params} ->
             Opts = set_activate_opts(Config, Params),
-            trace("processing standard read (~p)", [Opts]),
+            log(info, "processing standard read (~p)", [Opts]),
             % request is included in case it could be used for specific parsing
             % when calling nkactor_actor:parse()
             case nkactor:get_actor(ActorId, Opts#{request=>Req}) of
@@ -342,7 +341,7 @@ list(ActorId, Config, Req) ->
         }
     },
     %io:format("NKLOG SPEC ~s\n", [nklib_json:encode_pretty(Opts2)]),
-    trace("processing standard list: ~p, ~p", [Base, Opts2]),
+    log(info, "processing standard list: ~p, ~p", [Base, Opts2]),
     case nkactor:search_actors(SrvId, Base, Opts2) of
         {ok, ActorList, Meta} ->
             {ok, Meta#{items=>ActorList}};
@@ -415,7 +414,7 @@ update(ActorId, Config, Req) ->
                         {ok, Actor2} ->
                             Opts1 = set_activate_opts(Config, Params),
                             Opts2 = Opts1#{get_actor=>true},
-                            trace("processing standard update ~p, (~p)", [Actor2, Opts2]),
+                            log(info, "processing standard update ~p, (~p)", [Actor2, Opts2]),
                             case nkactor:update(ActorId, Actor2, Opts2#{request=>Req}) of
                                 {ok, Actor3} ->
                                     {ok, Actor3};
@@ -424,7 +423,7 @@ update(ActorId, Config, Req) ->
                                 {error, {field_missing, name}} ->
                                     default_request(create, ActorId, Config, Req);
                                 {error, UpdateError} ->
-                                    trace("error updating actor: ~p", [UpdateError]),
+                                    log(notice, "error updating actor: ~p", [UpdateError]),
                                     nkserver_trace:error(UpdateError),
                                     {error, UpdateError}
                             end;
@@ -452,7 +451,7 @@ delete(ActorId, _Config, Req) ->
     },
     case parse_params(Req, ParamsSyntax) of
         {ok, _Params} ->
-            trace("processing standard delete: ~p", [ActorId]),
+            log(info, "processing standard delete: ~p", [ActorId]),
             case nkactor:delete(ActorId, #{request=>Req}) of
                 ok ->
                     {status, actor_deleted};
@@ -479,7 +478,7 @@ delete_collection(ActorId, Config, Req) ->
             sort => [#{field=><<"metadata.update_time">>, order=>asc}]
         }
     },
-    trace("processing standard delete_multi: ~p ~p", [Base, Opts2]),
+    log(info, "processing standard delete_multi: ~p ~p", [Base, Opts2]),
     case nkactor:delete_multi(SrvId, Base, Opts2) of
         {ok, Meta} ->
             {ok, Meta};

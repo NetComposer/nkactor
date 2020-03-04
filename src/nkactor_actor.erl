@@ -374,16 +374,16 @@ parse(SrvId, Op, Actor, Req) ->
     Args = [parse, Group, Res, [Op, Actor, Req2]],
     case ?CALL_SRV(SrvId, nkactor_callback, Args) of
         continue ->
-            trace("default syntax"),
+            log(debug, "default syntax"),
             {ok, Actor};
         {ok, Actor2} ->
-            trace("actor is custom parsed"),
+            log(debug, "actor is custom parsed"),
             {ok, Actor2};
         {syntax, Vsn, Syntax} when is_map(Syntax) ->
-            trace("actor has custom syntax"),
+            log(debug, "actor has custom syntax"),
             nkactor_lib:parse_actor_data(Op, Actor, Vsn, Syntax);
         {syntax, Vsn, Syntax, Actor2} when is_map(Syntax) ->
-            trace("actor has custom syntax and actor"),
+            log(debug, "actor has custom syntax and actor"),
             nkactor_lib:parse_actor_data(Op, Actor2, Vsn, Syntax);
         {error, Error} ->
             log(notice, "error parsing actor: ~p", [Error]),
@@ -402,10 +402,10 @@ unparse(SrvId, Actor, Req) ->
     Args = [unparse, Group, Res, [Actor, Req2]],
     case ?CALL_SRV(SrvId, nkactor_callback, Args) of
         continue ->
-            trace("default syntax"),
+            log(debug, "default syntax"),
             {ok, Actor};
         {ok, Actor2} ->
-            trace("actor is custom parsed"),
+            log(debug, "actor is custom parsed"),
             {ok, Actor2};
         {error, Error} ->
             log(notice, "error parsing actor: ~p", [Error]),
@@ -428,10 +428,10 @@ request(SrvId, ActorId, Req) ->
     trace("calling actor request"),
     case ?CALL_SRV(SrvId, nkactor_callback, Args) of
         continue ->
-            trace("no specific action"),
+            log(debug, "no specific action"),
             continue;
         Other ->
-            trace("specific action performed"),
+            log(debug, "specific action performed"),
             Other
     end.
 

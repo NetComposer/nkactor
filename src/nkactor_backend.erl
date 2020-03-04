@@ -84,7 +84,7 @@ find({OptSrvId, Id}, _Opts) when is_atom(OptSrvId) ->
     case nkactor_namespace:find_actor(ActorId) of
         {true, SrvId, #actor_id{pid=Pid}=ActorId2} when is_pid(Pid) ->
             % It is registered or cached
-            trace("actor is registered or cached: ~p (~s)", [Pid, SrvId]),
+            log(info, "actor is registered or cached: ~p (~s)", [Pid, SrvId]),
             {ok, SrvId, ActorId2, #{}};
         {false, SrvId} ->
             do_find([SrvId], ActorId);
@@ -111,17 +111,17 @@ do_find([SrvId|Rest], ActorId) ->
             % it could be registered, now that we have full data
             case nkactor_namespace:find_actor(ActorId2) of
                 {true, _SrvId, #actor_id{pid = Pid} = ActorId3} when is_pid(Pid) ->
-                    trace("actor found in disk and memory: ~p", [ActorId3]),
+                    log(info, "actor found in disk and memory: ~p", [ActorId3]),
                     {ok, SrvId, ActorId3, Meta};
                 _ ->
-                    trace("actor found in disk: ~p", [ActorId2] ),
+                    log(info, "actor found in disk: ~p", [ActorId2] ),
                     {ok, SrvId, ActorId2, Meta}
             end;
         {error, actor_not_found} ->
             trace("actor not found in disk"),
             do_find(Rest, ActorId);
         {error, Error} ->
-            trace("error calling actor_db_find: ~p", [Error]),
+            log(notice, "error calling actor_db_find: ~p", [Error]),
             {error, Error}
     end.
 
@@ -289,7 +289,7 @@ create(Actor, Opts) ->
                                             {error, actor_not_found} ->
                                                 {error, actor_not_found};
                                             {error, Error} ->
-                                                trace("error getting actor: ~p", [Error]),
+                                                log(notice, "error getting actor: ~p", [Error]),
                                                 nkserver_trace:error(Error),
                                                 {error, Error}
                                         end;
@@ -297,7 +297,7 @@ create(Actor, Opts) ->
                                         {ok, SrvId, ActorId, #{}}
                                 end;
                             {error, Error} ->
-                                trace("error creating actor: ~p", [Error]),
+                                log(notice, "error creating actor: ~p", [Error]),
                                 nkserver_trace:error(Error),
                                 case Error of
                                     actor_already_activated ->
@@ -358,7 +358,7 @@ update(Id, Actor, Opts) ->
                                 {error, Error}
                         end;
                     {error, Error} ->
-                        trace("error updating actor: ~p", [Error]),
+                        log(notice, "error updating actor: ~p", [Error]),
                         nkserver_trace:error(Error),
                         {error, Error}
                 end
@@ -410,10 +410,10 @@ delete(Id, Opts) ->
                                 % It will stop, and when the backend calls raw_stop/2
                                 % the actor would not be activated, unless it is
                                 % reactivated in the middle, and would stop without saving
-                                trace("successful"),
+                                log(debug, "successful"),
                                 {ok, #{}};
                             {error, Error} ->
-                                trace("error deleting active actor: ~p", [Error]),
+                                log(notice, "error deleting active actor: ~p", [Error]),
                                 nkserver_trace:error(Error),
                                 {error, Error}
                         end;
@@ -424,10 +424,10 @@ delete(Id, Opts) ->
                                 % In this case, we must send the deleted events
                                 FakeActor = make_fake_actor(ActorId2),
                                 nkactor_lib:send_external_event(SrvId, deleted, FakeActor),
-                                trace("successful"),
+                                log(debug, "successful"),
                                 {ok, DeleteMeta};
                             {error, Error} ->
-                                trace("error deleting inactive actor: ~p", [Error]),
+                                log(notice, "error deleting inactive actor: ~p", [Error]),
                                 nkserver_trace:error(Error),
                                 {error, Error}
                         end
@@ -453,7 +453,7 @@ search(SrvId, SearchType, Opts) ->
         trace("calling actor_db_search (~p) (~p)", [SearchType, Opts]),
         case ?CALL_SRV(SrvId, actor_db_search, [SrvId, SearchType, Opts]) of
             {ok, Actors, Meta} ->
-                trace("search success"),
+                log(debug, "search success"),
                 case parse_actors(SrvId, Actors, Opts) of
                     {ok, Actors2} ->
                         {ok, Actors2, Meta};
@@ -461,7 +461,7 @@ search(SrvId, SearchType, Opts) ->
                         {error, Error}
                 end;
             {error, Error} ->
-                trace("error in search: ~p", [Error]),
+                log(notice, "error in search: ~p", [Error]),
                 nkserver_trace:error(Error),
                 {error, Error}
         end
@@ -478,10 +478,10 @@ aggregation(SrvId, AggType, Opts) ->
         trace("calling actor_db_aggregate (~p) (~p)", [AggType, Opts]),
         case ?CALL_SRV(SrvId, actor_db_aggregate, [SrvId, AggType, Opts]) of
             {ok, Result, Meta} ->
-                trace("aggregation success"),
+                log(debug, "aggregation success"),
                 {ok, Result, Meta};
             {error, Error} ->
-                trace("error in agg: ~p", [Error]),
+                log(notice, "error in agg: ~p", [Error]),
                 nkserver_trace:error(Error),
                 {error, Error}
         end
@@ -495,14 +495,14 @@ aggregation(SrvId, AggType, Opts) ->
 
 truncate(SrvId, Opts) ->
     Fun = fun() ->
-        trace("truncate (~p)", [Opts]),
+        log(debug, "truncate (~p)", [Opts]),
         trace("calling actor_db_truncate"),
         case ?CALL_SRV(SrvId, actor_db_truncate, [SrvId, Opts]) of
             ok ->
-                trace("success"),
+                log(debug, "success"),
                 ok;
             {error, Error} ->
-                trace("error in truncate: ~p", [Error]),
+                log(notice, "error in truncate: ~p", [Error]),
                 nkserver_trace:error(Error),
                 {error, Error}
         end
@@ -530,15 +530,15 @@ do_read(SrvId, ActorId, Opts) ->
                 _ ->
                     case nkactor_actor:parse(SrvId, read, Actor, Req2) of
                         {ok, Actor2} ->
-                            trace("actor is valid"),
+                            log(debug, "actor is valid"),
                             {ok, Actor2, Meta};
                         {error, Error} ->
-                            trace("error parsing actor: ~p", [Error]),
+                            log(notice, "error parsing actor: ~p", [Error]),
                             {error, Error}
                     end
             end;
         {error, Error} ->
-            trace("error reading actor: ~p", [Error]),
+            log(notice, "error reading actor: ~p", [Error]),
             {error, Error}
     end.
 
@@ -555,7 +555,7 @@ do_activate(Id, Opts, Tries) when Tries > 0 ->
                     Config = maps:with([ttl], Opts),
                     case ?CALL_SRV(SrvId, actor_activate, [Actor, Config]) of
                         {ok, Pid} ->
-                            trace("actor is activated"),
+                            log(debug, "actor is activated"),
                             {ok, SrvId, ActorId#actor_id{pid=Pid}, Meta2};
                         {error, actor_already_activated} ->
                             lager:info("Already activated ~p: retrying (~p tries left)", [Id, Tries]),
@@ -566,7 +566,7 @@ do_activate(Id, Opts, Tries) when Tries > 0 ->
                             {error, Error}
                     end;
                 {error, persistence_not_defined} ->
-                    trace("error activating actor: actor_not_found"),
+                    log(debug, "persistence_not_defined"),
                     {error, actor_not_found};
                 {error, Error} ->
                     log(notice, "error activating actor: ~p", [Error]),
@@ -615,13 +615,13 @@ search_activate_actors(SrvId, Date, PageSize) ->
 
 %% @private
 search_activate_actors(SrvId, Opts, Iters, Acc) when Iters > 0 ->
-    trace("starting cursor: ~s", [maps:get(last_time, Opts, <<>>)]),
+    log(info, "starting cursor: ~s", [maps:get(last_time, Opts, <<>>)]),
     case search(SrvId, actors_activate, Opts) of
         {ok, [], _} ->
-            trace("no more actors"),
+            log(debug, "no more actors"),
             {ok, lists:flatten(Acc)};
         {ok, ActorIds, #{last_time:=LastDate}} ->
-            trace("found '~p' actors", [length(ActorIds)]),
+            log(info, "found '~p' actors", [length(ActorIds)]),
             search_activate_actors(SrvId, Opts#{last_time=>LastDate}, Iters-1, [ActorIds|Acc]);
         {error, Error} ->
             {error, Error}
@@ -667,11 +667,11 @@ pre_parse(Actor) ->
                 {ok, SrvId} ->
                     {ok, SrvId, Actor2};
                 {error, Error} ->
-                    trace("error getting service for ~s: ~p", [Namespace, Error]),
+                    log(notice, "error getting service for ~s: ~p", [Namespace, Error]),
                     {error, Error}
             end;
         {error, Error} ->
-            trace("error parsing generic actor: ~p", [Error]),
+            log(notice, "error parsing generic actor: ~p", [Error]),
             {error, Error}
     end.
 
@@ -693,10 +693,10 @@ pre_create(SrvId, Actor, Opts) ->
             Req2 = Req1#{srv => SrvId},
             case nkactor_actor:parse(SrvId, create, Actor3, Req2) of
                 {ok, Actor4} ->
-                    trace("pre_create check links"),
+                    trace("calling pre_create check links"),
                     case nkactor_lib:check_actor_links(Actor4) of
                         {ok, Actor5} ->
-                            trace("actor pre_created"),
+                            log(debug, "actor pre_created"),
                             {ok, Actor5};
                         {error, Error} ->
                             log(notice, "error checking links: ~p", [Error]),
@@ -707,7 +707,7 @@ pre_create(SrvId, Actor, Opts) ->
                     {error, Error}
             end;
         {error, Error} ->
-            trace("error creating initial data: ~p", [Error]),
+            log(notice, "error creating initial data: ~p", [Error]),
             {error, Error}
     end.
 
@@ -719,25 +719,26 @@ pre_update(SrvId, ActorId, Actor, Opts) ->
             #actor_id{group=Group, resource=Res, name=Name, namespace=Namespace} = ActorId,
             Base = #{group=>Group, resource=>Res, name=>Name, namespace=>Namespace},
             Actor3 = maps:merge(Base, Actor2),
-            trace("actor parsed"),
+            log(debug, "pre_update: actor parsed"),
             Req1 = maps:get(request, Opts, #{}),
             Req2 = Req1#{srv => SrvId},
             case nkactor_actor:parse(SrvId, update, Actor3, Req2) of
                 {ok, Actor4} ->
+                    trace("calling pre_update check links"),
                     case nkactor_lib:check_actor_links(Actor4) of
                         {ok, Actor5} ->
-                            trace("actor parsed"),
+                            log(debug, "actor pre_updated"),
                             {ok, Actor5};
                         {error, Error} ->
                             log(notice, "error checking links: ~p", [Error]),
                             {error, Error}
                     end;
                 {error, Error} ->
-                    trace("error parsing specific actor: ~p", [Error]),
+                    log(notice, "error parsing specific actor: ~p", [Error]),
                     {error, Error}
             end;
         {error, Error} ->
-            trace("error parsing generic actor: ~p", [Error]),
+            log(notice, "error parsing generic actor: ~p", [Error]),
             {error, Error}
     end.
 

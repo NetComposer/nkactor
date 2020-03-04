@@ -64,7 +64,7 @@
 -export([init/1, terminate/2, code_change/3, handle_call/3, handle_cast/2, handle_info/2]).
 -export([count/0, get_state/1, get_timers/1, raw_stop/2]).
 -import(nkactor_srv_lib, [event/3, new_span/4]).
--import(nkserver_trace, [trace/1, trace/2, log/3]).
+-import(nkserver_trace, [trace/1, trace/2, log/2, log/3]).
 
 -export_type([event/0, save_reason/0]).
 
@@ -370,7 +370,7 @@ init({Op, Actor, StartConfig, Caller, Ref, ParentSpan}) ->
             Config = maps:merge(BaseConfig, StartConfig),
             State1 = do_pre_init(ActorId, Actor, Config, SrvId),
             Fun = fun() ->
-                 trace("actor initializing: ~p", [Op]),
+                log(debug, "actor initializing: ~p", [Op]),
                 #actor_id{
                     group = Group,
                     resource = Res,
@@ -389,7 +389,7 @@ init({Op, Actor, StartConfig, Caller, Ref, ParentSpan}) ->
                 nkserver_trace:tags(Tags),
                 case check_expire_time(State1) of
                     {false, State2} ->
-                        trace("registering with namespace"),
+                        log(debug, "registering with namespace"),
                         case do_register(1, State2) of
                             {ok, State3} ->
                                 trace("calling actor_srv_init"),
@@ -569,7 +569,7 @@ code_change(OldVsn, #actor_st{srv = SrvId} = State, Extra) ->
 terminate(Reason, State) ->
     State2 = do_stop2({terminate, Reason}, State),
     {ok, _State3} = nkactor_srv_lib:handle(actor_srv_terminate, [Reason], State2),
-    trace("actor terminated: ~p", [Reason]),
+    log(debug, "actor terminated: ~p", [Reason]),
     ok.
 
 
@@ -871,7 +871,7 @@ do_post_init(Op, State) ->
                     ok
             end,
             nklib_counters:async([?MODULE]),
-            trace("actor init completed"),
+            log(debug, "actor init completed"),
             {ok, do_refresh_ttl(State5)};
         {{error, Error}, _State3} ->
             log(warning, "actor save error: ~p", [Error]),
@@ -885,7 +885,7 @@ do_init_stop(Error, Caller, Ref, _State) ->
         actor_already_activated ->
             ok;
         _ ->
-            trace("actor init error: ~p", [Error]),
+            log(notice, "actor init error: ~p", [Error]),
             nkserver_trace:error(Error)
     end,
     Caller ! {do_start_ignore, Ref, {error, Error}},

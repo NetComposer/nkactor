@@ -28,7 +28,7 @@
          remove_all_links/1, add_actor_event/2, add_actor_event/3, add_actor_event/4, set_updated/1,
          update_status/2, update_status/3, add_actor_alarm/2, clear_all_alarms/1]).
 -export([handle/3, set_times/1]).
--import(nkserver_trace, [trace/1, trace/2, log/3]).
+-import(nkserver_trace, [trace/1, trace/2, log/2, log/3]).
 -include("nkactor.hrl").
 -include("nkactor_debug.hrl").
 -include_lib("nkserver/include/nkserver.hrl").
@@ -326,7 +326,7 @@ update(UpdActor, Opts, #actor_st{actor_id=ActorId, actor=Actor}=State) ->
                                             {error, SaveError, State6}
                                     end;
                                 {error, UpdError, State2} ->
-                                    trace("update error: ~p", [UpdError]),
+                                    log(notice, "update error: ~p", [UpdError]),
                                     nkserver_trace:error(UpdError),
                                     {error, UpdError, State2}
                             end;
@@ -445,7 +445,7 @@ save(Reason, SaveOpts, #actor_st{actor=Actor, is_dirty = true} = State) ->
                             new_span({nkactor_server, async_save}, Fun2, #{}, State3)
                         end,
                         Pid = spawn_link(Spawn),
-                        trace("launched asynchronous save: ~p", [Pid]),
+                        log(info, "launched asynchronous save: ~p", [Pid]),
                         % We must guess that the save is successful
                         #{metadata:=NewMeta} = Actor,
                         {ok, State3#actor_st{saved_metadata = NewMeta, is_dirty = false}};
@@ -457,10 +457,10 @@ save(Reason, SaveOpts, #actor_st{actor=Actor, is_dirty = true} = State) ->
                                 State4 = State3#actor_st{saved_metadata = NewMeta, is_dirty = false},
                                 {ok, event(saved, #{reason=>Reason, db_meta=>DbMeta}, State4)};
                             {error, not_implemented} ->
-                                trace("save not implemented"),
+                                log(info, "save not implemented"),
                                 {{error, not_implemented}, State3};
                             {error, Error} when Error==uniqueness_violation; Error==duplicated_name ->
-                                trace("uniqueness violation"),
+                                log(info, "uniqueness violation"),
                                 {{error, actor_already_exists}, State3};
                             {error, Error} ->
                                 log(warning, "actor save error: ~p", [Error]),
@@ -469,7 +469,7 @@ save(Reason, SaveOpts, #actor_st{actor=Actor, is_dirty = true} = State) ->
                         end
                 end;
             {ignore, State3} ->
-                trace("save ignored"),
+                log(debug, "save ignored"),
                 {ok, State3}
         end
     end,
