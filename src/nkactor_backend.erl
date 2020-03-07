@@ -244,7 +244,7 @@ create(Actor, #{activate:=false}=Opts) ->
                         {error, Error}
                 end
             end,
-            nkserver_trace:new_span(SrvId, {nkactor_backend, create}, Fun);
+            nkserver_trace:new_span(SrvId, {trace_nkactor_backend, create}, Fun);
         {error, Error} ->
             {error, Error}
     end;
@@ -311,7 +311,7 @@ create(Actor, Opts) ->
                         {error, Error}
                 end
             end,
-            nkserver_trace:new_span(SrvId, {nkactor_backend, create}, Fun);
+            nkserver_trace:new_span(SrvId, {trace_nkactor_backend, create}, Fun);
         {error, Error} ->
             {error, Error}
     end.
@@ -363,7 +363,7 @@ update(Id, Actor, Opts) ->
                         {error, Error}
                 end
             end,
-            nkserver_trace:new_span(SrvId, {nkactor_backend, update}, Fun);
+            nkserver_trace:new_span(SrvId, {trace_nkactor_backend, update}, Fun);
         {error, Error} ->
             {error, Error}
     end.
@@ -433,7 +433,7 @@ delete(Id, Opts) ->
                         end
                 end
             end,
-            nkserver_trace:new_span(SrvId, {nkactor_backend, delete}, Fun);
+            nkserver_trace:new_span(SrvId, {trace_nkactor_backend, delete}, Fun);
         {error, Error} ->
             {error, Error}
     end.
@@ -466,7 +466,7 @@ search(SrvId, SearchType, Opts) ->
                 {error, Error}
         end
     end,
-    nkserver_trace:new_span(SrvId, {nkactor_backend, search}, Fun).
+    nkserver_trace:new_span(SrvId, {trace_nkactor_backend, search}, Fun).
 
 
 %% @doc
@@ -486,7 +486,7 @@ aggregation(SrvId, AggType, Opts) ->
                 {error, Error}
         end
     end,
-    nkserver_trace:new_span(SrvId, {nkactor_backend, aggregate}, Fun).
+    nkserver_trace:new_span(SrvId, {trace_nkactor_backend, aggregate}, Fun).
 
 
 %% @doc
@@ -507,7 +507,7 @@ truncate(SrvId, Opts) ->
                 {error, Error}
         end
     end,
-    nkserver_trace:new_span(SrvId, {nkactor_backend, truncate}, Fun).
+    nkserver_trace:new_span(SrvId, {trace_nkactor_backend, truncate}, Fun).
 
 
 %% ===================================================================
@@ -609,7 +609,7 @@ search_activate_actors(SrvId, Date, PageSize) ->
     Fun = fun() ->
         search_activate_actors(SrvId, #{last_time=>Date, size=>PageSize}, 100, [])
     end,
-    nkserver_trace:new_span(SrvId, {nkactor_backend, auto_activate}, Fun).
+    nkserver_trace:new_span(SrvId, {trace_nkactor_backend, auto_activate}, Fun).
 
 
 

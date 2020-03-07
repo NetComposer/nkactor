@@ -145,7 +145,7 @@ request(Req) ->
                 verb => Verb,
                 subresource => SubRes
             },
-            nkserver_trace:new_span(SrvId, nkactor_request, Fun, SpanOpts);
+            nkserver_trace:new_span(SrvId, trace_nkactor_request, Fun, SpanOpts);
         {error, Error, Req2} ->
             {error, Error, Req2}
     end.

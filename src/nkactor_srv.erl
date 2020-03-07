@@ -416,10 +416,12 @@ init({Op, Actor, StartConfig, Caller, Ref, ParentSpan}) ->
                         do_init_stop(actor_expired, Caller, Ref, State3)
                 end
             end,
-            case new_span({nkactor_server, load}, Fun, #{parent=>ParentSpan}, State1) of
+            case new_span({trace_nkactor_server, load}, Fun, #{parent=>ParentSpan}, State1) of
                 {ok, FinalState} ->
                     % Opportunity to insert a long-running span
-                    %new_span({nkactor_server, run}, infinity, #{}, FinalState),
+                    % to be father of stops, saves, etc.
+                    % will be stopped in terminate/2
+                    new_span({trace_nkactor_server, run}, infinity, #{parent=>none}, FinalState),
                     {ok, FinalState};
                 Other ->
                     Other
@@ -570,6 +572,7 @@ terminate(Reason, State) ->
     State2 = do_stop2({terminate, Reason}, State),
     {ok, _State3} = nkactor_srv_lib:handle(actor_srv_terminate, [Reason], State2),
     log(debug, "actor terminated: ~p", [Reason]),
+    nkserver_trace:finish_span(),
     ok.
 
 
@@ -960,9 +963,9 @@ do_stop(Reason, State) ->
 
 
 %% @private
-do_stop2(Reason, #actor_st{stop_reason=false}=State) ->
+do_stop2(Reason, #actor_st{actor_id=#actor_id{uid=UID}, stop_reason=false}=State) ->
     State2 = State#actor_st{stop_reason=Reason},
-    State3 = event(stopped, #{reason=>Reason}, State2),
+    State3 = event(stopped, #{reason=>Reason, uid=>UID}, State2),
     case nkactor_srv_lib:handle(actor_srv_stop, [Reason], State3) of
         {ok, State4} ->
             {_, State5} = nkactor_srv_lib:save(unloaded, State4),
