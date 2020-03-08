@@ -139,6 +139,7 @@
     {send_info, atom()|binary(), map()} |
     {send_event, event()} |
     {set_activate_time, binary()|integer()} |
+    unset_activate_time |
     {set_alarm, nkactor:alarm()} |
     clear_all_alarms |
     save |
@@ -395,6 +396,8 @@ init({Op, Actor, StartConfig, Caller, Ref, ParentSpan}) ->
                                 trace("calling actor_srv_init"),
                                 case nkactor_srv_lib:handle(actor_srv_init, [Group, Res, Op], State3) of
                                     {ok, State4} ->
+                                        % If activate_time or expire_time, launch check
+                                        % Set unload policy
                                         State5 = nkactor_srv_lib:set_times(State4),
                                         case do_post_init(Op, State5) of
                                             {ok, State6} ->
@@ -456,7 +459,7 @@ handle_call({nkactor_sync_op, Op}, From, State) ->
         {continue, [Op2, _From2, #actor_st{} = State2]} ->
             do_sync_op(Op2, From, State2);
         Other ->
-            ?ACTOR_LOG(error, "invalid response for sync op ~p: ~p", [Op, Other], State),
+            log(error, "invalid response for sync op ~p: ~p", [Op, Other]),
             error(invalid_sync_response)
     end;
 
@@ -482,11 +485,12 @@ handle_cast({nkactor_async_op, Op}, State) ->
         {continue, [Op2, #actor_st{} = State2]} ->
             do_async_op(Op2, State2);
         Other ->
-            ?ACTOR_LOG(error, "invalid response for async op ~p: ~p", [Op, Other], State),
+            log(error, "invalid response for async op ~p: ~p", [Op, Other]),
             error(invalid_async_response)
     end;
 
 handle_cast(nkactor_hibernate, State) ->
+    clean_info(nkactor_hibernate),
     {_, State2} = nkactor_srv_lib:save(hibernate, State),
     {noreply, State2, hibernate};
 
@@ -506,12 +510,17 @@ handle_info(nkactor_ttl_timeout, State) ->
     do_ttl_timeout(State);
 
 handle_info(nkactor_timer_save, State) ->
+    clean_info(nkactor_timer_save),
     do_async_op({save, timer}, State);
 
 handle_info(nkactor_check_activate_time, State) ->
+    % Remove possible more messages in queue
+    % If actor calls set_active_time on init, two messages will be inserted
+    clean_info(nkactor_check_activate_time),
     {noreply, check_activate_time(State)};
 
 handle_info(nkactor_check_expire_time, State) ->
+    clean_info(nkactor_check_expire_time),
     case check_expire_time(State) of
         {true, State2} ->
             do_stop(actor_expired, State2);
@@ -520,19 +529,20 @@ handle_info(nkactor_check_expire_time, State) ->
     end;
 
 handle_info(nkactor_heartbeat, #actor_st{config = Config} = State) ->
+    clean_info(nkactor_heartbeat),
     HeartbeatTime = maps:get(heartbeat_time, Config),
     erlang:send_after(HeartbeatTime, self(), nkactor_heartbeat),
     do_heartbeat(State);
 
 handle_info({'DOWN', _Ref, process, Pid, normal}, #actor_st{namespace_pid = Pid} = State) ->
-    ?ACTOR_LOG(notice, "namespace is stopping, we also stop", [], State),
+    log(notice, "namespace is stopping, we also stop", []),
     do_stop(namespace_is_down, State);
 
 handle_info({'DOWN', _Ref, process, Pid, _Reason}, #actor_st{namespace_pid = Pid} = State) ->
-    ?ACTOR_LOG(notice, "namespace is down", [], State),
+    log(notice, "namespace is down", []),
     case do_register(5, State#actor_st{namespace_pid = undefined}) of
         {ok, State2} ->
-            ?ACTOR_LOG(notice, "re-registered with namespace", [], State),
+            log(notice, "re-registered with namespace", []),
             noreply(State2);
         {error, _Error} ->
             do_stop(namespace_is_down, State)
@@ -541,8 +551,7 @@ handle_info({'DOWN', _Ref, process, Pid, _Reason}, #actor_st{namespace_pid = Pid
 handle_info({'DOWN', Ref, process, _Pid, Reason} = Info, State) ->
     case link_down(Ref, State) of
         {ok, Link, #link_info{data = Data} = LinkInfo, State2} ->
-            ?ACTOR_LOG(warning, "link ~p down (~p) (~p)", [Link, LinkInfo, Reason], State),
-            ?ACTOR_DEBUG("link ~p down (~p) (~p)", [Link, LinkInfo, Reason], State),
+            log(info, "link ~p down (~p) (~p)", [Link, LinkInfo, Reason]),
             {ok, State3} = nkactor_srv_lib:handle(actor_srv_link_down, [Link, Data], State2),
             noreply(State3);
         not_found ->
@@ -712,7 +721,7 @@ do_sync_op({apply, Mod, Fun, Args}, From, State) ->
     apply(Mod, Fun, Args++[From, do_refresh_ttl(State)]);
 
 do_sync_op(Op, _From, State) ->
-    ?ACTOR_LOG(warning, "unknown sync op: ~p", [Op], State),
+    log(warning, "unknown sync op: ~p", [Op]),
     reply({error, unknown_op}, State).
 
 
@@ -733,6 +742,9 @@ do_async_op({send_event, Event}, State) ->
 
 do_async_op({set_activate_time, Time}, State) ->
     noreply(nkactor_srv_lib:set_activate_time(Time, State));
+
+do_async_op(unset_activate_time, State) ->
+    noreply(nkactor_srv_lib:unset_activate_time(State));
 
 do_async_op({set_dirty, true}, State) ->
     noreply(do_refresh_ttl(nkactor_srv_lib:set_updated(State)));
@@ -757,10 +769,10 @@ do_async_op(force_update, State) ->
     #actor_st{actor=Actor} = State,
     case nkactor_srv_lib:update(Actor, #{force_update=>true}, State) of
         {ok, State2} ->
-            ?ACTOR_LOG(warning, "done force-update", [], State),
+            log(warning, "done force-update", State),
             noreply(State2);
         {error, Error, State2} ->
-            ?ACTOR_LOG(warning, "could not force-update: ~p", [Error], State),
+            log(warning, "could not force-update: ~p", [Error]),
             noreply(State2)
     end;
 
@@ -782,7 +794,7 @@ do_async_op({raw_stop, Reason}, #actor_st{actor_id=#actor_id{uid=UID}}=State) ->
         backend_deleted ->
             ok;
         _ ->
-            ?ACTOR_LOG(info, "received raw_stop: ~p", [Reason], State)
+            log(info, "received raw_stop: ~p", [Reason])
     end,
     {_, State2} = nkactor_srv_lib:handle(actor_srv_stop, [Reason], State),
     State3 = event(stopped, #{reason=>Reason, uid=>UID}, State2),
@@ -793,7 +805,7 @@ do_async_op({set_alarm, Alarm}, State) ->
         {ok, State2} ->
             noreply(do_refresh_ttl(State2));
         {error, _} ->
-            ?ACTOR_LOG(error, "invalid alarm: ~p", [Alarm], State),
+            log(error, "invalid alarm: ~p", [Alarm]),
             noreply(State)
     end;
 
@@ -813,7 +825,7 @@ do_async_op(del_all_events, State) ->
     end;
 
 do_async_op(Op, State) ->
-    ?ACTOR_LOG(warning, "unknown async op: ~p", [Op], State),
+    log(warning, "unknown async op: ~p", [Op]),
     noreply(State).
 
 
@@ -920,17 +932,17 @@ do_register(Tries, #actor_st{actor_id=ActorId, srv=SrvId} = State) ->
             ?ACTOR_DEBUG("registered with namespace (pid:~p)", [Pid]),
             {ok, State2};
         {error, {actor_already_registered, OldPid}} ->
-            ?ACTOR_LOG(info, "actor already activated! (~p)", [OldPid]),
+            log(info, "actor already activated! (~p)", [OldPid]),
             {error, actor_already_activated};
         {error, Error} ->
             case Tries > 1 of
                 true ->
-                    ?ACTOR_LOG(notice, "registered with namespace failed (~p) (~p tries left)",
-                        [Error, Tries], State),
+                    log(notice, "registered with namespace failed (~p) (~p tries left)",
+                        [Error, Tries]),
                     timer:sleep(1000),
                     do_register(Tries - 1, State);
                 false ->
-                    ?ACTOR_LOG(notice, "registration with namespace failed: ~p", [Error], State),
+                    log(notice, "registration with namespace failed: ~p", [Error]),
                     {error, Error}
             end
     end.
@@ -1032,7 +1044,7 @@ check_activate_time(#actor_st{actor=Actor, activate_timer=Timer1}=State) ->
             {ok, ActiveTime2} = nklib_date:to_epoch(ActiveTime, msecs),
             case ActiveTime2 - Now of
                 Step when Step=<0 ->
-                    ?ACTOR_LOG(debug, "activation time!", [], State),
+                    log(info, "activation time!", []),
                     Meta2 = maps:remove(activate_time, Meta),
                     State2 = State#actor_st{
                         activate_timer = undefined,
@@ -1043,8 +1055,8 @@ check_activate_time(#actor_st{actor=Actor, activate_timer=Timer1}=State) ->
                     State4;
                 Step ->
                     Step2 = min(Step, ?MAX_STATUS_TIME),
-                    ?ACTOR_LOG(debug, "not yet activation time, ~psecs left (next call in ~psecs)",
-                               [Step div 1000, Step2 div 1000], State),
+                    log(debug, "not yet activation time, ~psecs left (next call in ~psecs)",
+                               [Step div 1000, Step2 div 1000]),
                     Timer2 = erlang:send_after(Step2, self(), nkactor_check_activate_time),
                     State#actor_st{activate_timer=Timer2}
             end;
@@ -1062,7 +1074,7 @@ check_expire_time(#actor_st{actor=Actor, expire_timer=Timer1}=State) ->
             {ok, ExpireTime2} = nklib_date:to_epoch(ExpireTime, msecs),
             case ExpireTime2 - Now of
                 Step when Step=<0 ->
-                    ?ACTOR_LOG(debug, "expiration time!", [], State),
+                    log(info, "expiration time!", []),
                     Meta2 = maps:remove(expire_time, Meta),
                     State2 = State#actor_st{
                         expire_timer = undefined,
@@ -1077,7 +1089,7 @@ check_expire_time(#actor_st{actor=Actor, expire_timer=Timer1}=State) ->
                     end;
                 Step ->
                     Step2 = min(Step, ?MAX_STATUS_TIME),
-                    ?ACTOR_LOG(debug, "not yet expiration time, ~pmsecs left (next call in ~pmsecs)", [Step, Step2], State),
+                    log(debug, "not yet expiration time, ~pmsecs left (next call in ~pmsecs)", [Step, Step2]),
                     Timer2 = erlang:send_after(Step2, self(), nkactor_check_expire_time),
                     {false, State#actor_st{expire_timer=Timer2}}
             end;
@@ -1119,7 +1131,7 @@ safe_handle(Fun, Args, State) ->
         {stop, _, #actor_st{}} ->
             Reply;
         Other ->
-            ?ACTOR_LOG(error, "invalid response for ~p(~p): ~p", [Fun, Args, Other], State),
+            log(error, "invalid response for ~p(~p): ~p", [Fun, Args, Other]),
             error(invalid_handle_response)
     end.
 
@@ -1144,4 +1156,16 @@ link_down(Mon, #actor_st{links=Links}=State) ->
         not_found ->
             not_found
     end.
+
+
+%% @private
+clean_info(Msg) ->
+    receive
+        Msg ->
+            clean_info(Msg)
+    after 0 ->
+        ok
+    end.
+
+
 

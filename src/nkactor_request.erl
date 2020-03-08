@@ -153,12 +153,12 @@ request(Req) ->
 
 %% @private
 pre_request(Req) ->
-    log(debug, "parsing request"),
+    trace("parsing request"),
     case nkactor_syntax:parse_request(Req) of
         {ok, #{namespace:=Ns}=Req2} ->
             case nkactor_namespace:find_service(Ns) of
                 {ok, SrvId} ->
-                    log(debug, "request service is ~s (~s)", [SrvId, Ns]),
+                    trace("request service is ~s (~s)", [SrvId, Ns]),
                     Req3 = Req2#{
                         srv => SrvId,
                         verb => maps:get(verb, Req2, get),

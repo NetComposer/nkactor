@@ -23,8 +23,9 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([new_span/4, new_actor_span/4, event/3]).
--export([event_link/3, update/3, delete/2, set_auto_activate/2, set_activate_time/2,
-         set_expire_time/3, get_links/1, add_link/3, remove_link/2, save/2,
+-export([event_link/3, update/3, delete/2, set_auto_activate/2]).
+-export([set_activate_time/2, unset_activate_time/1, set_expire_time/3, unset_expire_time/1]).
+-export([get_links/1, add_link/3, remove_link/2, save/2,
          remove_all_links/1, add_actor_event/2, add_actor_event/3, add_actor_event/4, set_updated/1,
          update_status/2, update_status/3, add_actor_alarm/2, clear_all_alarms/1]).
 -export([handle/3, set_times/1]).
@@ -90,23 +91,13 @@ set_auto_activate(Bool, #actor_st{actor=#{metadata:=Meta}=Actor}=State) ->
 
 
 %% @doc
-set_activate_time(<<>>, #actor_st{actor=Actor, activate_timer=Timer}=State) ->
-    nklib_util:cancel_timer(Timer),
-    case Actor of
-        #{metadata:=#{activate_time:=_}=Meta} ->
-            Meta2 = maps:remove(activate_time, Meta),
-            Actor2 = Actor#{metadata:=Meta2},
-            State#actor_st{actor=Actor2, is_dirty=true};
-        _ ->
-            State
-    end;
-
 set_activate_time(Time, #actor_st{actor=#{metadata:=Meta}=Actor, activate_timer=Timer}=State) ->
     case Meta of
         #{activate_time:=Time} ->
             % If we set up activation on init callback, the init process will call again here
             State;
         _ ->
+            log(debug, "set activate_time: ~s", [Time]),
             nklib_util:cancel_timer(Timer),
             {ok, Time1} = nklib_date:to_epoch(Time, usecs),
             Time2 = Time1 + nklib_util:rand(0, 999),
@@ -119,19 +110,21 @@ set_activate_time(Time, #actor_st{actor=#{metadata:=Meta}=Actor, activate_timer=
     end.
 
 
-%% @doc Sets an expiration date
-%% If Activate, actor will be activated on that date to perform the deletion
-set_expire_time(<<>>, _Activate, #actor_st{actor=Actor, expire_timer=Timer}=State) ->
+%% @doc
+unset_activate_time(#actor_st{actor=Actor, activate_timer=Timer}=State) ->
     nklib_util:cancel_timer(Timer),
     case Actor of
-        #{metadata:=#{expire_time:=_}=Meta} ->
-            Meta2 = maps:remove(expire_time, Meta),
+        #{metadata:=#{activate_time:=_}=Meta} ->
+            Meta2 = maps:remove(activate_time, Meta),
             Actor2 = Actor#{metadata:=Meta2},
-            set_updated(State#actor_st{actor=Actor2});
+            State#actor_st{actor=Actor2, is_dirty=true};
         _ ->
             State
-    end;
+    end.
 
+
+%% @doc Sets an expiration date
+%% If Activate, actor will be activated on that date to perform the deletion
 set_expire_time(Time, Activate, #actor_st{actor=Actor}=State) when is_boolean(Activate)->
     {ok, Time2} = nklib_date:to_3339(Time, usecs),
     #{metadata:=Meta} = Actor,
@@ -148,6 +141,19 @@ set_expire_time(Time, Activate, #actor_st{actor=Actor}=State) when is_boolean(Ac
             set_activate_time(Time, State2);
         false ->
             State2
+    end.
+
+
+%% @doc
+unset_expire_time(#actor_st{actor=Actor, expire_timer=Timer}=State) ->
+    nklib_util:cancel_timer(Timer),
+    case Actor of
+        #{metadata:=#{expire_time:=_}=Meta} ->
+            Meta2 = maps:remove(expire_time, Meta),
+            Actor2 = Actor#{metadata:=Meta2},
+            set_updated(State#actor_st{actor=Actor2});
+        _ ->
+            State
     end.
 
 
@@ -222,7 +228,7 @@ update(UpdActor, Opts, #actor_st{actor_id=ActorId, actor=Actor}=State) ->
                     false ->
                         ok;
                     {ok, _} ->
-                        ?ACTOR_LOG(notice, "updated namespace ~s -> ~s", [Namespace, UpdNamespace]),
+                        log(notice, "updated namespace ~s -> ~s", [Namespace, UpdNamespace]),
                         ok;
                     _ ->
                         throw({updated_namespace_static, UpdNamespace})
@@ -381,7 +387,7 @@ delete(Opts, #actor_st{srv = SrvId, actor_id = ActorId, actor = Actor} = State) 
                         actor_has_linked_actors ->
                             ok;
                         _ ->
-                            ?ACTOR_LOG(warning, "object could not be deleted: ~p", [Error], State)
+                            log(warning, "object could not be deleted: ~p", [Error])
                     end,
                     {{error, Error}, State2#actor_st{actor = Actor}}
             end;
@@ -518,13 +524,15 @@ set_times(State) ->
     case maps:get(activate_time, Meta, <<>>) of
         <<>> ->
             ok;
-        _ ->
+        Activate ->
+            log(debug, "activate_time is '~s'", [Activate]),
             self() ! nkactor_check_activate_time
     end,
     case maps:get(expire_time, Meta, <<>>) of
         <<>> ->
             ok;
-        _ ->
+        Expire ->
+            log(debug, "expire_time is '~s'", [Expire]),
             self() ! nkactor_check_expire_time
     end,
     set_unload_policy(State).

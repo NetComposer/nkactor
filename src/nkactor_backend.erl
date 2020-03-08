@@ -84,7 +84,7 @@ find({OptSrvId, Id}, _Opts) when is_atom(OptSrvId) ->
     case nkactor_namespace:find_actor(ActorId) of
         {true, SrvId, #actor_id{pid=Pid}=ActorId2} when is_pid(Pid) ->
             % It is registered or cached
-            log(info, "actor is registered or cached: ~p (~s)", [Pid, SrvId]),
+            log(debug, "actor is registered or cached: ~p (~s)", [Pid, SrvId]),
             {ok, SrvId, ActorId2, #{}};
         {false, SrvId} ->
             do_find([SrvId], ActorId);
