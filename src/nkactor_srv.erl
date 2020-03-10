@@ -227,7 +227,8 @@ sync_op(Id, Op) ->
     term() | {error, timeout|process_not_found|actor_not_found|term()}.
 
 sync_op(Pid, Op, Timeout) when is_pid(Pid) ->
-    case nklib_util:call2(Pid, {nkactor_sync_op, Op}, Timeout) of
+    ParentSpan = nkserver_trace:span_parent(),
+    case nklib_util:call2(Pid, {nkactor_sync_op, Op, ParentSpan}, Timeout) of
         process_not_found ->
             {error, process_not_found};
         Other ->
@@ -268,7 +269,8 @@ sync_op(Id, Op, Timeout, Tries) ->
     ok | {error, process_not_found|actor_not_found|term()}.
 
 async_op(Pid, Op) when is_pid(Pid) ->
-    gen_server:cast(Pid, {nkactor_async_op, Op});
+    ParentSpan = nkserver_trace:span_parent(),
+    gen_server:cast(Pid, {nkactor_async_op, Op, ParentSpan});
 
 async_op(Id, Op) ->
     case nkactor:activate(Id) of
@@ -284,7 +286,7 @@ async_op(Id, Op) ->
     ok | {error, term()}.
 
 live_async_op(Pid, Op) when is_pid(Pid) ->
-    async_op(Pid, {nkactor_async_op, Op});
+    async_op(Pid, Op);
 
 live_async_op(Id, Op) ->
     case nkactor:find(Id) of
@@ -437,31 +439,60 @@ init({Op, Actor, StartConfig, Caller, Ref, ParentSpan}) ->
     {noreply, state()} | {reply, term(), state()} |
     {stop, Reason :: term(), state()} | {stop, Reason :: term(), Reply :: term(), state()}.
 
-handle_call({nkactor_sync_op, Op}, From, State) ->
-    case nkactor_srv_lib:handle(actor_srv_sync_op, [Op, From], State) of
-        {reply, Reply, #actor_st{} = State2} ->
-            reply(Reply, do_refresh_ttl(State2));
-        {reply_and_save, Reply, #actor_st{} = State2} ->
-            {_, State3} = nkactor_srv_lib:save(user_op, nkactor_srv_lib:set_updated(State2)),
-            reply(Reply, do_refresh_ttl(State3));
-        {noreply, #actor_st{} = State2} ->
-            noreply(do_refresh_ttl(State2));
-        {noreply_and_save, #actor_st{} = State2} ->
-            {_, State3} = nkactor_srv_lib:save(user_op, nkactor_srv_lib:set_updated(State2)),
-            noreply(do_refresh_ttl(State3));
-        {stop, Reason, Reply, #actor_st{} = State2} ->
-            gen_server:reply(From, Reply),
-            do_stop(Reason, State2);
-        {stop, Reason, #actor_st{} = State2} ->
-            do_stop(Reason, State2);
-        continue ->
-            do_sync_op(Op, From, State);
-        {continue, [Op2, _From2, #actor_st{} = State2]} ->
-            do_sync_op(Op2, From, State2);
-        Other ->
-            log(error, "invalid response for sync op ~p: ~p", [Op, Other]),
-            error(invalid_sync_response)
-    end;
+handle_call({nkactor_sync_op, Op, ParentSpan}, From, State) ->
+    % We will generate a new span, based on either ParentSpan of the generic 'run'
+    % span crated on init
+    % If it is this last one, it could reach the span trace server before the 'run'
+    % span finished, so it would appear as 'invalid parent trace' until it is sent
+    Fun = fun() ->
+        log(info, "sync operation: ~p", [Op]),
+        trace("calling actor_srv_sync_op"),
+        case nkactor_srv_lib:handle(actor_srv_sync_op, [Op, From], State) of
+            {reply, Reply, #actor_st{} = State2} ->
+                trace("reply: ~p", [Reply]),
+                reply(Reply, do_refresh_ttl(State2));
+            {reply_and_save, Reply, #actor_st{} = State2} ->
+                trace("reply_and_save: ~p", [Reply]),
+                {_, State3} = nkactor_srv_lib:save(user_op, nkactor_srv_lib:set_updated(State2)),
+                reply(Reply, do_refresh_ttl(State3));
+            {noreply, #actor_st{} = State2} ->
+                trace("noreply"),
+                noreply(do_refresh_ttl(State2));
+            {noreply_and_save, #actor_st{} = State2} ->
+                trace("noreply_and_save"),
+                {_, State3} = nkactor_srv_lib:save(user_op, nkactor_srv_lib:set_updated(State2)),
+                noreply(do_refresh_ttl(State3));
+            {stop, Reason, Reply, #actor_st{} = State2} ->
+                trace("stop (~p): ~p", [Reason, Reply]),
+                gen_server:reply(From, Reply),
+                do_stop(Reason, State2);
+            {stop, Reason, #actor_st{} = State2} ->
+                trace("stop (~p)", [Reason]),
+                do_stop(Reason, State2);
+            continue ->
+                trace("continue"),
+                do_sync_op(Op, From, State);
+            {continue, [Op2, _From2, #actor_st{} = State2]} ->
+                trace("continue"),
+                do_sync_op(Op2, From, State2);
+            Other ->
+                log(error, "invalid response for sync op ~p: ~p", [Op, Other]),
+                error(invalid_sync_response)
+        end
+    end,
+    SpanOp = case is_tuple(Op) of
+        true -> element(1, Op);
+        false when is_atom(Op) -> Op;
+        false -> other
+    end,
+    Opts1 = #{op => SpanOp},
+    Opts2 = case ParentSpan of
+        undefined ->
+            Opts1;
+        _ ->
+            Opts1#{parent => ParentSpan}
+    end,
+    new_span({trace_nkactor_server, sync_op}, Fun, Opts2, State);
 
 handle_call(Msg, From, State) ->
     safe_handle(actor_srv_handle_call, [Msg, From], State).
@@ -471,23 +502,46 @@ handle_call(Msg, From, State) ->
 -spec handle_cast(term(), state()) ->
     {noreply, state()} | {stop, term(), state()}.
 
-handle_cast({nkactor_async_op, Op}, State) ->
-    case nkactor_srv_lib:handle(actor_srv_async_op, [Op], State) of
-        {noreply, #actor_st{} = State2} ->
-            noreply(do_refresh_ttl(State2));
-        {noreply_and_save, #actor_st{} = State2} ->
-            {_, State3} = nkactor_srv_lib:save(user_op, nkactor_srv_lib:set_updated(State2)),
-            noreply(do_refresh_ttl(State3));
-        {stop, Reason, #actor_st{} = State2} ->
-            do_stop(Reason, State2);
-        continue ->
-            do_async_op(Op, State);
-        {continue, [Op2, #actor_st{} = State2]} ->
-            do_async_op(Op2, State2);
-        Other ->
-            log(error, "invalid response for async op ~p: ~p", [Op, Other]),
-            error(invalid_async_response)
-    end;
+handle_cast({nkactor_async_op, Op, ParentSpan}, State) ->
+    Fun = fun() ->
+        log(info, "sync operation: ~p", [Op]),
+        trace("calling actor_srv_sync_op"),
+        case nkactor_srv_lib:handle(actor_srv_async_op, [Op], State) of
+            {noreply, #actor_st{} = State2} ->
+                trace("noreply"),
+                noreply(do_refresh_ttl(State2));
+            {noreply_and_save, #actor_st{} = State2} ->
+                trace("noreply_and_save"),
+                {_, State3} = nkactor_srv_lib:save(user_op, nkactor_srv_lib:set_updated(State2)),
+                noreply(do_refresh_ttl(State3));
+            {stop, Reason, #actor_st{} = State2} ->
+                trace("stop (~p)", [Reason]),
+                do_stop(Reason, State2);
+            continue ->
+                trace("continue"),
+                do_async_op(Op, State);
+            {continue, [Op2, #actor_st{} = State2]} ->
+                trace("continue"),
+                do_async_op(Op2, State2);
+            Other ->
+                log(error, "invalid response for async op ~p: ~p", [Op, Other]),
+                error(invalid_async_response)
+        end
+    end,
+    SpanOp = case is_tuple(Op) of
+        true -> element(1, Op);
+        false when is_atom(Op) -> Op;
+        false -> other
+    end,
+    Opts1 = #{op => SpanOp},
+    Opts2 = case ParentSpan of
+        undefined ->
+            Opts1;
+        _ ->
+            Opts1#{parent => ParentSpan}
+    end,
+    new_span({trace_nkactor_server, async_op}, Fun, Opts2, State);
+
 
 handle_cast(nkactor_hibernate, State) ->
     clean_info(nkactor_hibernate),
