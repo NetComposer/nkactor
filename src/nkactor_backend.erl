@@ -111,10 +111,10 @@ do_find([SrvId|Rest], ActorId) ->
             % it could be registered, now that we have full data
             case nkactor_namespace:find_actor(ActorId2) of
                 {true, _SrvId, #actor_id{pid = Pid} = ActorId3} when is_pid(Pid) ->
-                    log(info, "actor found in disk and memory: ~p", [ActorId3]),
+                    log(debug, "actor found in disk and memory: ~p", [ActorId3]),
                     {ok, SrvId, ActorId3, Meta};
                 _ ->
-                    log(info, "actor found in disk: ~p", [ActorId2] ),
+                    log(debug, "actor found in disk: ~p", [ActorId2] ),
                     {ok, SrvId, ActorId2, Meta}
             end;
         {error, actor_not_found} ->
