@@ -399,7 +399,9 @@ actor_srv_link_down(Link, Data, ActorSt) ->
     end.
 
 
-%% @doc Called when the timer in next_status_time is fired
+%% @doc Called when the timer when an scheduled activation time is reached
+%% Next activation time will already be deleted
+%% Object will be saved after calling this only if is_dirty is set
 -spec actor_srv_activate_timer(Time::binary(), actor_st()) ->
     {ok, actor_st()} | continue().
 

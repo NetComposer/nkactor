@@ -30,7 +30,7 @@
 -export([actor_to_actor_id/1, id_to_actor_id/1, id_to_actor_id/3]).
 -export([send_external_event/3]).
 -export([get_linked_type/2, get_linked_uids/2, add_link/3, add_checked_link/5,
-         rm_link/2, rm_links/2]).
+         add_checked_link/3, rm_link/2, rm_links/2]).
 -export([add_creation_fields/2, update/2, check_actor_links/1, check_meta_links/1, check_links/1]).
 -export([add_labels/4, add_label/3, rm_label_re/2]).
 -export([actor_id_to_path/1]).
@@ -199,6 +199,19 @@ add_checked_link(Target, Group, Resource, #{}=Actor, LinkType)
     Target2 = id_to_actor_id(Group, Resource, Target),
     case nkactor:find(Target2) of
         {ok, #actor_id{group=Group, resource=Resource, uid=UID}=TargetId} ->
+            #{metadata:=Meta} = Actor,
+            Links1 = maps:get(links, Meta, #{}),
+            Links2 = Links1#{UID => LinkType},
+            {ok, TargetId, Actor#{metadata:=Meta#{links => Links2}}};
+        _ ->
+            {error, {linked_actor_unknown, Target}}
+    end.
+
+
+%% @doc Links checking destination existence
+add_checked_link(Target, #{}=Actor, LinkType) when is_binary(LinkType) ->
+    case nkactor:find(Target) of
+        {ok, #actor_id{uid=UID}=TargetId} ->
             #{metadata:=Meta} = Actor,
             Links1 = maps:get(links, Meta, #{}),
             Links2 = Links1#{UID => LinkType},

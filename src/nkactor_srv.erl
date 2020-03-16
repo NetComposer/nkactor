@@ -851,7 +851,8 @@ do_async_op({raw_stop, Reason}, #actor_st{actor_id=#actor_id{uid=UID}}=State) ->
             log(info, "received raw_stop: ~p", [Reason])
     end,
     {_, State2} = nkactor_srv_lib:handle(actor_srv_stop, [Reason], State),
-    State3 = event(stopped, #{reason=>Reason, uid=>UID}, State2),
+    Reason2 = nklib_util:to_binary(Reason),
+    State3 = event(stopped, #{reason=>Reason2, uid=>UID}, State2),
     {stop, normal, State3#actor_st{stop_reason=raw_stop}};
 
 do_async_op({set_alarm, Alarm}, State) ->
@@ -1031,7 +1032,8 @@ do_stop(Reason, State) ->
 %% @private
 do_stop2(Reason, #actor_st{actor_id=#actor_id{uid=UID}, stop_reason=false}=State) ->
     State2 = State#actor_st{stop_reason=Reason},
-    State3 = event(stopped, #{reason=>Reason, uid=>UID}, State2),
+    Reason2 = nklib_util:to_binary(Reason),
+    State3 = event(stopped, #{reason=>Reason2, uid=>UID}, State2),
     case nkactor_srv_lib:handle(actor_srv_stop, [Reason], State3) of
         {ok, State4} ->
             {_, State5} = nkactor_srv_lib:save(unloaded, State4),
