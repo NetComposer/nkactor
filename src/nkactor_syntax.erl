@@ -217,6 +217,9 @@ parse_request_body(#{verb:=Verb, body:=Body}=Req)
                     case maps:merge(BodyFields2, Req2) of
                         #{group:=_, resource:=_, namespace:=_}=Req3 ->
                             {ok, Req3};
+                        #{group:=_, resource:=_, srv:=SrvId}=Req3 ->
+                            Namespace = nkactor:base_namespace(SrvId),
+                            {ok, Req3#{namespace=>Namespace}};
                         _ ->
                             parse_request_missing(Req)
                     end
@@ -227,6 +230,10 @@ parse_request_body(#{verb:=Verb, body:=Body}=Req)
 
 parse_request_body(#{group:=_, resource:=_, namespace:=_}=Req) ->
     {ok, Req};
+
+parse_request_body(#{group:=_, resource:=_, srv:=SrvId}=Req) ->
+    Namespace = nkactor:base_namespace(SrvId),
+    {ok, Req#{namespace=>Namespace}};
 
 parse_request_body(Req) ->
     parse_request_missing(Req).
