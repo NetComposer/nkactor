@@ -1100,15 +1100,18 @@ check_activate_time(#actor_st{actor=Actor, activate_timer=Timer1}=State) ->
             {ok, ActiveTime2} = nklib_date:to_epoch(ActiveTime, msecs),
             case ActiveTime2 - Now of
                 Step when Step=<0 ->
-                    log(info, "activation time!", []),
-                    Meta2 = maps:remove(activate_time, Meta),
-                    State2 = State#actor_st{
-                        activate_timer = undefined,
-                        actor = Actor#{metadata:=Meta2}
-                    },
-                    {ok, State3} = nkactor_srv_lib:handle(actor_srv_activate_timer, [ActiveTime], State2),
-                    {_, State4} = nkactor_srv_lib:save(activate_save, State3),
-                    State4;
+                    Fun = fun() ->
+                        Meta2 = maps:remove(activate_time, Meta),
+                        State2 = State#actor_st{
+                            activate_timer = undefined,
+                            actor = Actor#{metadata:=Meta2}
+                        },
+                        trace("calling actor_srv_activate_timer"),
+                        {ok, State3} = nkactor_srv_lib:handle(actor_srv_activate_timer, [ActiveTime], State2),
+                        {_, State4} = nkactor_srv_lib:save(activate_save, State3),
+                        State4
+                    end,
+                    new_span({trace_nkactor_server, activate}, Fun, #{}, State);
                 Step ->
                     Step2 = min(Step, ?MAX_STATUS_TIME),
                     log(debug, "not yet activation time, ~psecs left (next call in ~psecs)",
@@ -1130,19 +1133,22 @@ check_expire_time(#actor_st{actor=Actor, expire_timer=Timer1}=State) ->
             {ok, ExpireTime2} = nklib_date:to_epoch(ExpireTime, msecs),
             case ExpireTime2 - Now of
                 Step when Step=<0 ->
-                    log(info, "expiration time!", []),
-                    Meta2 = maps:remove(expire_time, Meta),
-                    State2 = State#actor_st{
-                        expire_timer = undefined,
-                        actor = Actor#{metadata:=Meta2}
-                    },
-                    case nkactor_srv_lib:handle(actor_srv_expired, [ExpireTime], State2) of
-                        {ok, State3} ->
-                            {true, State3};
-                        {delete, State3} ->
-                            {_, State4} = nkactor_srv_lib:delete(#{}, State3),
-                            {true, State4}
-                    end;
+                    Fun = fun() ->
+                        Meta2 = maps:remove(expire_time, Meta),
+                        State2 = State#actor_st{
+                            expire_timer = undefined,
+                            actor = Actor#{metadata:=Meta2}
+                        },
+                        trace("calling actor_srv_expired"),
+                        case nkactor_srv_lib:handle(actor_srv_expired, [ExpireTime], State2) of
+                            {ok, State3} ->
+                                {true, State3};
+                            {delete, State3} ->
+                                {_, State4} = nkactor_srv_lib:delete(#{}, State3),
+                                {true, State4}
+                        end
+                    end,
+                    new_span({trace_nkactor_server, expire}, Fun, #{}, State);
                 Step ->
                     Step2 = min(Step, ?MAX_STATUS_TIME),
                     log(debug, "not yet expiration time, ~pmsecs left (next call in ~pmsecs)", [Step, Step2]),

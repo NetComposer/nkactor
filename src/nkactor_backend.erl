@@ -450,7 +450,7 @@ delete_multi(SrvId, ActorIds) ->
 
 search(SrvId, SearchType, Opts) ->
     Fun = fun() ->
-        trace("calling actor_db_search (~p) (~p)", [SearchType, Opts]),
+        log(info, "calling actor_db_search (~p) (~p)", [SearchType, Opts]),
         case ?CALL_SRV(SrvId, actor_db_search, [SrvId, SearchType, Opts]) of
             {ok, Actors, Meta} ->
                 log(debug, "search success"),
