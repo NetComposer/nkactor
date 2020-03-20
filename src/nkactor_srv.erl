@@ -505,7 +505,7 @@ handle_call(Msg, From, State) ->
 handle_cast({nkactor_async_op, Op, ParentSpan}, State) ->
     Fun = fun() ->
         log(info, "async operation: ~p", [Op]),
-        trace("calling actor_srv_sync_op"),
+        trace("calling actor_srv_async_op"),
         case nkactor_srv_lib:handle(actor_srv_async_op, [Op], State) of
             {noreply, #actor_st{} = State2} ->
                 trace("noreply"),
