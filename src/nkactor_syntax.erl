@@ -77,7 +77,6 @@ name() ->
 
 
 %% @private
-%% snake_case and camel_case are allowed, but converted to snake_case always
 meta_syntax() ->
     #{
         kind => binary,
@@ -100,10 +99,10 @@ meta_syntax() ->
         events => {list, event_syntax()},
         description => binary,
         created_by => binary,
-        updated_by => binary,
-        trace_id => integer,
-        '__private_data' => map,
-        '__private_indices' => #{'__map_binary' => binary}
+        updated_by => binary
+        %trace_id => integer,
+        %'__private_data' => map,
+        %'__private_indices' => #{'__map_binary' => binary}
     }.
 
 %% @private
