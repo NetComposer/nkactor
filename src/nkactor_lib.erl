@@ -657,6 +657,7 @@ set_ttl(#{metadata:=Meta}=Actor, MSecs) ->
 %% @private
 %% Merges some changes to a map at deep level
 %% To remove a key, make it equal to '__op_remove' or <<"__op_remove">>
+%% or insert a key 'delete' as 'true'
 map_merge(Map, Update) ->
     do_map_merge(maps:to_list(Update), Map).
 
@@ -669,6 +670,9 @@ do_map_merge([{Key, '__op_remove'} | Rest], Map) ->
     do_map_merge(Rest, maps:remove(Key, Map));
 
 do_map_merge([{Key, <<"__op_remove">>} | Rest], Map) ->
+    do_map_merge(Rest, maps:remove(Key, Map));
+
+do_map_merge([{Key, #{delete:=true}} | Rest], Map) ->
     do_map_merge(Rest, maps:remove(Key, Map));
 
 do_map_merge([{Key, Val} | Rest], Map) when is_map(Val) ->
