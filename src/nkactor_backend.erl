@@ -519,6 +519,7 @@ do_read(SrvId, ActorId, Opts) ->
     trace("calling actor_db_read"),
     case ?CALL_SRV(SrvId, actor_db_read, [SrvId, ActorId, Opts]) of
         {ok, Actor, Meta} ->
+            lager:error("NKLOG ACTOR ~p", [Actor]),
             % Actor's generic syntax is already parsed
             % Now we check specific syntax
             % If request option is provided, it is used for parsing
