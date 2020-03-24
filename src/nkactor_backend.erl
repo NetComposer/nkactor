@@ -519,7 +519,14 @@ do_read(SrvId, ActorId, Opts) ->
     trace("calling actor_db_read"),
     case ?CALL_SRV(SrvId, actor_db_read, [SrvId, ActorId, Opts]) of
         {ok, Actor, Meta} ->
-            lager:error("NKLOG ACTOR ~p", [Actor]),
+            case Actor of
+                #{data:=#{<<"json_error">>:=J}} ->
+                    lager:error("NKLOG J ~s", [J]),
+                    lager:error("NKLOG J2 ~s", [nklib_json:decode(J)]),
+                    error(a);
+                _ ->
+                    ok
+            end,
             % Actor's generic syntax is already parsed
             % Now we check specific syntax
             % If request option is provided, it is used for parsing
