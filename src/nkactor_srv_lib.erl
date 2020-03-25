@@ -56,6 +56,19 @@ event(EventType, Meta, State) ->
     #actor_st{actor_id = #actor_id{group=Group, resource=Res}} = State,
     nkserver_trace:event(EventType, Meta),
     State2 = event_link(EventType, Meta, State),
+
+    case Res of
+        <<"observations">> when EventType==created ->
+            lager:error("NKLOG DO EVENT OBS: ~s ~p, ~p, ~p", [State2#actor_st.srv, Group, Res, EventType]);
+        _ ->
+            ok
+    end,
+
+
+
+
+
+
     {ok, State3} = handle(actor_srv_event, [Group, Res, EventType, Meta], State2),
     State3.
 
