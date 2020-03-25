@@ -365,8 +365,6 @@ count() ->
 
 init({Op, Actor, StartConfig, Caller, Ref, ParentSpan}) ->
     ActorId = nkactor_lib:actor_to_actor_id(Actor),
-    lager:error("NKLOG INIT ~p", [ActorId#actor_id.resource]),
-
     case nkactor_actor:get_config(ActorId) of
         {ok, _SrvId, #{activable:=false}} ->
             Caller ! {do_start_ignore, Ref, {error, actor_is_not_activable}},

@@ -392,7 +392,6 @@ create(Actor) ->
     {ok, actor_id()|actor()} | {error, term()}.
 
 create(Actor, Opts) ->
-    lager:error("NKLOG C0"),
     case nkactor_backend:create(Actor, Opts) of
         {ok, _SrvId, Result, _Meta} ->
             {ok, Result};

@@ -199,7 +199,6 @@ read(Id, Opts) ->
     {ok, nkserver:id(), nkactor:actor(),  Meta::map()} | {error, actor_not_found|term()}.
 
 create(Actor, #{activate:=false}=Opts) ->
-    lager:error("NKLOG C1a"),
     case pre_parse(Actor) of
         {ok, SrvId, Actor2} ->
             Fun = fun() ->
@@ -251,7 +250,6 @@ create(Actor, #{activate:=false}=Opts) ->
     end;
 
 create(Actor, Opts) ->
-    lager:error("NKLOG C1b"),
     case pre_parse(Actor) of
         {ok, SrvId, Actor2} ->
             Fun = fun() ->
@@ -263,7 +261,6 @@ create(Actor, Opts) ->
                         % The process will send the 'create' event in-server
                         Config = maps:with([ttl, no_unique_check], Opts),
                         trace("calling actor create"),
-                        lager:error("NKLOG CALL CREATE"),
                         case ?CALL_SRV(SrvId, actor_create, [Actor3, Config]) of
                             {ok, Pid} when is_pid(Pid) ->
                                 ActorId = nkactor_lib:actor_to_actor_id(Actor3),
