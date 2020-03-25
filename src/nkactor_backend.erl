@@ -199,6 +199,7 @@ read(Id, Opts) ->
     {ok, nkserver:id(), nkactor:actor(),  Meta::map()} | {error, actor_not_found|term()}.
 
 create(Actor, #{activate:=false}=Opts) ->
+    lager:error("NKLOG C1a"),
     case pre_parse(Actor) of
         {ok, SrvId, Actor2} ->
             Fun = fun() ->
@@ -250,7 +251,7 @@ create(Actor, #{activate:=false}=Opts) ->
     end;
 
 create(Actor, Opts) ->
-    lager:error("NKLOG C1"),
+    lager:error("NKLOG C1b"),
     case pre_parse(Actor) of
         {ok, SrvId, Actor2} ->
             Fun = fun() ->
