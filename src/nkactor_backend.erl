@@ -250,6 +250,7 @@ create(Actor, #{activate:=false}=Opts) ->
     end;
 
 create(Actor, Opts) ->
+    lager:error("NKLOG C1"),
     case pre_parse(Actor) of
         {ok, SrvId, Actor2} ->
             Fun = fun() ->
