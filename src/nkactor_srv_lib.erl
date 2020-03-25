@@ -58,7 +58,7 @@ event(EventType, Meta, State) ->
     State2 = event_link(EventType, Meta, State),
 
     case Res of
-        <<"observations">> when EventType==created ->
+        <<"observations">> ->
             lager:error("NKLOG DO EVENT OBS: ~s ~p, ~p, ~p", [State2#actor_st.srv, Group, Res, EventType]);
         _ ->
             ok
