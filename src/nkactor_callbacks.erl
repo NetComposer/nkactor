@@ -199,6 +199,8 @@ actor_path_to_id(_SrvId, _Parts) ->
     {ok, pid()} | {error, term()}.
 
 actor_create(Actor, Config) ->
+    lager:error("NKLOG CALL CREATE2"),
+
     nkactor_srv:create(Actor, Config).
 
 

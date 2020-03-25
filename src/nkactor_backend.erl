@@ -261,6 +261,7 @@ create(Actor, Opts) ->
                         % The process will send the 'create' event in-server
                         Config = maps:with([ttl, no_unique_check], Opts),
                         trace("calling actor create"),
+                        lager:error("NKLOG CALL CREATE"),
                         case ?CALL_SRV(SrvId, actor_create, [Actor3, Config]) of
                             {ok, Pid} when is_pid(Pid) ->
                                 ActorId = nkactor_lib:actor_to_actor_id(Actor3),
