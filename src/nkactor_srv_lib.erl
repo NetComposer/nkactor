@@ -57,6 +57,8 @@ event(EventType, Meta, State) ->
     nkserver_trace:event(EventType, Meta),
     State2 = event_link(EventType, Meta, State),
 
+    lager:error("NKLOG DO EVENT: ~s ~p, ~p, ~p", [State2#actor_st.srv, Group, Res, EventType]),
+
     case Res of
         <<"observations">> ->
             lager:error("NKLOG DO EVENT OBS: ~s ~p, ~p, ~p", [State2#actor_st.srv, Group, Res, EventType]);
