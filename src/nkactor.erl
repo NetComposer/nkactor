@@ -684,6 +684,8 @@ search_linked_to(SrvId, Id, Opts) ->
                 {error, Error} ->
                     {error, Error}
             end;
+        {error, actor_not_found} ->
+            {ok, []};
         {error, Error} ->
             {error, Error}
     end.

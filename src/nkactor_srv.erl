@@ -485,7 +485,7 @@ handle_call({nkactor_sync_op, Op, ParentSpan}, From, State) ->
         false when is_atom(Op) -> Op;
         false -> other
     end,
-    Opts1 = #{op => SpanOp},
+    Opts1 = #{metadata => #{op => SpanOp}},
     Opts2 = case ParentSpan of
         undefined ->
             Opts1;
@@ -533,7 +533,7 @@ handle_cast({nkactor_async_op, Op, ParentSpan}, State) ->
         false when is_atom(Op) -> Op;
         false -> other
     end,
-    Opts1 = #{op => SpanOp},
+    Opts1 = #{metadata => #{op => SpanOp}},
     Opts2 = case ParentSpan of
         undefined ->
             Opts1;

@@ -138,12 +138,14 @@ request(Req) ->
                 end
             end,
             SpanOpts = #{
-                group => Group,
-                resource => Res,
-                namespace => Ns,
-                name => maps:get(name, Req2, <<>>),
-                verb => Verb,
-                subresource => SubRes
+                metadata => #{
+                    group => Group,
+                    resource => Res,
+                    namespace => Ns,
+                    name => maps:get(name, Req2, <<>>),
+                    verb => Verb,
+                    subresource => SubRes
+                }
             },
             nkserver_trace:new_span(SrvId, trace_nkactor_request, Fun, SpanOpts);
         {error, Error, Req2} ->
