@@ -491,6 +491,34 @@ delete_collection(ActorId, Config, Req) ->
     end.
 
 
+%%%% @doc
+%%watch(SrvId, #actor_id{name=undefined, domain=Domain}=ActorId, Config, ApiReq) ->
+%%    % We are watching on a domain
+%%    {Name2, Domain2} = case binary:split(Domain, <<".">>) of
+%%        [DomName, DomRest] ->
+%%            {DomName, DomRest};
+%%        [DomName] ->
+%%            {DomName, ?ROOT_DOMAIN}
+%%    end,
+%%    ActorId2 = ActorId#actor_id{
+%%        domain = Domain2,
+%%        group = ?GROUP_CORE,
+%%        resource = ?RES_CORE_DOMAINS,
+%%        name = Name2
+%%    },
+%%    #{camel:=DomKind} = Config,
+%%    % The 'kind' parameter will be added to the link as a filter,
+%%    % so that only events reaching the domain actor of this Kind will be
+%%    % sent to the watcher
+%%    % @see actor_srv_link_event in nkdomain_callbacks
+%%    #{domain:=Domain, params:=Params} = ApiReq,
+%%    Params2 = Params#{kind=>DomKind},
+%%    nkdomain_api_watch:start(SrvId, ActorId2, Config, ApiReq#{params:=Params2});
+%%
+%%watch(SrvId, ActorId, Config, ApiReq) ->
+%%    % We are watching on a regular object
+%%    nkdomain_api_watch:start(SrvId, ActorId, Config, ApiReq).
+
 
 %%params_syntax(watch) ->
 %%    #{

@@ -599,7 +599,7 @@ actor_db_create(_SrvId, _Actor, _Opts) ->
 
 
 %% @doc Must update a new actor on disk.
--spec actor_db_update(nkserver:id(), actor(), db_opts()) ->
+-spec actor_db_update(nkserver:id(), actor()|[actor()], db_opts()) ->
     {ok, Meta::map()} | {error, term()}.
 
 actor_db_update(_SrvId, _Actor, _Opts) ->
