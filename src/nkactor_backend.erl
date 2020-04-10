@@ -235,8 +235,13 @@ create(Actor, #{activate:=false}=Opts) ->
                                         {ok, SrvId, ActorId, Meta}
                                 end;
                             {error, Error} ->
-                                log("error creating actor: ~p", [Error]),
                                 nkserver_trace:error(Error),
+                                case Error of
+                                    actor_already_exists ->
+                                        ok;
+                                    _ ->
+                                        log("error creating actor: ~p", [Error])
+                                end,
                                 {error, Error}
                         end;
                     {error, Error} ->
@@ -297,12 +302,14 @@ create(Actor, Opts) ->
                                         {ok, SrvId, ActorId, #{}}
                                 end;
                             {error, Error} ->
-                                log(notice, "error creating actor: ~p", [Error]),
                                 nkserver_trace:error(Error),
                                 case Error of
                                     actor_already_activated ->
                                         {error, actor_already_exists};
+                                    actor_already_exists ->
+                                        {error, actor_already_exists};
                                     _ ->
+                                        log(notice, "error creating actor: ~p", [Error]),
                                         {error, Error}
                                 end
                         end;

@@ -465,8 +465,10 @@ save(Reason, SaveOpts, #actor_st{actor=Actor, is_dirty = true} = State) ->
                             {error, not_implemented} ->
                                 log(info, "save not implemented"),
                                 {{error, not_implemented}, State3};
-                            {error, Error} when Error==uniqueness_violation; Error==duplicated_name ->
-                                log(info, "uniqueness violation"),
+                            {error, Error} when
+                                    Error==uniqueness_violation; Error==duplicated_name;
+                                    Error==actor_already_exists ->
+                                log(info, "actor already exists"),
                                 {{error, actor_already_exists}, State3};
                             {error, Error} ->
                                 log(warning, "actor save error: ~p", [Error]),

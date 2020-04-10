@@ -944,7 +944,12 @@ do_post_init(Op, State) ->
             log(debug, "actor init completed"),
             {ok, do_refresh_ttl(State5)};
         {{error, Error}, _State3} ->
-            log(warning, "actor save error: ~p", [Error]),
+            case Error of
+                actor_already_exists ->
+                    ok;
+                _ ->
+                    log(warning, "actor save error: ~p", [Error])
+            end,
             {error, Error}
     end.
 
