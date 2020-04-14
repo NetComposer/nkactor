@@ -591,7 +591,7 @@ actor_db_read(_SrvId, _ActorId, _Opts) ->
 
 
 %% @doc Must create a new actor on disk. Should fail if already present
--spec actor_db_create(nkserver:id(), actor(), db_opts()) ->
+-spec actor_db_create(nkserver:id(), actor()|[actor()], db_opts()) ->
     {ok, Meta::map()} | {error, uniqueness_violation|field_invalid|term()}.
 
 actor_db_create(_SrvId, _Actor, _Opts) ->
