@@ -107,7 +107,7 @@
 -type link_opts() ::
     #{
         get_events => boolean(),        % calls to actor_srv_link_event for each event (false)
-        gen_events => boolean(),        % generate events {link_XXX} (true)
+        gen_events => boolean(),        % generate added/removed events {link_XXX} (true)
         avoid_unload => boolean(),      % do not unload until is unlinked (false)
         data => term()                  % user config
     }.
@@ -783,9 +783,9 @@ do_sync_op(Op, _From, State) ->
 do_async_op({unlink, Link}, State) ->
     case nkactor_srv_lib:remove_link(Link, State) of
         {true, State2} ->
-            {ok, State2};
+            noreply(State2);
         false ->
-            {ok, State}
+            noreply(State)
     end;
 
 do_async_op({send_info, Info, Meta}, State) ->
@@ -793,6 +793,9 @@ do_async_op({send_info, Info, Meta}, State) ->
 
 do_async_op({send_event, Event}, State) ->
     noreply(event(Event, #{}, do_refresh_ttl(State)));
+
+do_async_op({send_event, Event, Data}, State) ->
+    noreply(event(Event, Data, do_refresh_ttl(State)));
 
 do_async_op({set_activate_time, Time}, State) ->
     noreply(nkactor_srv_lib:set_activate_time(Time, State));
