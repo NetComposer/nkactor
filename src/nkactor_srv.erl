@@ -732,7 +732,7 @@ do_sync_op(is_enabled, _From, #actor_st{is_enabled=IsEnabled}=State) ->
 
 do_sync_op({link, Link, Opts}, _From, State) ->
     State2 = nkactor_srv_lib:add_link(Link, Opts, State),
-    reply(ok, do_refresh_ttl(State2));
+    reply({ok, self()}, do_refresh_ttl(State2));
 
 do_sync_op({update, Actor, Opts}, _From, State) ->
     #actor_st{is_enabled=IsEnabled, config=Config} = State,

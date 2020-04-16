@@ -642,22 +642,23 @@ clear_all_alarms(#actor_st{actor=Actor}=State) ->
 set_unload_policy(#actor_st{actor=Actor, config=Config}=State) ->
     case Config of
         #{permanent:=true} ->
-            ?ACTOR_DEBUG("unload policy is config permanent", [], State),
+            log(debug, "unload policy is config permanent", []),
             State#actor_st{unload_policy=permanent};
         #{auto_activate:=true} ->
-            ?ACTOR_DEBUG("unload policy is config auto_activate", [], State),
+            log(debug, "unload policy is config auto_activate", []),
             State2 = nkactor_srv_lib:set_auto_activate(true, State),
             State2#actor_st{unload_policy=permanent};
         _ ->
             case Actor of
                 #{metadata:=#{auto_activate:=true}} ->
-                    ?ACTOR_DEBUG("unload policy is actor auto_activate", [], State),
+                    log(debug, "unload policy is actor auto_activate", []),
                     State2 = nkactor_srv_lib:set_auto_activate(true, State),
                     State2#actor_st{unload_policy=permanent};
                 _ ->
+
                     % A TTL reseated after each operation
                     TTL = maps:get(ttl, Config, ?DEFAULT_TTL),
-                    ?ACTOR_DEBUG("unload policy is TTL ~p", [TTL], State),
+                    log(debug, "unload policy is TTL ~p", [TTL]),
                     State#actor_st{unload_policy={ttl, TTL}}
             end
     end.
