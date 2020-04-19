@@ -403,6 +403,7 @@ init({Op, Actor, StartConfig, Caller, Ref, ParentSpan}) ->
                                         State5 = nkactor_srv_lib:set_times(State4),
                                         case do_post_init(Op, State5) of
                                             {ok, State6} ->
+                                                nklib_counters:incr(?MODULE),
                                                 {ok, State6};
                                             {error, Error} ->
                                                 do_init_stop(Error, Caller, Ref, State5)
