@@ -401,7 +401,6 @@ set_updated(#actor_st{actor=Actor}=State) ->
     Actor2 = nkactor_lib:update(Actor, nklib_date:now_3339(usecs)),
     State#actor_st{actor = Actor2, is_dirty = true}.
 
-
 %% @doc
 save(Reason, State) ->
     save(Reason, #{}, State).
