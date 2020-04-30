@@ -22,11 +22,12 @@
 -module(nkactor_srv_lib).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([new_span/4, new_actor_span/4, event/3]).
+-export([new_span/4, new_actor_span/4, event/3, event_updated/2]).
 -export([event_link/3, update/3, delete/2, set_auto_activate/2]).
 -export([set_activate_time/2, unset_activate_time/1, set_expire_time/3, unset_expire_time/1]).
 -export([get_links/1, add_link/3, remove_link/2, save/2,
-         remove_all_links/1, add_actor_event/2, add_actor_event/3, add_actor_event/4, set_updated/1,
+         remove_all_links/1, add_actor_event/2, add_actor_event/3, add_actor_event/4,
+         set_updated/1,
          update_status/2, update_status/3, add_actor_alarm/2, clear_all_alarms/1]).
 -export([handle/3, set_times/1]).
 -import(nkserver_trace, [trace/1, trace/2, log/2, log/3]).
@@ -58,6 +59,11 @@ event(EventType, Meta, State) ->
     State2 = event_link(EventType, Meta, State),
     {ok, State3} = handle(actor_srv_event, [Group, Res, EventType, Meta], State2),
     State3.
+
+
+%% @doc Send full actor structure (data->status, etc.)
+event_updated(UpdActor, State) ->
+    event(updated, #{update=>UpdActor}, State).
 
 
 %% @doc
@@ -325,7 +331,7 @@ update(UpdActor, Opts, #actor_st{actor_id=ActorId, actor=Actor}=State) ->
                                     trace("calling do_save"),
                                     case save(update, #{}, State5) of
                                         {ok, State6} ->
-                                            {ok, event(updated, #{update=>UpdActor}, State6)};
+                                            {ok, event_updated(UpdActor, State6)};
                                         {{error, SaveError}, State6} ->
                                             log(warning, "update save error: ~p", [SaveError]),
                                             nkserver_trace:error(SaveError),
@@ -350,6 +356,12 @@ update(UpdActor, Opts, #actor_st{actor_id=ActorId, actor=Actor}=State) ->
         throw:Throw ->
             {error, Throw, State}
     end.
+
+
+%% @doc
+set_updated(#actor_st{actor=Actor}=State) ->
+    Actor2 = nkactor_lib:update(Actor, nklib_date:now_3339(usecs)),
+    State#actor_st{actor = Actor2, is_dirty = true}.
 
 
 %% @doc Copy fields from 'data.status' from old actor to new
@@ -381,7 +393,8 @@ delete(Opts, #actor_st{srv = SrvId, actor_id = ActorId, actor = Actor} = State) 
             case ?CALL_SRV(SrvId, actor_db_delete, [SrvId, ActorId, #{}]) of
                 {ok, DbMeta} ->
                     ?ACTOR_DEBUG("object deleted: ~p", [DbMeta], State),
-                    {ok, event(deleted, #{}, State2#actor_st{is_dirty = deleted})};
+                    State3 = event(deleted, #{}, State2#actor_st{is_dirty = deleted}),
+                    {ok, State3};
                 {error, Error} ->
                     case Error of
                         actor_has_linked_actors ->
@@ -395,11 +408,6 @@ delete(Opts, #actor_st{srv = SrvId, actor_id = ActorId, actor = Actor} = State) 
             {{error, Error}, State2}
     end.
 
-
-%% @doc
-set_updated(#actor_st{actor=Actor}=State) ->
-    Actor2 = nkactor_lib:update(Actor, nklib_date:now_3339(usecs)),
-    State#actor_st{actor = Actor2, is_dirty = true}.
 
 %% @doc
 save(Reason, State) ->

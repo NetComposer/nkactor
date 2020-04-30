@@ -378,12 +378,12 @@ update(Id, Actor, Opts) ->
 
 
 %% @doc Deletes an actor
--spec delete(nkactor:id(), #{cascade=>boolean()}) ->
+-spec delete(nkactor:id(), #{activate=>boolean()}) ->
     {ok, map()} | {error, actor_not_found|term()}.
 
-delete(Id, Opts) ->
+delete(Id, #{activate:=false}=Opts) ->
     case find(Id, Opts) of
-        {ok, SrvId, #actor_id{uid=UID, pid=Pid}=ActorId2, _Meta} ->
+        {ok, SrvId, #actor_id{uid=UID, pid=Pid}=ActorId, _Meta} ->
             Fun = fun() ->
                 #actor_id{
                     namespace = Namespace,
@@ -392,7 +392,46 @@ delete(Id, Opts) ->
                     name = Name,
                     uid = UID,
                     pid = Pid
-                } = ActorId2,
+                } = ActorId,
+                nkserver_trace:tags(#{
+                    <<"actor.namespace">> => Namespace,
+                    <<"actor.group">> => Group,
+                    <<"actor.resource">> => Res,
+                    <<"actor.name">> => Name,
+                    <<"actor.uid">> => UID,
+                    <<"actor.opts.activate">> => false
+                }),
+                trace("calling actor_db_delete"),
+                case ?CALL_SRV(SrvId, actor_db_delete, [SrvId, ActorId, Opts]) of
+                    {ok, DeleteMeta} ->
+                        % In this case, we must send the deleted events
+                        FakeActor = make_fake_actor(ActorId),
+                        nkactor_lib:send_external_event(SrvId, deleted, FakeActor),
+                        log(debug, "successful"),
+                        {ok, DeleteMeta};
+                    {error, Error} ->
+                        log(notice, "error deleting inactive actor: ~p", [Error]),
+                        nkserver_trace:error(Error),
+                        {error, Error}
+                end
+            end,
+            nkserver_trace:new_span(SrvId, {trace_nkactor_backend, delete}, Fun);
+        {error, Error} ->
+            {error, Error}
+    end;
+
+delete(Id, Opts) ->
+    case do_activate(Id, Opts, 3) of
+        {ok, SrvId, #actor_id{uid=UID, pid=Pid}=ActorId, _} ->
+            Fun = fun() ->
+                #actor_id{
+                    namespace = Namespace,
+                    group = Group,
+                    resource = Res,
+                    name = Name,
+                    uid = UID,
+                    pid = Pid
+                } = ActorId,
                 PidBin = case is_pid(Pid) of
                     true ->
                         list_to_binary(pid_to_list(Pid));
@@ -407,37 +446,20 @@ delete(Id, Opts) ->
                     <<"actor.uid">> => UID,
                     <<"actor.pid">> => PidBin
                 }),
-                case is_pid(Pid) of
-                    true ->
-                        trace("calling actor delete"),
-                        case nkactor:sync_op(ActorId2, {delete, Opts}, infinity) of
-                            ok ->
-                                % The object is loaded, and it will perform the delete
-                                % itself, including sending the event (a full event)
-                                % It will stop, and when the backend calls raw_stop/2
-                                % the actor would not be activated, unless it is
-                                % reactivated in the middle, and would stop without saving
-                                log(debug, "successful"),
-                                {ok, #{}};
-                            {error, Error} ->
-                                log(notice, "error deleting active actor: ~p", [Error]),
-                                nkserver_trace:error(Error),
-                                {error, Error}
-                        end;
-                    false ->
-                        trace("calling actor_db_delete"),
-                        case ?CALL_SRV(SrvId, actor_db_delete, [SrvId, ActorId2, Opts]) of
-                            {ok, DeleteMeta} ->
-                                % In this case, we must send the deleted events
-                                FakeActor = make_fake_actor(ActorId2),
-                                nkactor_lib:send_external_event(SrvId, deleted, FakeActor),
-                                log(debug, "successful"),
-                                {ok, DeleteMeta};
-                            {error, Error} ->
-                                log(notice, "error deleting inactive actor: ~p", [Error]),
-                                nkserver_trace:error(Error),
-                                {error, Error}
-                        end
+                trace("calling actor delete"),
+                case nkactor:sync_op(Pid, {delete, Opts}, infinity) of
+                    ok ->
+                        % The object is loaded, and it will perform the delete
+                        % itself, including sending the event (a full event)
+                        % It will stop, and when the backend calls raw_stop/2
+                        % the actor would not be activated, unless it is
+                        % reactivated in the middle, and would stop without saving
+                        log(debug, "successful"),
+                        {ok, #{}};
+                    {error, Error} ->
+                        log(notice, "error deleting active actor: ~p", [Error]),
+                        nkserver_trace:error(Error),
+                        {error, Error}
                 end
             end,
             nkserver_trace:new_span(SrvId, {trace_nkactor_backend, delete}, Fun);
