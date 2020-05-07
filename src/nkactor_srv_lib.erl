@@ -200,6 +200,7 @@ remove_link(Link, #actor_st{links = Links} = State) ->
     end.
 
 
+%% metadada is always merged, use __op_remove to delete links or annotations
 %% @doc
 update(UpdActor, Opts, #actor_st{actor_id=ActorId, actor=Actor}=State) ->
     UpdActorId = nkactor_lib:actor_to_actor_id(UpdActor),
@@ -280,13 +281,14 @@ update(UpdActor, Opts, #actor_st{actor_id=ActorId, actor=Actor}=State) ->
         Meta = maps:get(metadata, Actor, #{}),
         UpdMeta1 = maps:get(metadata, UpdActor),
         MetaSyntax = nkactor_syntax:meta_syntax(),
+        % We will check later that no important fields has been modified
         UpdMeta2 = case nklib_syntax:parse(UpdMeta1, MetaSyntax, #{path=><<"metadata">>}) of
             {ok, UpdMeta2_0, []} ->
                 UpdMeta2_0;
             {ok, _, [Field|_]} ->
                 throw({updated_static_field, Field})
         end,
-        % We will check later that no important fields has been modified
+        % Will merge everything, use __op_remove for deletions
         NewMeta1 = nkactor_lib:map_merge(Meta, UpdMeta2),
         Links1 = maps:get(links, Meta, #{}),
         Links2 = maps:get(links, NewMeta1, #{}),

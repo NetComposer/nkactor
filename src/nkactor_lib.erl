@@ -669,10 +669,16 @@ do_map_merge([], Map) ->
 do_map_merge([{Key, '__op_remove'} | Rest], Map) ->
     do_map_merge(Rest, maps:remove(Key, Map));
 
+do_map_merge([{Key, "__op_remove"} | Rest], Map) ->
+    do_map_merge(Rest, maps:remove(Key, Map));
+
 do_map_merge([{Key, <<"__op_remove">>} | Rest], Map) ->
     do_map_merge(Rest, maps:remove(Key, Map));
 
 do_map_merge([{Key, #{delete:=true}} | Rest], Map) ->
+    do_map_merge(Rest, maps:remove(Key, Map));
+
+do_map_merge([{Key, #{<<"delete">>:=true}} | Rest], Map) ->
     do_map_merge(Rest, maps:remove(Key, Map));
 
 do_map_merge([{Key, Val} | Rest], Map) when is_map(Val) ->
