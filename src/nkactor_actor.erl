@@ -23,8 +23,9 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([get_module/3, get_config/1, get_config/2, get_common_config/1]).
--export([parse/4, unparse/3, request/3]).
+-export([parse/4, unparse/3, get_labels/3, request/3]).
 -import(nkserver_trace, [log/2, log/3, trace/1, trace/2]).
+-export([remove_prefixes/3, has_prefix/2]).
 
 -include("nkactor.hrl").
 -include("nkactor_debug.hrl").
@@ -65,6 +66,13 @@
 
 -callback parse(read|create|update, map(), request()) ->
     continue | {ok, Actor::map()} | {syntax, nkactor:vsn(), nklib_syntax:syntax()} | {error, term()}.
+
+%% @doc Called to update actors labels
+%% If implemented, must return a list of label prefixes to remove from
+%% the previous labels, and a map with new labels to add
+
+-callback get_labels(actor()) ->
+    continue | {ok, list(), map()}.
 
 
 %% @doc Called to process an incoming actor request
@@ -186,7 +194,7 @@
 
 %% @doc
 -optional_callbacks([
-    parse/3, request/4, save/2,
+    parse/3, get_labels/1, request/4, save/2,
     init/2, get/2, update/3, delete/2, sync_op/3, async_op/2, enabled/2, heartbeat/1,
     event/3, link_event/5, activated/2, expired/2,
     handle_call/3, handle_cast/2, handle_info/2, stop/2, terminate/2]).
@@ -413,6 +421,38 @@ unparse(SrvId, Actor, Req) ->
     end.
 
 
+-spec get_labels(nkserver:id(), read|create|updated, actor()) ->
+    {updated|not_updated, map()}.
+
+get_labels(SrvId, _Op, Actor) ->
+    #{metadata:=Meta, group:=Group, resource:=Res} = Actor,
+    Labels1 = maps:get(labels, Meta, #{}),
+    Args = [get_labels, Group, Res, [Actor]],
+    case ?CALL_SRV(SrvId, nkactor_callback, Args) of
+        continue ->
+            {not_updated, Actor};
+        {ok, Prefixes, MakeLabels} ->
+            Labels2 = case Prefixes of
+                [] ->
+                    Labels1;
+                _ ->
+                    Prefixes2 = [to_bin(P) || P <- Prefixes],
+                    remove_prefixes(maps:to_list(Labels1), Prefixes2, [])
+            end,
+            lager:error("NKLOG NEW LABELS ~p", [MakeLabels]),
+            lager:error("EXTRACTED LABELS ~p", [Labels2]),
+            Labels3 = maps:merge(Labels2, MakeLabels),
+            case Labels3 of
+                Labels1 ->
+                    lager:error("NOT UPDATED"),
+                    {not_updated, Actor};
+                _ ->
+                    lager:error("FINAL LABELS ~p", [Labels3]),
+                    {updated, Actor#{metadata:=Meta#{labels=>Labels3}}}
+            end
+    end.
+
+
 %% @doc Used to call the 'request' callback on an actor's module, in case
 %% it has implemented it (to support specific requests)
 %% If parse_id is used, logs will be added
@@ -440,6 +480,34 @@ request(SrvId, ActorId, Req) ->
 %% Internal
 %% ===================================================================
 %%
+
+
+remove_prefixes([], _Prefixes, Acc) ->
+    maps:from_list(Acc);
+
+remove_prefixes([{Key, Val}|Rest], Prefixes, Acc) ->
+    Acc2 = case has_prefix(Key, Prefixes) of
+        true ->
+            lager:error("NKLOG REMOVED LABEL ~p", [Key]),
+            Acc;
+        false ->
+            [{Key, Val}|Acc]
+    end,
+    remove_prefixes(Rest, Prefixes, Acc2).
+
+
+has_prefix(_Key, []) ->
+    false;
+
+has_prefix(Key, [Prefix|Rest]) ->
+    case binary:match(Key, Prefix) of
+        {0, _} -> true;
+        _ -> has_prefix(Key, Rest)
+    end.
+
+
+
+
 
 %% @private
 to_bin(Term) when is_binary(Term) -> Term;

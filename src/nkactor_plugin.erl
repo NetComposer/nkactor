@@ -235,6 +235,7 @@ gen_actor_callbacks(SrvId, Group, [Module|Rest], Acc) ->
     FunList = [
         {parse, 3},
         {unparse, 2},
+        {get_labels, 1},
         {request, 4},
         {save, 2},
         {init, 2},

@@ -918,15 +918,22 @@ do_pre_init(ActorId, Actor, Config, SrvId) ->
 
 %% @private
 do_post_init(Op, State) ->
-    #actor_st{config=Config} = State,
+    #actor_st{srv=SrvId, actor=Actor, config=Config} = State,
     ?ACTOR_DEBUG("started (~p)", [self()], State),
     State2 = case Op of
         create ->
             trace("starting creation save"),
             % Do not update generation
             State#actor_st{is_dirty=true};
-        _ ->
-            State
+        start ->
+            % For start, we didn't call get_labels in backend
+            case nkactor_actor:get_labels(SrvId, read, Actor) of
+                {not_updated, _} ->
+                    State;
+                {updated, Actor2} ->
+                    log(warning, "labels have been updated offline!"),
+                    State#actor_st{actor=Actor2, is_dirty=true}
+            end
     end,
     case nkactor_srv_lib:save(Op, State2) of
         {ok, State3} ->

@@ -23,7 +23,7 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([new_span/4, new_actor_span/4, event/3, event_updated/2]).
--export([event_link/3, update/3, delete/2, set_auto_activate/2]).
+-export([event_link/3, update/3, delete/2, set_auto_activate/2, update_labels/1]).
 -export([set_activate_time/2, unset_activate_time/1, set_expire_time/3, unset_expire_time/1]).
 -export([get_links/1, add_link/3, remove_link/2, save/2,
          remove_all_links/1, add_actor_event/2, add_actor_event/3, add_actor_event/4,
@@ -197,6 +197,16 @@ remove_link(Link, #actor_st{links = Links} = State) ->
             {true, State3};
         not_found ->
             false
+    end.
+
+
+%% @doc
+update_labels(#actor_st{srv=SrvId, actor=Actor}=ActorSt) ->
+    case nkactor_actor:get_labels(SrvId, update, Actor) of
+        {not_updated, _} ->
+            ActorSt;
+        {updated, Actor2} ->
+            ActorSt#actor_st{actor=Actor2, is_dirty = true}
     end.
 
 

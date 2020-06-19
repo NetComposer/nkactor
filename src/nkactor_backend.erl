@@ -559,6 +559,7 @@ do_read(SrvId, ActorId, Opts) ->
                 _ ->
                     case nkactor_actor:parse(SrvId, read, Actor, Req2) of
                         {ok, Actor2} ->
+                            % We call get_labels once activated to be able to save
                             log(debug, "actor is valid"),
                             {ok, Actor2, Meta};
                         {error, Error} ->
@@ -722,11 +723,12 @@ pre_create(SrvId, Actor, Opts) ->
             Req2 = Req1#{srv => SrvId},
             case nkactor_actor:parse(SrvId, create, Actor3, Req2) of
                 {ok, Actor4} ->
+                    {_, Actor5} = nkactor_actor:get_labels(SrvId, create, Actor4),
                     trace("calling pre_create check links"),
-                    case nkactor_lib:check_actor_links(Actor4) of
-                        {ok, Actor5} ->
+                    case nkactor_lib:check_actor_links(Actor5) of
+                        {ok, Actor6} ->
                             log(debug, "actor pre_created"),
-                            {ok, Actor5};
+                            {ok, Actor6};
                         {error, Error} ->
                             log(notice, "error checking links: ~p", [Error]),
                             {error, Error}
@@ -753,11 +755,12 @@ pre_update(SrvId, ActorId, Actor, Opts) ->
             Req2 = Req1#{srv => SrvId},
             case nkactor_actor:parse(SrvId, update, Actor3, Req2) of
                 {ok, Actor4} ->
+                    {_, Actor5} = nkactor_actor:get_labels(SrvId, create, Actor4),
                     trace("calling pre_update check links"),
-                    case nkactor_lib:check_actor_links(Actor4) of
-                        {ok, Actor5} ->
+                    case nkactor_lib:check_actor_links(Actor5) of
+                        {ok, Actor6} ->
                             log(debug, "actor pre_updated"),
-                            {ok, Actor5};
+                            {ok, Actor6};
                         {error, Error} ->
                             log(notice, "error checking links: ~p", [Error]),
                             {error, Error}
