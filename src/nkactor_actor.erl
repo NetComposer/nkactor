@@ -439,15 +439,15 @@ get_labels(SrvId, _Op, Actor) ->
                     Prefixes2 = [to_bin(P) || P <- Prefixes],
                     remove_prefixes(maps:to_list(Labels1), Prefixes2, [])
             end,
-            lager:error("NKLOG NEW LABELS ~p", [MakeLabels]),
-            lager:error("EXTRACTED LABELS ~p", [Labels2]),
+            %lager:error("NKLOG NEW LABELS ~p", [MakeLabels]),
+            %lager:error("EXTRACTED LABELS ~p", [Labels2]),
             Labels3 = maps:merge(Labels2, MakeLabels),
             case Labels3 of
                 Labels1 ->
-                    lager:error("NOT UPDATED"),
+                    %lager:error("NOT UPDATED"),
                     {not_updated, Actor};
                 _ ->
-                    lager:error("FINAL LABELS ~p", [Labels3]),
+                    %lager:error("FINAL LABELS ~p", [Labels3]),
                     {updated, Actor#{metadata:=Meta#{labels=>Labels3}}}
             end
     end.
@@ -488,7 +488,7 @@ remove_prefixes([], _Prefixes, Acc) ->
 remove_prefixes([{Key, Val}|Rest], Prefixes, Acc) ->
     Acc2 = case has_prefix(Key, Prefixes) of
         true ->
-            lager:error("NKLOG REMOVED LABEL ~p", [Key]),
+            %lager:error("NKLOG REMOVED LABEL ~p", [Key]),
             Acc;
         false ->
             [{Key, Val}|Acc]

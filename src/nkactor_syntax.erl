@@ -315,7 +315,9 @@ actor_fields_filter() ->
         'metadata.is_enabled',
         'metadata.in_alarm',
         'metadata.auto_activate',
-        'metadata.activate_time'
+        'metadata.activate_time',
+        'label_key',
+        'label_value'
     ].
 
 
@@ -338,7 +340,9 @@ actor_fields_sort() ->
         'metadata.is_enabled',
         'metadata.in_alarm',
         'metadata.auto_activate',
-        'metadata.activate_time'
+        'metadata.activate_time',
+        'label_key',
+        'label_value'
     ].
 
 
