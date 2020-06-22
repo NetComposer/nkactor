@@ -28,7 +28,8 @@
          create_or_update/1, create_or_update/2, delete/1, delete/2]).
 -export([get_actor/1, get_actor/2, get_path/1, is_enabled/1, enable/2, stop/1, stop/2]).
 -export([search_groups/2, search_resources/3]).
--export([search_label/3, search_label_range/4, search_linked_to/3, search_fts/3, search_actors/3, delete_multi/3, delete_old/5]).
+-export([search_label/3, search_label_range/4, search_linked_to/3, search_fts/3,
+         search_actors/3, count_actors/3, delete_multi/3, delete_old/5]).
 -export([search_activate/2, truncate/1]).
 -export([base_namespace/1, find_cached_label/4, find_cached_linked/3]).
 -export([sync_op/2, sync_op/3, async_op/2]).
@@ -733,6 +734,28 @@ search_actors(SrvId, SearchSpec, SearchOpts) ->
         {error, Error} ->
             {error, Error}
     end.
+
+%% @doc Generic search returning actors
+%% If 'meta' is not populated with filters available, types, etc.:
+%% - any field can be used for filter, sort, etc.
+%% - you must supply the type, or it will be converted to string
+-spec count_actors(nkserver:id(), nkactor_search:spec(), nkactor_seach:opts()) ->
+    {ok, pos_integer(), Meta::map()} | {error, term()}.
+
+count_actors(SrvId, SearchSpec, SearchOpts) ->
+    case nkactor_search:parse_spec(SearchSpec, SearchOpts) of
+        {ok, SearchSpec2} ->
+            %lager:error("NKLOG PARSED ~p", [SearchSpec2]),
+            case nkactor_backend:search(SrvId, actors_search, SearchSpec2#{do_count=>true}) of
+                {ok, [], #{total:=Total}} ->
+                    {ok, Total};
+                {error, Error} ->
+                    {error, Error}
+            end;
+        {error, Error} ->
+            {error, Error}
+    end.
+
 
 
 %% @doc Generic deletion of objects

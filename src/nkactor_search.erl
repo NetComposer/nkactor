@@ -190,7 +190,8 @@ search_spec_syntax() ->
         only_uid => boolean,
         get_data => boolean,
         get_metadata => boolean,
-        '__defaults' => #{namespace => <<>>}
+        use_labels => boolean,
+        '__defaults' => #{namespace => <<>>, deep=>true}
     }.
 
 
