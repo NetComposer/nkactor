@@ -406,20 +406,20 @@ init({Op, Actor, StartConfig, Caller, Ref, ParentSpan}) ->
                                                 nklib_counters:incr(?MODULE),
                                                 {ok, State6};
                                             {error, Error} ->
-                                                do_init_stop(Error, Caller, Ref, State5)
+                                                do_init_stop(Error, Caller, Ref)
                                         end;
                                     {error, Error} ->
-                                        do_init_stop(Error, Caller, Ref, State3);
+                                        do_init_stop(Error, Caller, Ref);
                                     {delete, Error} ->
                                         _ = nkactor_srv_lib:delete(#{}, State3),
-                                        do_init_stop(Error, Caller, Ref, State3)
+                                        do_init_stop(Error, Caller, Ref)
                                 end;
                             {error, Error} ->
-                                do_init_stop(Error, Caller, Ref, State2)
+                                do_init_stop(Error, Caller, Ref)
                         end;
                     {true, State3} ->
                         _ = do_stop(actor_expired, State3),
-                        do_init_stop(actor_expired, Caller, Ref, State3)
+                        do_init_stop(actor_expired, Caller, Ref)
                 end
             end,
             case new_span({trace_nkactor_server, load}, Fun, #{parent=>ParentSpan}, State1) of
@@ -431,7 +431,10 @@ init({Op, Actor, StartConfig, Caller, Ref, ParentSpan}) ->
                     {ok, FinalState};
                 Other ->
                     Other
-            end
+            end;
+        {error, Error} ->
+            lager:error("NKLOG ERROR STARTING ACTOR ~p ~p ~p ~p", [Error, Op, Actor, ParentSpan]),
+            do_init_stop(Error, Caller, Ref)
     end.
 
 
@@ -966,7 +969,7 @@ do_post_init(Op, State) ->
 
 
 %% @private
-do_init_stop(Error, Caller, Ref, _State) ->
+do_init_stop(Error, Caller, Ref) ->
     case Error of
         actor_already_activated ->
             ok;
