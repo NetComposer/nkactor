@@ -588,7 +588,7 @@ do_activate(Id, Opts, Tries) when Tries > 0 ->
                             log(debug, "actor is activated"),
                             {ok, SrvId, ActorId#actor_id{pid=Pid}, Meta2};
                         {error, actor_already_activated} ->
-                            lager:info("Already activated ~p: retrying (~p tries left)", [Id, Tries]),
+                            lager:info("Already activated1 ~p: retrying (~p tries left)", [Id, Tries]),
                             timer:sleep(100),
                             do_activate(Id, Opts, Tries-1);
                         {error, Error} ->
@@ -598,6 +598,10 @@ do_activate(Id, Opts, Tries) when Tries > 0 ->
                 {error, persistence_not_defined} ->
                     log(debug, "persistence_not_defined"),
                     {error, actor_not_found};
+                {error, {already_started, _Pid}} ->
+                    lager:info("Already activated2 ~p: retrying (~p tries left)", [Id, Tries]),
+                    timer:sleep(100),
+                    do_activate(Id, Opts, Tries-1);
                 {error, Error} ->
                     log(notice, "error activating actor: ~p", [Error]),
                     {error, Error}
