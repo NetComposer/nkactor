@@ -935,6 +935,8 @@ do_post_init(Op, State) ->
                     State;
                 {updated, Actor2} ->
                     log(warning, "labels have been updated offline!"),
+                    log(warning, "old actor: ~p!", [maps:get(labels, maps:get(metadata, Actor), #{})]),
+                    log(warning, "new actor: ~p!", [maps:get(labels, maps:get(metadata, Actor2), #{})]),
                     State#actor_st{actor=Actor2, is_dirty=true}
             end
     end,

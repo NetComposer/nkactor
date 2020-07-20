@@ -212,7 +212,7 @@ update_labels(#actor_st{srv=SrvId, actor=Actor}=ActorSt) ->
 
 %% metadada is always merged, use __op_remove to delete links or annotations
 %% @doc
-update(UpdActor, Opts, #actor_st{actor_id=ActorId, actor=Actor}=State) ->
+update(UpdActor, Opts, #actor_st{srv=SrvId, actor_id=ActorId, actor=Actor}=State) ->
     UpdActorId = nkactor_lib:actor_to_actor_id(UpdActor),
     #actor_id{
         uid = UID,
@@ -336,7 +336,13 @@ update(UpdActor, Opts, #actor_st{actor_id=ActorId, actor=Actor}=State) ->
                             trace("calling actor_srv_update"),
                             case handle(actor_srv_update, [NewActor1, Opts], State) of
                                 {ok, NewActor2, State2} ->
-                                    State3 = set_updated(State2#actor_st{actor=NewActor2}),
+                                    NewActor3 = case nkactor_actor:get_labels(SrvId, update, NewActor2) of
+                                        {not_updated, _} ->
+                                            NewActor2;
+                                        {updated, LabelActor} ->
+                                            LabelActor
+                                    end,
+                                    State3 = set_updated(State2#actor_st{actor=NewActor3}),
                                     NewEnabled = maps:get(is_enabled, NewMeta3, true),
                                     State4 = enabled(NewEnabled, State3),
                                     State5 = set_times(State4),

@@ -758,8 +758,9 @@ pre_update(SrvId, ActorId, Actor, Opts) ->
             Req1 = maps:get(request, Opts, #{}),
             Req2 = Req1#{srv => SrvId},
             case nkactor_actor:parse(SrvId, update, Actor3, Req2) of
-                {ok, Actor4} ->
-                    {_, Actor5} = nkactor_actor:get_labels(SrvId, create, Actor4),
+                {ok, Actor5} ->
+                    % We don't check labels here, since it may need the whole actor
+                    % Lets delay it to nkactor_srv_lib:update
                     trace("calling pre_update check links"),
                     case nkactor_lib:check_actor_links(Actor5) of
                         {ok, Actor6} ->
