@@ -27,7 +27,7 @@
 -include("nkactor_debug.hrl").
 -include_lib("nkserver/include/nkserver.hrl").
 
--export([fold_actors/7, activate_actors/2]).
+-export([fold_actors/7, fold_actors2/8, activate_actors/2]).
 -import(nkserver_trace, [trace/1, trace/2, log/3]).
 -define(ACTIVATE_SPAN, auto_activate).
 
@@ -42,10 +42,20 @@
 %% @doc Performs an query on database for actors marked as 'active' and tries
 %% to active them if not already activated
 -spec fold_actors(nkserver:id(), nkactor:group(), nkactor:resource(), nkactor:namespace(),
-                  boolean(), fold_fun(), term()) ->
+    boolean(), fold_fun(), term()) ->
     {ok, [#actor_id{}]} | {error, term()}.
 
 fold_actors(SrvId, Group, Res, Namespace, Deep, FoldFun, FoldAcc) ->
+    fold_actors2(SrvId, Group, Res, Namespace, Deep, [], FoldFun, FoldAcc).
+
+
+%% @doc Performs an query on database for actors marked as 'active' and tries
+%% to active them if not already activated
+-spec fold_actors2(nkserver:id(), nkactor:group(), nkactor:resource(), nkactor:namespace(),
+                  boolean(), term(), fold_fun(), term()) ->
+    {ok, [#actor_id{}]} | {error, term()}.
+
+fold_actors2(SrvId, Group, Res, Namespace, Deep, Filter, FoldFun, FoldAcc) ->
     Search = fun(Start) ->
         #{
             namespace => Namespace,
@@ -55,6 +65,7 @@ fold_actors(SrvId, Group, Res, Namespace, Deep, FoldFun, FoldAcc) ->
             get_metadata => true,
             filter => #{
                 'and' => lists:flatten([
+                    Filter,
                     #{field=>uid, op=>gt, value=>Start},
                     #{field=>group, value=>Group},
                     case Res of
@@ -68,11 +79,11 @@ fold_actors(SrvId, Group, Res, Namespace, Deep, FoldFun, FoldAcc) ->
             sort => [#{field=><<"uid">>, order=>asc}]
         }
     end,
-    fold_actors(SrvId, <<>>, Search, FoldFun, FoldAcc).
+    fold_actors3(SrvId, <<>>, Search, FoldFun, FoldAcc).
 
 
 %% @private
-fold_actors(SrvId, NextUID, SearchFun, FoldFun, FoldAcc) ->
+fold_actors3(SrvId, NextUID, SearchFun, FoldFun, FoldAcc) ->
     Search = SearchFun(NextUID),
     case nkactor:search_actors(SrvId, Search, #{}) of
         {ok, [], _} ->
@@ -83,7 +94,7 @@ fold_actors(SrvId, NextUID, SearchFun, FoldFun, FoldAcc) ->
                     {stop, Reason};
                 FoldAcc2 ->
                     [#{uid:=LastUID}|_] = lists:reverse(Actors),
-                    fold_actors(SrvId, LastUID, SearchFun, FoldFun, FoldAcc2)
+                    fold_actors3(SrvId, LastUID, SearchFun, FoldFun, FoldAcc2)
             end;
         {error, Error} ->
             {error, Error}
