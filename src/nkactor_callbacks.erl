@@ -648,7 +648,7 @@ actor_db_truncate(_SrvId, _Opts) ->
 
 
 %% @doc
--spec actor_db_truncate(nkserver:id(), map()) ->
+-spec actor_db_meta(nkserver:id(), map()) ->
     ok.
 
 actor_db_meta(_SrvId, _Meta) ->
