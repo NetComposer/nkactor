@@ -24,6 +24,7 @@
 -behaviour(application).
 
 -export([start/0, start/1, start/2, stop/1]).
+-export([metric_find/2, metric_read/2, metric_create/2, metric_update/2]).
 -export([set_nodes/1]).
 -export([get/1, get/2, put/2, del/1]).
 
@@ -65,6 +66,7 @@ start(_Type, _Args) ->
         {ok, _} ->
             {ok, Pid} = nkactor_sup:start_link(),
             {ok, Vsn} = application:get_key(nkactor, vsn),
+            reg_metrics(),
             lager:info("NkACTOR v~s has started.", [Vsn]),
             {ok, Pid};
         {error, Error} ->
@@ -73,6 +75,28 @@ start(_Type, _Args) ->
     end.
 
 
+reg_metrics() ->
+    prometheus_counter:declare([{name, actor_find}, {labels, [type]}, {help, "Actors for find"}]),
+    prometheus_counter:declare([{name, actor_read}, {labels, [type]}, {help, "Actors for read"}]),
+    prometheus_counter:declare([{name, actor_create}, {labels, [type]}, {help, "Actors for create"}]),
+    prometheus_counter:declare([{name, actor_update}, {labels, [type]}, {help, "Actors for update"}]),
+    ok.
+
+metric_find(Group, Res) ->
+    catch prometheus_counter:inc(actor_find, [<<Group/binary, $/, Res/binary>>]),
+    ok.
+
+metric_read(Group, Res) ->
+    catch prometheus_counter:inc(actor_read, [<<Group/binary, $/, Res/binary>>]),
+    ok.
+
+metric_create(Group, Res) ->
+    catch prometheus_counter:inc(actor_create, [<<Group/binary, $/, Res/binary>>]),
+    ok.
+
+metric_update(Group, Res) ->
+    catch prometheus_counter:inc(actor_update, [<<Group/binary, $/, Res/binary>>]),
+    ok.
 
 %% @doc
 set_nodes(Nodes) when is_list(Nodes) ->

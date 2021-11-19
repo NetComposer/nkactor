@@ -105,6 +105,9 @@ do_find([], _ActorId) ->
 
 do_find([SrvId|Rest], ActorId) ->
     trace("calling actor_db_find for ~p (~s)", [ActorId, SrvId]),
+    #actor_id{group = Group, resource = Res} = ActorId,
+    nkactor_app:metric_find(Group, Res),
+
     case ?CALL_SRV(SrvId, actor_db_find, [SrvId, ActorId, #{}]) of
         {ok, #actor_id{} = ActorId2, Meta} ->
             % If its was an UID, or a partial path, we must check now that
@@ -223,6 +226,7 @@ create(Actor, #{activate:=false}=Opts) ->
                         % randomly generated
                         Config = maps:with([no_unique_check], Opts),
                         trace("calling actor_db_create"),
+                        nkactor_app:metric_create(Group, Res),
                         case ?CALL_SRV(SrvId, actor_db_create, [SrvId, Actor3, Config]) of
                             {ok, Meta} ->
                                 % Use the alternative method for sending the event
@@ -266,6 +270,7 @@ create(Actor, Opts) ->
                         % The process will send the 'create' event in-server
                         Config = maps:with([ttl, no_unique_check], Opts),
                         trace("calling actor create"),
+                        nkactor_app:metric_create(Group, Res),
                         case ?CALL_SRV(SrvId, actor_create, [Actor3, Config]) of
                             {ok, Pid} when is_pid(Pid) ->
                                 ActorId = nkactor_lib:actor_to_actor_id(Actor3),
@@ -546,6 +551,8 @@ truncate(SrvId, Opts) ->
 %% @private
 do_read(SrvId, ActorId, Opts) ->
     trace("calling actor_db_read"),
+    #actor_id{group = Group, resource = Res} = ActorId,
+    nkactor_app:metric_read(Group, Res),
     case ?CALL_SRV(SrvId, actor_db_read, [SrvId, ActorId, Opts]) of
         {ok, Actor, Meta} ->
             % Actor's generic syntax is already parsed

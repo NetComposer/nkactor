@@ -437,6 +437,7 @@ save(Reason, SaveOpts, #actor_st{actor=Actor, is_dirty = true} = State) ->
     #actor_st{
         srv = SrvId,
         actor = Actor,
+        actor_id = #actor_id{group = Group, resource = Res},
         saved_metadata = SavedMeta,
         save_timer = Timer,
         config = Config
@@ -451,9 +452,11 @@ save(Reason, SaveOpts, #actor_st{actor=Actor, is_dirty = true} = State) ->
                 SaveOpts#{no_unique_check=>NoCheckUnique}
             };
         _ ->
+            nkactor_app:metric_update(Group, Res),
             {
                 actor_db_update,
-                SaveOpts#{last_metadata=>SavedMeta}}
+                SaveOpts#{last_metadata=>SavedMeta}
+            }
     end,
     Fun = fun() ->
         trace("calling actor_srv_save"),
